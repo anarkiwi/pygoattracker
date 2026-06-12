@@ -155,7 +155,10 @@ pip install -e ".[dev]"
 
 CI (`.github/workflows/ci.yml`) runs black, pylint, and the test suite
 with a `--cov-fail-under=85` coverage gate on Python 3.10-3.13, and
-builds + smoke tests the wheel. The suite also enforces the gates from
+builds + smoke tests the wheel. Publishing a GitHub release uploads
+sdist + wheel to PyPI via trusted publishing
+(`.github/workflows/publish.yml`); Dependabot keeps dependencies and
+actions current. The suite also enforces the gates from
 within: `tests/test_lint.py` runs black/pylint and
 `tests/test_coverage.py` re-runs the suite under coverage and fails
 below the floor, so a plain `pytest` cannot pass with lint errors or

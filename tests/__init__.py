@@ -1,0 +1,1 @@
+"""pygoattracker test suite."""

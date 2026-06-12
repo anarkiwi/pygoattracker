@@ -1,7 +1,9 @@
 """Read, write, play, and render GoatTracker 2 (.SNG) songs."""
 
 from pygoattracker.audio import render_samples, render_wav, write_wav
+from pygoattracker.convert import gt_to_nt2
 from pygoattracker.errors import (
+    ConversionError,
     GoatTrackerError,
     NinjaParseError,
     NinjaValidationError,
@@ -45,6 +47,7 @@ from pygoattracker.writer import build_sng, validate_song, write_sng
 __version__ = "0.1.0"
 
 __all__ = [
+    "ConversionError",
     "GoatTrackerError",
     "Instrument",
     "NinjaCommand",
@@ -70,6 +73,7 @@ __all__ = [
     "build_nt2",
     "build_sng",
     "entry_from_byte",
+    "gt_to_nt2",
     "iter_frames",
     "iter_register_writes",
     "parse_nt2",

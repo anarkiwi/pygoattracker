@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pygoattracker import audio, ninja, reglog
+from pygoattracker import audio, convert, ninja, reglog
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.reader import read_sng
 
@@ -55,6 +55,17 @@ def _wav(args) -> None:
     print(f"wrote {args.output}")
 
 
+def _nt2(args) -> None:
+    song = read_sng(args.song)
+    report: list = []
+    errors = "drop" if args.lenient else "strict"
+    converted = convert.gt_to_nt2(song, errors=errors, report=report)
+    ninja.write_nt2(converted, args.output)
+    for message in report:
+        print(f"dropped: {message}")
+    print(f"wrote {args.output}")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pygoattracker", description="GoatTracker 2 song tools"
@@ -71,6 +82,16 @@ def _parser() -> argparse.ArgumentParser:
     log.add_argument("--subtune", type=int, default=0)
     log.add_argument("--seconds", type=float, default=60.0)
     log.set_defaults(func=_reglog)
+
+    nt2 = commands.add_parser("nt2", help="convert to a NinjaTracker 2 song")
+    nt2.add_argument("song", help=".sng file")
+    nt2.add_argument("output", help="NinjaTracker 2 file to write")
+    nt2.add_argument(
+        "--lenient",
+        action="store_true",
+        help="drop and report inexpressible features instead of failing",
+    )
+    nt2.set_defaults(func=_nt2)
 
     wav = commands.add_parser("wav", help="render through an emulated SID")
     wav.add_argument("song", help=".sng file")

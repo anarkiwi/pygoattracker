@@ -168,12 +168,41 @@ terminators are not preserved, so real files round-trip semantically
 (byte-identically when they carry no stale bytes). There is no
 NinjaTracker playroutine port; parsing and writing only.
 
+### Convert GoatTracker songs to NinjaTracker 2
+
+```python
+from pygoattracker import gt_to_nt2, read_sng, write_nt2
+
+song = read_sng("tune.sng")
+report = []
+converted = gt_to_nt2(song, errors="drop", report=report)
+write_nt2(converted, "tune.nt2")
+print(report)   # one line per feature NinjaTracker cannot express
+```
+
+NinjaTracker has no tempo, so conversion replays the playroutine's
+sequencer/tempo logic (funktempo and FXY commands included) to bake
+every row's frame count into NinjaTracker durations; rests merge into
+the previous row and long holds split into continuation rows. The
+song is simulated for two full loops and must play both identically.
+Instruments become commands (vibrato folds into the wavetable),
+toneportamento becomes NinjaTracker's slide-to-target, 4XY vibrato
+and 8/9/AXY pointers become synthesized legato commands, and 5/6XY
+become ADSR commands. ``errors="strict"`` (default) raises
+``ConversionError`` on anything inexpressible (free 1/2XY portamento,
+7XY/BXY/CXY/DXY, wavetable command execution, notes below C-1,
+non-uniform hardrestart setups); ``errors="drop"`` drops and reports
+them instead. Some mappings are inherently approximate: pulse widths
+quantize to NinjaTracker's mirrored 8-bit register, filter resonance
+couples to the passband, and vibrato parameters map by analogy.
+
 ## Command line
 
 ```bash
 pygoattracker info tune.sng        # also detects NinjaTracker 2 files
 pygoattracker reglog tune.sng tune.reglog --seconds 30
 pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
+pygoattracker nt2 tune.sng tune.nt2 --lenient
 ```
 
 ## Tests

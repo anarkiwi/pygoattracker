@@ -19,3 +19,7 @@ class NinjaParseError(GoatTrackerError):
 
 class NinjaValidationError(GoatTrackerError):
     """A NinjaSong does not satisfy the NinjaTracker 2 format limits."""
+
+
+class ConversionError(GoatTrackerError):
+    """A song uses features the target format cannot express."""

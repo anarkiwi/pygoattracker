@@ -2,7 +2,7 @@
 
 import wave
 
-from pygoattracker import audio, cli, reglog
+from pygoattracker import audio, cli, model, ninja, reglog
 from pygoattracker.writer import write_sng
 
 from tests.conftest import basic_song
@@ -61,7 +61,6 @@ def test_wav(tmp_path, capsys, monkeypatch):
 
 
 def test_info_nt2(tmp_path, capsys):
-    from pygoattracker import ninja
     from tests.test_ninja import rich_song
 
     path = tmp_path / "song.nt2"
@@ -72,3 +71,25 @@ def test_info_nt2(tmp_path, capsys):
     assert "subtunes:    2" in out
     assert "01: lead" in out
     assert "02: soft bass" in out
+
+
+def test_nt2_convert(tmp_path, capsys):
+    out = tmp_path / "song.nt2"
+    assert cli.main(["nt2", song_path(tmp_path), str(out)]) == 0
+    assert str(out) in capsys.readouterr().out
+    song = ninja.read_nt2(out)
+    assert song.commands[0].name == "TEST01"
+
+
+def test_nt2_convert_lenient(tmp_path, capsys):
+    path = tmp_path / "song.sng"
+    song = basic_song()
+    song.patterns[0].rows[2] = model.Row(command=0xD, data=0x05)
+    write_sng(song, path)
+    out = tmp_path / "song.nt2"
+    assert cli.main(["nt2", str(path), str(out)]) == 1
+    assert "master volume" in capsys.readouterr().err
+    assert cli.main(["nt2", str(path), str(out), "--lenient"]) == 0
+    captured = capsys.readouterr().out
+    assert "dropped: DXY master volume command" in captured
+    assert out.exists()

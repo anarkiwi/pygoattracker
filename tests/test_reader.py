@@ -20,7 +20,7 @@ def test_bad_magic(data):
 
 
 def test_empty_file():
-    with pytest.raises(SngParseError, match="truncated"):
+    with pytest.raises(SngParseError, match="GoatTracker"):
         parse_sng(b"")
 
 

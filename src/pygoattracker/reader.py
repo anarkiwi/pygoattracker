@@ -108,12 +108,29 @@ def _parse_pattern(cur: _Cursor, num: int) -> Pattern:
     return Pattern(rows=rows)
 
 
-def parse_sng(data: bytes) -> Song:
-    """Parse .SNG bytes into a :class:`~pygoattracker.model.Song`."""
-    cur = _Cursor(data)
-    magic = cur.take(4, "identifier")
+def parse_sng(data: bytes, finevibrato: bool = True) -> Song:
+    """Parse .SNG bytes into a :class:`~pygoattracker.model.Song`.
+
+    All GoatTracker song generations are accepted: GTS5/GTS4/GTS3,
+    GTS2 (early 3-table GoatTracker 2) and GTS! (GoatTracker 1.x).
+    Pre-GTS5 songs are converted on load exactly as GoatTracker 2.76
+    imports them, so they only round-trip semantically, not
+    byte-identically. ``finevibrato`` selects how old GTS2 vibrato
+    parameters convert (the editor's default is on).
+    """
+    magic = bytes(data[:4])
     if magic not in constants.SNG_COMPATIBLE_MAGICS:
-        raise SngParseError(f"not a GoatTracker 2 song (identifier {magic!r})")
+        raise SngParseError(f"not a GoatTracker song (identifier {magic!r})")
+    if magic in (b"GTS!", b"GTS2"):
+        # Imported here to avoid a circular import: legacy.py builds on
+        # this module's section parsers.
+        from pygoattracker import legacy
+
+        if magic == b"GTS!":
+            return legacy.parse_gts1(data)
+        return legacy.parse_gts2(data, finevibrato=finevibrato)
+    cur = _Cursor(data)
+    cur.take(4, "identifier")
     name = _decode_str(cur.take(constants.MAX_STR, "song name"))
     author = _decode_str(cur.take(constants.MAX_STR, "author name"))
     copyright_ = _decode_str(cur.take(constants.MAX_STR, "copyright"))
@@ -148,7 +165,7 @@ def parse_sng(data: bytes) -> Song:
             f"{len(data) - cur.pos} unexpected trailing bytes at offset {cur.pos}"
         )
 
-    return Song(
+    song = Song(
         name=name,
         author=author,
         copyright=copyright_,
@@ -160,14 +177,19 @@ def parse_sng(data: bytes) -> Song:
         filtertable=tables[constants.FTBL],
         speedtable=tables[constants.STBL],
     )
+    if magic != constants.SNG_MAGIC:
+        from pygoattracker import legacy
+
+        legacy.apply_legacy_conversions(song, magic)
+    return song
 
 
-def read_sng(src) -> Song:
+def read_sng(src, finevibrato: bool = True) -> Song:
     """Read a .SNG from a path, bytes, or binary file-like object."""
     if isinstance(src, bytes):
-        return parse_sng(src)
+        return parse_sng(src, finevibrato=finevibrato)
     if isinstance(src, (str, Path)):
-        return parse_sng(Path(src).read_bytes())
+        return parse_sng(Path(src).read_bytes(), finevibrato=finevibrato)
     if isinstance(src, io.IOBase) or hasattr(src, "read"):
-        return parse_sng(src.read())
+        return parse_sng(src.read(), finevibrato=finevibrato)
     raise TypeError(f"cannot read a song from {type(src).__name__}")

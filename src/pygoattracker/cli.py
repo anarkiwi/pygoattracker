@@ -2,14 +2,29 @@
 
 import argparse
 import sys
+from pathlib import Path
 
-from pygoattracker import audio, reglog
+from pygoattracker import audio, ninja, reglog
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.reader import read_sng
 
 
+def _nt2_info(song) -> None:
+    print("format:      NinjaTracker 2")
+    print(f"subtunes:    {len(song.subtunes)}")
+    print(f"patterns:    {len(song.patterns)}")
+    print(f"commands:    {len(song.commands)}")
+    print(f"hardrestart: {song.hr_param:02X} / first wave {song.first_wave:02X}")
+    for num, command in enumerate(song.commands, start=1):
+        print(f"  {num:02X}: {command.name}")
+
+
 def _info(args) -> None:
-    song = read_sng(args.song)
+    data = Path(args.song).read_bytes()
+    if data[: len(ninja.NT2_MAGIC)] == ninja.NT2_MAGIC:
+        _nt2_info(ninja.parse_nt2(data))
+        return
+    song = read_sng(data)
     print(f"name:        {song.name}")
     print(f"author:      {song.author}")
     print(f"copyright:   {song.copyright}")

@@ -5,9 +5,10 @@ in its ``readme.txt`` section 6.1).
 """
 
 SNG_MAGIC = b"GTS5"
-# GTS3/GTS4 era songs have an identical binary layout and load the same
-# way in GoatTracker itself, so the reader accepts all three.
-SNG_COMPATIBLE_MAGICS = (b"GTS3", b"GTS4", b"GTS5")
+# GTS3/GTS4 share GTS5's binary layout (with small post-load value
+# conversions); GTS2 (early 3-table GoatTracker 2) and GTS! (GoatTracker
+# 1.x) are converted on load, exactly as GoatTracker 2 imports them.
+SNG_COMPATIBLE_MAGICS = (b"GTS!", b"GTS2", b"GTS3", b"GTS4", b"GTS5")
 
 MAX_STR = 32
 MAX_INSTR = 64

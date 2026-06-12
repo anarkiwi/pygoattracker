@@ -58,3 +58,17 @@ def test_wav(tmp_path, capsys, monkeypatch):
     assert str(out) in capsys.readouterr().out
     with wave.open(str(out), "rb") as handle:
         assert handle.getnframes() > 0
+
+
+def test_info_nt2(tmp_path, capsys):
+    from pygoattracker import ninja
+    from tests.test_ninja import rich_song
+
+    path = tmp_path / "song.nt2"
+    ninja.write_nt2(rich_song(), path)
+    assert cli.main(["info", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "NinjaTracker 2" in out
+    assert "subtunes:    2" in out
+    assert "01: lead" in out
+    assert "02: soft bass" in out

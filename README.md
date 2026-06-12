@@ -38,8 +38,13 @@ print(song.subtunes[0].channels[0].entries)
 ```
 
 `read_sng` accepts a path, bytes, or a binary file object, and reads
-GTS5 (and the byte-compatible GTS3/GTS4) songs. The writer always
-emits GTS5. Read -> write round trips are byte-identical.
+every GoatTracker song generation: GTS5/GTS4/GTS3, GTS2 (early
+3-table GoatTracker 2.xx) and GTS! (GoatTracker 1.x). Old formats are
+converted on load exactly as GoatTracker 2.76 imports them --
+including GT1's inline instrument wavetables, synthesized pulse
+programs, filtertable conversion and 0XY-arpeggio extraction -- so
+they play and write back as GTS5. The writer always emits GTS5;
+GTS5 read -> write round trips are byte-identical.
 
 ## Build a song from scratch
 
@@ -138,10 +143,35 @@ same in-frame offsets the register log uses. `render_samples` returns
 raw 16-bit samples instead; pass `device=` to use any other emulator
 object with `write_register`/`clock`/`sampling_frequency`.
 
+## NinjaTracker 2
+
+[NinjaTracker 2](http://covertbitops.c64.org) songs (the C64 editor's
+`N2` work files) read and write through their own typed model:
+
+```python
+from pygoattracker import read_nt2, write_nt2
+
+song = read_nt2("tune")            # files saved by the C64 editor
+print(song.hr_param, song.first_wave)
+for command in song.commands:      # NT2 commands double as instruments
+    print(command.name, hex(command.attack_decay))
+for row in song.patterns[0].rows[:4]:
+    print(row)                     # e.g. "C-2 01 08"
+write_nt2(song, "tune.out")
+```
+
+Tracks reuse the typed `PlayPattern`/`Transpose` entries (NinjaTracker
+transposes are -64..+63 halftones; byte `$FF` is zero -- the format
+doc's "$C0 = zero" does not match the player or the example tunes).
+The writer emits canonical output: stale editor bytes after pattern
+terminators are not preserved, so real files round-trip semantically
+(byte-identically when they carry no stale bytes). There is no
+NinjaTracker playroutine port; parsing and writing only.
+
 ## Command line
 
 ```bash
-pygoattracker info tune.sng
+pygoattracker info tune.sng        # also detects NinjaTracker 2 files
 pygoattracker reglog tune.sng tune.reglog --seconds 30
 pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
 ```
@@ -164,9 +194,11 @@ within: `tests/test_lint.py` runs black/pylint and
 below the floor, so a plain `pytest` cannot pass with lint errors or
 insufficient coverage.
 
-The integration tests download three GoatTracker 2 example songs
-(SHA-256 pinned) and verify byte-identical round trips plus 500 frames
-of playback each; they skip offline.
+The integration tests download three GoatTracker 2 example songs and
+the NinjaTracker 2 distribution disk image (SHA-256 pinned; a minimal
+1541 reader extracts the six example tunes from the .d64). They verify
+byte-identical .SNG round trips plus 500 frames of playback each, and
+NinjaTracker round trips against all six tunes; they skip offline.
 
 ## License
 

@@ -1,0 +1,82 @@
+"""Command line interface: song info, register logs, and WAV rendering."""
+
+import argparse
+import sys
+
+from pygoattracker import audio, reglog
+from pygoattracker.errors import GoatTrackerError
+from pygoattracker.reader import read_sng
+
+
+def _info(args) -> None:
+    song = read_sng(args.song)
+    print(f"name:        {song.name}")
+    print(f"author:      {song.author}")
+    print(f"copyright:   {song.copyright}")
+    print(f"subtunes:    {len(song.subtunes)}")
+    print(f"patterns:    {len(song.patterns)}")
+    print(f"instruments: {len(song.instruments)}")
+    for num, instrument in enumerate(song.instruments, start=1):
+        print(f"  {num:02X}: {instrument.name}")
+
+
+def _reglog(args) -> None:
+    song = read_sng(args.song)
+    frames = round(args.seconds * 50)
+    writes = reglog.iter_register_writes(song, subtune=args.subtune, max_frames=frames)
+    reglog.write_reglog(writes, args.output)
+    print(f"wrote {args.output}")
+
+
+def _wav(args) -> None:
+    song = read_sng(args.song)
+    audio.render_wav(
+        song,
+        args.output,
+        seconds=args.seconds,
+        subtune=args.subtune,
+        model=args.model,
+    )
+    print(f"wrote {args.output}")
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pygoattracker", description="GoatTracker 2 song tools"
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    info = commands.add_parser("info", help="print song metadata")
+    info.add_argument("song", help=".sng file")
+    info.set_defaults(func=_info)
+
+    log = commands.add_parser("reglog", help="write a SID register log")
+    log.add_argument("song", help=".sng file")
+    log.add_argument("output", help="register log file to write")
+    log.add_argument("--subtune", type=int, default=0)
+    log.add_argument("--seconds", type=float, default=60.0)
+    log.set_defaults(func=_reglog)
+
+    wav = commands.add_parser("wav", help="render through an emulated SID")
+    wav.add_argument("song", help=".sng file")
+    wav.add_argument("output", help="WAV file to write")
+    wav.add_argument("--subtune", type=int, default=0)
+    wav.add_argument("--seconds", type=float, default=60.0)
+    wav.add_argument("--model", choices=audio.CHIP_MODELS, default="8580")
+    wav.set_defaults(func=_wav)
+    return parser
+
+
+def main(argv=None) -> int:
+    """CLI entry point; returns a process exit code."""
+    args = _parser().parse_args(argv)
+    try:
+        args.func(args)
+    except (GoatTrackerError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

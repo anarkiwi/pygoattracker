@@ -1,0 +1,169 @@
+"""Constants shared by the GoatTracker 2 .SNG format and playroutine.
+
+Values follow GoatTracker 2.76 (``gcommon.h`` and the format description
+in its ``readme.txt`` section 6.1).
+"""
+
+SNG_MAGIC = b"GTS5"
+# GTS3/GTS4 era songs have an identical binary layout and load the same
+# way in GoatTracker itself, so the reader accepts all three.
+SNG_COMPATIBLE_MAGICS = (b"GTS3", b"GTS4", b"GTS5")
+
+MAX_STR = 32
+MAX_INSTR = 64
+MAX_CHN = 3
+MAX_PATT = 208
+MAX_TABLES = 4
+MAX_TABLELEN = 255
+MAX_INSTRNAMELEN = 16
+MAX_PATTROWS = 128
+MAX_SONGLEN = 254
+MAX_SONGS = 32
+MAX_NOTES = 96
+
+# Orderlist entry encoding.
+REPEAT = 0xD0
+TRANSDOWN = 0xE0
+TRANSUP = 0xF0
+LOOPSONG = 0xFF
+
+# Pattern note column encoding.
+ENDPATT = 0xFF
+FIRSTNOTE = 0x60
+LASTNOTE = 0xBC
+REST = 0xBD
+KEYOFF = 0xBE
+KEYON = 0xBF
+
+# Pattern commands 0XY-FXY.
+CMD_DONOTHING = 0x0
+CMD_PORTAUP = 0x1
+CMD_PORTADOWN = 0x2
+CMD_TONEPORTA = 0x3
+CMD_VIBRATO = 0x4
+CMD_SETAD = 0x5
+CMD_SETSR = 0x6
+CMD_SETWAVE = 0x7
+CMD_SETWAVEPTR = 0x8
+CMD_SETPULSEPTR = 0x9
+CMD_SETFILTERPTR = 0xA
+CMD_SETFILTERCTRL = 0xB
+CMD_SETFILTERCUTOFF = 0xC
+CMD_SETMASTERVOL = 0xD
+CMD_FUNKTEMPO = 0xE
+CMD_SETTEMPO = 0xF
+
+# Table indexes, in on-disk order.
+WTBL = 0
+PTBL = 1
+FTBL = 2
+STBL = 3
+
+# Wavetable left-side ranges.
+WAVEDELAY = 0x01
+WAVELASTDELAY = 0x0F
+WAVESILENT = 0xE0
+WAVELASTSILENT = 0xEF
+WAVECMD = 0xF0
+WAVELASTCMD = 0xFE
+TABLEJUMP = 0xFF
+
+# SID register map (offsets within the chip's 25 registers).
+SID_REGISTERS = 25
+VOICES = 3
+VOICE_REG_SIZE = 7
+FREQ_LO_REG = 0x00
+FREQ_HI_REG = 0x01
+PULSE_LO_REG = 0x02
+PULSE_HI_REG = 0x03
+CONTROL_REG = 0x04
+AD_REG = 0x05
+SR_REG = 0x06
+FC_LO_REG = 0x15
+FC_HI_REG = 0x16
+RES_FILT_REG = 0x17
+MODE_VOL_REG = 0x18
+
+# C64 timing. A PAL frame is 312 rasterlines x 63 cycles.
+PAL_CLOCK_HZ = 985248
+PAL_CYCLES_PER_FRAME = 19656
+NTSC_CLOCK_HZ = 1022727
+NTSC_CYCLES_PER_FRAME = 17095
+
+# Default player options, as in the GoatTracker editor.
+DEFAULT_ADPARAM = 0x0F00
+
+# PAL note frequency table from the GoatTracker 2 playroutine, notes
+# C-0 to B-7 (the player can reach A-7 to B-7 through transpose only).
+FREQ_LO = (
+    # fmt: off
+    0x17, 0x27, 0x39, 0x4B, 0x5F, 0x74, 0x8A, 0xA1, 0xBA, 0xD4, 0xF0, 0x0E,
+    0x2D, 0x4E, 0x71, 0x96, 0xBE, 0xE8, 0x14, 0x43, 0x74, 0xA9, 0xE1, 0x1C,
+    0x5A, 0x9C, 0xE2, 0x2D, 0x7C, 0xCF, 0x28, 0x85, 0xE8, 0x52, 0xC1, 0x37,
+    0xB4, 0x39, 0xC5, 0x5A, 0xF7, 0x9E, 0x4F, 0x0A, 0xD1, 0xA3, 0x82, 0x6E,
+    0x68, 0x71, 0x8A, 0xB3, 0xEE, 0x3C, 0x9E, 0x15, 0xA2, 0x46, 0x04, 0xDC,
+    0xD0, 0xE2, 0x14, 0x67, 0xDD, 0x79, 0x3C, 0x29, 0x44, 0x8D, 0x08, 0xB8,
+    0xA1, 0xC5, 0x28, 0xCD, 0xBA, 0xF1, 0x78, 0x53, 0x87, 0x1A, 0x10, 0x71,
+    0x42, 0x89, 0x4F, 0x9B, 0x74, 0xE2, 0xF0, 0xA6, 0x0E, 0x33, 0x20, 0xFF,
+    # fmt: on
+)
+FREQ_HI = (
+    # fmt: off
+    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02,
+    0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03, 0x03, 0x03, 0x03, 0x03, 0x04,
+    0x04, 0x04, 0x04, 0x05, 0x05, 0x05, 0x06, 0x06, 0x06, 0x07, 0x07, 0x08,
+    0x08, 0x09, 0x09, 0x0A, 0x0A, 0x0B, 0x0C, 0x0D, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x17, 0x18, 0x1A, 0x1B, 0x1D, 0x1F, 0x20,
+    0x22, 0x24, 0x27, 0x29, 0x2B, 0x2E, 0x31, 0x34, 0x37, 0x3A, 0x3E, 0x41,
+    0x45, 0x49, 0x4E, 0x52, 0x57, 0x5C, 0x62, 0x68, 0x6E, 0x75, 0x7C, 0x83,
+    0x8B, 0x93, 0x9C, 0xA5, 0xAF, 0xB9, 0xC4, 0xD0, 0xDD, 0xEA, 0xF8, 0xFF,
+    # fmt: on
+)
+
+# The playroutine indexes the frequency table with 7-bit note numbers,
+# so pad to 128 entries exactly like the original player's data segment.
+FREQ_TABLE = tuple((hi << 8) | lo for lo, hi in zip(FREQ_LO, FREQ_HI)) + (0,) * (
+    128 - MAX_NOTES
+)
+
+_NOTE_NAMES = (
+    "C-",
+    "C#",
+    "D-",
+    "D#",
+    "E-",
+    "F-",
+    "F#",
+    "G-",
+    "G#",
+    "A-",
+    "A#",
+    "B-",
+)
+
+
+def note_name(note: int) -> str:
+    """Tracker-style display name for a pattern note byte."""
+    if note == REST:
+        return "..."
+    if note == KEYOFF:
+        return "---"
+    if note == KEYON:
+        return "+++"
+    if note == ENDPATT:
+        return "END"
+    if FIRSTNOTE <= note <= LASTNOTE:
+        offset = note - FIRSTNOTE
+        return f"{_NOTE_NAMES[offset % 12]}{offset // 12}"
+    raise ValueError(f"not a note byte: {note:#04x}")
+
+
+def note_value(name: str) -> int:
+    """Pattern note byte for a tracker-style name such as ``A-4``."""
+    if len(name) == 3:
+        prefix, octave = name[:2], name[2]
+        if prefix in _NOTE_NAMES and octave.isdigit() and int(octave) < 8:
+            note = FIRSTNOTE + int(octave) * 12 + _NOTE_NAMES.index(prefix)
+            if note <= LASTNOTE:
+                return note
+    raise ValueError(f"not a note name: {name!r}")

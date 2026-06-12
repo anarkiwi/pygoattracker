@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# test fixture downloads
+tests/.fixture_cache/
+.coverage.floor

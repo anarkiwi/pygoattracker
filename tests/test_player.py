@@ -98,6 +98,40 @@ def test_keyoff_keyon(song):
     assert (constants.CONTROL_REG, 0x41) in frames[33]
 
 
+def test_gateoff_timer_high_bit_disables_hard_restart(song):
+    """``gateoff_timer`` bit $80 gates the note off but skips the hard restart.
+
+    This is the canonical .sng encoding of the player's no-hard-restart
+    instrument-ordering optimization (``mt_normalnote``: instruments at or
+    above ``FIRSTNOHRINSTR`` branch to ``mt_skiphr``, which still writes
+    ``gate = $fe`` but does not write the ADPARAM/SRPARAM hard-restart ADSR).
+    Bit $40 stays clear so the gateoff itself is unaffected; the timer
+    compare value is ``gateoff_timer & $3f`` either way.
+
+    The default test instrument hard-restarts on the note-fetch frame
+    (AD_REG = adparam-high $0F, see test_single_note_timeline). Setting bit
+    $80 must suppress exactly that write while leaving the gate-off intact.
+    """
+    hr_adsr = (constants.AD_REG, constants.DEFAULT_ADPARAM >> 8)
+    gate_off = (constants.CONTROL_REG, 0x40)
+
+    # With hard restart enabled (default), a note's fetch frame writes the
+    # adparam ADSR and masks the gate off (the 8-row pattern loops at frame 51).
+    hr = play(Player(song), 56)
+    assert any(hr_adsr in frame for frame in hr)
+    assert any(gate_off in frame for frame in hr)
+
+    # Same instrument, same timer compare value (2), hard restart disabled.
+    song.instruments[0].gateoff_timer = 0x80 | 2
+    nohr = play(Player(song), 56)
+    # Gateoff still happens ...
+    assert any(gate_off in frame for frame in nohr)
+    # ... but the hard-restart ADSR is never written, on any frame. (AD_REG =
+    # adparam-high $0F is the unambiguous hard-restart marker; the instrument's
+    # own AD is $09 and is only written at note init, never on a fetch frame.)
+    assert not any(hr_adsr in frame for frame in nohr)
+
+
 def test_set_tempo():
     song = basic_song(
         rows={

@@ -246,6 +246,18 @@ def test_pulse_program(song):
     assert history == sorted(history)
 
 
+def test_pulse_low_byte_unmasked(song):
+    # The relocated player (player.s, what an exported .sid runs) stores the
+    # full pulse low byte to $D402; only the editor's gplay preview masks bit 0.
+    # Match the C64 playroutine so register logs equal a VICE dump byte-for-byte.
+    song.pulsetable.left = [0x88, 0xFF]
+    song.pulsetable.right = [0x01, 0x00]
+    song.instruments[0].pulse_ptr = 1
+    player = Player(song)
+    play(player, 8)
+    assert player.regs[constants.PULSE_LO_REG] == 0x01
+
+
 def test_filter_program():
     # A long pattern so the looping song does not retrigger the note
     # (and with it the filter program) during the measurement.

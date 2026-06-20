@@ -309,7 +309,12 @@ class Player:
             chan.wave_table_ptr = 0
             chan.newnote = 0
             chan.repeat = 0
-            chan.tick = 5
+            # player.s mt_initchn primes the tick counter to 1 (not the default
+            # tempo), so the first played frame decrements to tick 0 and runs as
+            # a tick-0 frame -- which skips continuous effects. Priming it to the
+            # tempo instead would run instrument 1's intro vibrato one frame
+            # early, desyncing its phase from the real player.
+            chan.tick = 1
             chan.gatetimer = self._instr[1].gatetimer & 0x3F
             chan.pattptr = _PATT_END
             chan.tempo = 5
@@ -511,8 +516,16 @@ class Player:
         elif command == constants.CMD_PORTADOWN:
             self._porta_down(chan, chan.cmddata)
         elif command == constants.CMD_DONOTHING:
-            # Instrument vibrato, after the vibrato delay has elapsed.
-            if not chan.cmddata or not chan.vibdelay:
+            # Instrument vibrato (player.s mt_effect_0). Speed 0 = no vibrato.
+            # Otherwise count the vibrato delay down and vibrate once it runs
+            # out. The real player decrements while the delay is non-zero and
+            # vibrates at zero; the channel's delay starts at zero (the reset
+            # loop clears it and mt_initchn never reloads it), so an
+            # instrument-1 speed-table vibrato is audible from the gate-off
+            # intro frames -- the editor's gplay.c skips it instead. A note's
+            # init reloads the delay (>= 1), so this stays byte-exact with the
+            # editor for normal notes.
+            if not chan.cmddata:
                 return
             if chan.vibdelay > 1:
                 chan.vibdelay -= 1

@@ -577,7 +577,7 @@ class Player:
             return
         self.regs[constants.FREQ_LO_REG + base] = chan.freq & 0xFF
         self.regs[constants.FREQ_HI_REG + base] = chan.freq >> 8
-        self.regs[constants.PULSE_LO_REG + base] = chan.pulse & 0xFE
+        self.regs[constants.PULSE_LO_REG + base] = chan.pulse & 0xFF
         self.regs[constants.PULSE_HI_REG + base] = chan.pulse >> 8
         self.regs[constants.CONTROL_REG + base] = chan.wave & chan.gate
 

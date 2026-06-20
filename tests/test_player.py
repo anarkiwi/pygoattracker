@@ -1,12 +1,12 @@
 """Playroutine behavior, frame by frame.
 
 Frame numbers: frame 0 is the player's init frame; with the default
-tempo 6 the first pattern row initializes on frame 5 and its wavetable
-starts executing on frame 6. Notes are fetched (and gateoff / hard
+tempo 6 the first pattern row initializes on frame 7 and its wavetable
+starts executing on frame 8. Notes are fetched (and gateoff / hard
 restart applied) when the tick counter equals the gateoff timer, two
 frames before the row with the default test instrument. Pattern row N
-of the first pattern is fetched on frame 3 + 6N and initialized on
-frame 5 + 6N.
+of the first pattern is fetched on frame 5 + 6N and initialized on
+frame 7 + 6N.
 """
 
 import pytest
@@ -72,30 +72,30 @@ def test_init_frame_writes_all_registers(song):
 def test_single_note_timeline(song):
     frames = play(Player(song), 60)
     # Note fetch two frames ahead: gate masked off and hard restart ADSR.
-    assert (constants.AD_REG, 0x0F) in frames[3]
+    assert (constants.AD_REG, 0x0F) in frames[5]
     # Row 0 init: instrument ADSR and first frame waveform $09 (test+gate).
-    assert (constants.AD_REG, 0x09) in frames[5]
-    assert (constants.CONTROL_REG, 0x09) in frames[5]
+    assert (constants.AD_REG, 0x09) in frames[7]
+    assert (constants.CONTROL_REG, 0x09) in frames[7]
     # First wavetable step: real waveform and the note's frequency.
-    assert (constants.CONTROL_REG, 0x41) in frames[6]
-    assert (constants.FREQ_LO_REG, C4_FREQ & 0xFF) in frames[6]
-    assert (constants.FREQ_HI_REG, C4_FREQ >> 8) in frames[6]
+    assert (constants.CONTROL_REG, 0x41) in frames[8]
+    assert (constants.FREQ_LO_REG, C4_FREQ & 0xFF) in frames[8]
+    assert (constants.FREQ_HI_REG, C4_FREQ >> 8) in frames[8]
     # Wavetable stopped; nothing changes while the rest rows play.
-    assert frames[7] == []
-    assert frames[8] == []
-    # The 8-row pattern loops: next fetch at frame 51, next init at 53.
-    assert (constants.CONTROL_REG, 0x40) in frames[51]
-    assert (constants.AD_REG, 0x0F) in frames[51]
-    assert (constants.CONTROL_REG, 0x09) in frames[53]
+    assert frames[9] == []
+    assert frames[10] == []
+    # The 8-row pattern loops: next fetch at frame 53, next init at 55.
+    assert (constants.CONTROL_REG, 0x40) in frames[53]
+    assert (constants.AD_REG, 0x0F) in frames[53]
+    assert (constants.CONTROL_REG, 0x09) in frames[55]
 
 
 def test_keyoff_keyon(song):
     song.patterns[0].rows[4] = Row(note=constants.KEYOFF)
     song.patterns[0].rows[5] = Row(note=constants.KEYON)
     frames = play(Player(song), 36)
-    # Keyoff/keyon are applied at their fetch frames (3 + 6N).
-    assert (constants.CONTROL_REG, 0x40) in frames[27]
-    assert (constants.CONTROL_REG, 0x41) in frames[33]
+    # Keyoff/keyon are applied at their fetch frames (5 + 6N).
+    assert (constants.CONTROL_REG, 0x40) in frames[29]
+    assert (constants.CONTROL_REG, 0x41) in frames[35]
 
 
 def test_gateoff_timer_high_bit_disables_hard_restart(song):
@@ -140,7 +140,7 @@ def test_set_tempo():
         }
     )
     # Tempo 4 from row 0 onwards: row inits every 4 frames.
-    assert init_frames(song) == [5, 9, 13, 17]
+    assert init_frames(song) == [7, 11, 15, 19]
 
 
 def test_per_channel_tempo():
@@ -165,7 +165,7 @@ def test_funktempo():
     song = basic_song(rows=rows)
     song.speedtable.add(9, 6)
     # Rows alternate between 9 and 6 frames once funktempo kicks in.
-    assert init_frames(song, 40)[:4] == [5, 14, 20, 29]
+    assert init_frames(song, 40)[:4] == [7, 16, 22, 31]
 
 
 def test_funktempo_recall():
@@ -184,15 +184,15 @@ def test_funktempo_recall():
 def test_master_volume(song):
     song.patterns[0].rows[1] = Row(command=0xD, data=0x0A)
     history = reg_history(song, 16, constants.MODE_VOL_REG)
-    # Row 1 runs its command on frame 11; the register follows on 12.
-    assert history[11] == 0x0F
-    assert history[12] == 0x0A
+    # Row 1 runs its command on frame 13; the register follows on 14.
+    assert history[13] == 0x0F
+    assert history[14] == 0x0A
 
 
 def test_timing_mark_is_not_volume(song):
     song.patterns[0].rows[1] = Row(command=0xD, data=0x3A)
     history = reg_history(song, 16, constants.MODE_VOL_REG)
-    assert history[12] == 0x0F
+    assert history[14] == 0x0F
 
 
 def test_vibrato(song):
@@ -213,21 +213,52 @@ def test_instrument_vibrato(song):
     song.instruments[0].vibrato_delay = 10
     history = freq_history(song, 40)
     # Frequency is steady until the vibrato delay has elapsed.
-    assert set(history[6:15]) == {C4_FREQ}
-    wobble = history[16:]
+    assert set(history[8:20]) == {C4_FREQ}
+    wobble = history[20:]
     assert max(wobble) > C4_FREQ
     assert min(wobble) < C4_FREQ
+
+
+def test_instrument_vibrato_runs_during_gateoff_intro(song):
+    """Instrument 1's speed-table vibrato is audible from the gate-off intro.
+
+    The real packed playroutine (player.s ``mt_initchn``) primes every channel
+    with instrument 1 and counter 1, and its tick-0 continuous-effect setup
+    loads instrument 1's vibrato (speed-table) param into the channel before any
+    note is fetched. With the vibrato delay starting at zero, the vibrato runs on
+    the voice frequency from the very first played frames while the channel is
+    still gate-off. Regression test for the missing-intro-vibrato fidelity bug.
+    """
+    # All rests: the channel never gates on, but instrument 1 carries a
+    # speed-table vibrato that must still modulate the (gate-off) frequency.
+    for row in range(8):
+        song.patterns[0].rows[row] = Row()
+    idx = song.speedtable.add(3, 0x40)
+    song.instruments[0].vibrato_param = idx
+    song.instruments[0].vibrato_delay = 16
+    history = freq_history(song, 14)
+    # Frequency starts at zero and the speed-table vibrato wobbles it both
+    # above (small positive) and below (8-bit wrap to near 0xFFFF) during the
+    # gate-off intro.
+    assert any(0 < f < 0x4000 for f in history)  # wobbled up
+    assert any(f >= 0xC000 for f in history)  # wobbled down (wrapped)
+    assert history[1] == 0  # first played frame is a tick-0 frame: no vibrato
+    assert history[2] != 0  # vibrato runs from the next frame on
+
+    # Control: with no vibrato param the intro frequency stays put.
+    song.instruments[0].vibrato_param = 0
+    assert set(freq_history(song, 14)) == {0}
 
 
 def test_portamento_up(song):
     idx = song.speedtable.add(0x01, 0x00)
     for row in range(1, 4):
         song.patterns[0].rows[row] = Row(command=0x1, data=idx)
-    history = freq_history(song, 32)
-    assert history[6] == C4_FREQ
+    history = freq_history(song, 34)
+    assert history[8] == C4_FREQ
     # Portamento runs on every tick but tick 0: 5 ticks on each of the
     # 3 command rows, $0100 each.
-    assert history[29] == C4_FREQ + 15 * 0x100
+    assert history[31] == C4_FREQ + 15 * 0x100
     assert history == sorted(history)
 
 
@@ -237,29 +268,29 @@ def test_portamento_down_realtime_speed(song):
     for row in range(1, 4):
         song.patterns[0].rows[row] = Row(command=0x2, data=idx)
     step = (constants.FREQ_TABLE[49] - constants.FREQ_TABLE[48]) >> 2
-    history = freq_history(song, 32)
-    assert history[29] == C4_FREQ - 15 * step
+    history = freq_history(song, 34)
+    assert history[31] == C4_FREQ - 15 * step
 
 
 def test_toneportamento(song):
     idx = song.speedtable.add(0x02, 0x00)
     song.patterns[0].rows[2] = Row(note=note("E-4"), command=0x3, data=idx)
     target = constants.FREQ_TABLE[52]
-    history = freq_history(song, 40)
-    assert history[6] == C4_FREQ
+    history = freq_history(song, 42)
+    assert history[8] == C4_FREQ
     # Slides up from row 2 and clamps exactly at the E-4 frequency.
-    assert C4_FREQ < history[18] <= target
-    assert history[30] == target
-    assert history[35] == target
+    assert C4_FREQ < history[20] <= target
+    assert history[32] == target
+    assert history[37] == target
 
 
 def test_tie_note(song):
     song.patterns[0].rows[2] = Row(note=note("E-4"), command=0x3, data=0)
     history = freq_history(song, 30)
-    assert history[6] == C4_FREQ
+    assert history[8] == C4_FREQ
     # Speed $00 toneportamento jumps straight to the target note.
-    assert history[18] == constants.FREQ_TABLE[52]
-    assert history[25] == constants.FREQ_TABLE[52]
+    assert history[20] == constants.FREQ_TABLE[52]
+    assert history[27] == constants.FREQ_TABLE[52]
 
 
 def test_pulse_program(song):
@@ -267,9 +298,9 @@ def test_pulse_program(song):
     song.pulsetable.right = [0x00, 0x40, 0x00]
     song.instruments[0].pulse_ptr = 1
     player = Player(song)
-    frames = play(player, 8)
+    frames = play(player, 10)
     # Pulse $800 set on the first frame after note init.
-    assert (constants.PULSE_HI_REG, 0x08) in frames[6]
+    assert (constants.PULSE_HI_REG, 0x08) in frames[8]
     history = []
     for _ in range(30):
         player.play_frame()
@@ -288,7 +319,7 @@ def test_pulse_low_byte_unmasked(song):
     song.pulsetable.right = [0x01, 0x00]
     song.instruments[0].pulse_ptr = 1
     player = Player(song)
-    play(player, 8)
+    play(player, 10)
     assert player.regs[constants.PULSE_LO_REG] == 0x01
 
 
@@ -300,11 +331,11 @@ def test_filter_program():
     song.filtertable.right = [0xF1, 0x40, 0x01, 0x00]
     song.instruments[0].filter_ptr = 1
     player = Player(song)
-    frames = play(player, 10)
+    frames = play(player, 12)
     # Filter parameter and cutoff set steps execute on the same frame.
-    assert (constants.FC_HI_REG, 0x40) in frames[6]
-    assert (constants.RES_FILT_REG, 0xF1) in frames[6]
-    assert (constants.MODE_VOL_REG, 0x1F) in frames[6]
+    assert (constants.FC_HI_REG, 0x40) in frames[8]
+    assert (constants.RES_FILT_REG, 0xF1) in frames[8]
+    assert (constants.MODE_VOL_REG, 0x1F) in frames[8]
     for _ in range(0x7F):
         player.play_frame()
     # Modulation added $01 for $7F frames, then the table jump stopped.
@@ -317,8 +348,8 @@ def test_filter_command(song):
     song.patterns[0].rows[1] = Row(command=0xB, data=0xF7)
     song.patterns[0].rows[2] = Row(command=0xC, data=0x80)
     frames = play(Player(song), 25)
-    assert (constants.RES_FILT_REG, 0xF7) in frames[12]
-    assert (constants.FC_HI_REG, 0x80) in frames[18]
+    assert (constants.RES_FILT_REG, 0xF7) in frames[14]
+    assert (constants.FC_HI_REG, 0x80) in frames[20]
 
 
 def test_set_ad_sr_wave_commands(song):
@@ -326,9 +357,9 @@ def test_set_ad_sr_wave_commands(song):
     song.patterns[0].rows[2] = Row(command=0x6, data=0x44)
     song.patterns[0].rows[3] = Row(command=0x7, data=0x21)
     frames = play(Player(song), 30)
-    assert (constants.AD_REG, 0x33) in frames[11]
-    assert (constants.SR_REG, 0x44) in frames[17]
-    assert (constants.CONTROL_REG, 0x21) in frames[23]
+    assert (constants.AD_REG, 0x33) in frames[13]
+    assert (constants.SR_REG, 0x44) in frames[19]
+    assert (constants.CONTROL_REG, 0x21) in frames[25]
 
 
 def test_wavetable_pointer_command(song):
@@ -338,47 +369,47 @@ def test_wavetable_pointer_command(song):
     song.patterns[0].rows[2] = Row(command=0x8, data=ptr)
     frames = play(Player(song), 25)
     # The new wavetable step executes on the command row's own tick 0.
-    assert (constants.CONTROL_REG, 0x11) in frames[17]
+    assert (constants.CONTROL_REG, 0x11) in frames[19]
 
 
 def test_wavetable_command_execution(song):
     song.wavetable.left = [0x41, 0xF6, 0xFF]
     song.wavetable.right = [0x00, 0x2A, 0x00]
     frames = play(Player(song), 10)
-    assert (constants.CONTROL_REG, 0x41) in frames[6]
+    assert (constants.CONTROL_REG, 0x41) in frames[8]
     # Step 2 executes pattern command 6XY (set sustain/release).
-    assert (constants.SR_REG, 0x2A) in frames[7]
+    assert (constants.SR_REG, 0x2A) in frames[9]
 
 
 def test_wavetable_arpeggio(song):
     song.wavetable.left = [0x41, 0x00, 0x00, 0xFF]
     song.wavetable.right = [0x00, 0x04, 0x07, 0x02]
-    history = freq_history(song, 12)
-    assert history[6] == constants.FREQ_TABLE[48]
-    assert history[7] == constants.FREQ_TABLE[52]
-    assert history[8] == constants.FREQ_TABLE[55]
-    # The jump loops steps 2-3.
+    history = freq_history(song, 14)
+    assert history[8] == constants.FREQ_TABLE[48]
     assert history[9] == constants.FREQ_TABLE[52]
+    assert history[10] == constants.FREQ_TABLE[55]
+    # The jump loops steps 2-3.
+    assert history[11] == constants.FREQ_TABLE[52]
 
 
 def test_wavetable_absolute_note_and_delay(song):
     song.wavetable.left = [0x81, 0x02, 0x41, 0xFF]
     song.wavetable.right = [0x80 + 60, 0x80, 0x00, 0x00]
-    history = freq_history(song, 14)
+    history = freq_history(song, 16)
     # Absolute C-5 with noise, regardless of the pattern note.
-    assert history[6] == constants.FREQ_TABLE[60]
-    # Two delay frames, one keep-frequency step, then the note's pitch.
-    assert history[7] == constants.FREQ_TABLE[60]
     assert history[8] == constants.FREQ_TABLE[60]
+    # Two delay frames, one keep-frequency step, then the note's pitch.
     assert history[9] == constants.FREQ_TABLE[60]
-    assert history[10] == constants.FREQ_TABLE[48]
+    assert history[10] == constants.FREQ_TABLE[60]
+    assert history[11] == constants.FREQ_TABLE[60]
+    assert history[12] == constants.FREQ_TABLE[48]
 
 
 def test_illegal_wavetable_command_stops(song):
     song.wavetable.left = [0x41, 0xFE, 0xFF]
     song.wavetable.right = [0x00, 0x00, 0x00]
     player = Player(song)
-    play(player, 8)
+    play(player, 10)
     assert not player.playing
     assert player.play_frame() == []
 
@@ -395,7 +426,7 @@ def test_gatetimer_legato_bits(song):
     assert not any((constants.CONTROL_REG, 0x40) in writes for writes in late)
     assert not any((constants.AD_REG, 0x0F) in writes for writes in late)
     # ...but its ADSR and wavetable still apply (gate stays on).
-    assert (constants.AD_REG, 0x55) in frames[29]
+    assert (constants.AD_REG, 0x55) in frames[31]
     freq = (player.regs[1] << 8) | player.regs[0]
     assert freq == constants.FREQ_TABLE[52]
     assert player.regs[constants.CONTROL_REG] == 0x41
@@ -405,15 +436,15 @@ def test_hard_restart_disabled_bit(song):
     song.instruments[0].gateoff_timer = 0x82
     frames = play(Player(song), 8)
     # Gate still masked off at fetch, but no $0F00 ADSR write.
-    assert (constants.AD_REG, 0x0F) not in frames[3]
-    assert (constants.AD_REG, 0x09) in frames[5]
+    assert (constants.AD_REG, 0x0F) not in frames[5]
+    assert (constants.AD_REG, 0x09) in frames[7]
 
 
 def test_transpose():
     song = basic_song()
     song.subtunes[0].channels[0].entries = [Transpose(2), PlayPattern(0)]
-    history = freq_history(song, 8)
-    assert history[6] == constants.FREQ_TABLE[50]
+    history = freq_history(song, 10)
+    assert history[8] == constants.FREQ_TABLE[50]
 
 
 def test_repeat():
@@ -426,9 +457,9 @@ def test_repeat():
     ]
     history = freq_history(song, 24)
     # Pattern 0 plays twice (repeat count 1 = one extra), then pattern 1.
-    assert history[6] == constants.FREQ_TABLE[48]
-    assert history[12] == constants.FREQ_TABLE[48]
-    assert history[18] == constants.FREQ_TABLE[60]
+    assert history[8] == constants.FREQ_TABLE[48]
+    assert history[14] == constants.FREQ_TABLE[48]
+    assert history[20] == constants.FREQ_TABLE[60]
 
 
 def test_subtunes():
@@ -443,16 +474,16 @@ def test_subtunes():
             ]
         )
     )
-    assert freq_history(song, 8)[6] == constants.FREQ_TABLE[48]
-    assert freq_history(song, 8, subtune=1)[6] == constants.FREQ_TABLE[60]
+    assert freq_history(song, 10)[8] == constants.FREQ_TABLE[48]
+    assert freq_history(song, 10, subtune=1)[8] == constants.FREQ_TABLE[60]
     with pytest.raises(GoatTrackerError, match="subtune"):
         Player(song, subtune=2)
 
 
 def test_until_loop(song):
     frames = list(iter_frames(song, until_loop=True))
-    # Loop detected at the orderlist wrap on frame 47.
-    assert len(frames) == 48
+    # Loop detected at the orderlist wrap on frame 49.
+    assert len(frames) == 50
 
 
 def test_max_frames(song):
@@ -506,7 +537,7 @@ def test_three_channels():
     )
     song.subtunes[0].channels[1].entries = [PlayPattern(1)]
     player = Player(song)
-    play(player, 8)
+    play(player, 9)
     assert player.regs[constants.CONTROL_REG] == 0x41
     assert player.regs[constants.CONTROL_REG + 7] == 0x21
     voice2_base = constants.VOICE_REG_SIZE
@@ -520,37 +551,37 @@ def test_wavetable_realtime_commands(song):
     vib = song.speedtable.add(0x02, 0x20)
     song.wavetable.left = [0x41, 0xF1, 0xF1, 0xF2, 0xF4, 0xFF]
     song.wavetable.right = [0x00, porta, porta, porta, vib, 0x05]
-    history = freq_history(song, 12)
-    assert history[6] == C4_FREQ
-    assert history[7] == C4_FREQ + 0x80
-    assert history[8] == C4_FREQ + 0x100
+    history = freq_history(song, 14)
+    assert history[8] == C4_FREQ
     assert history[9] == C4_FREQ + 0x80
+    assert history[10] == C4_FREQ + 0x100
+    assert history[11] == C4_FREQ + 0x80
     # The loop keeps running the vibrato step.
-    assert history[10] != history[9]
+    assert history[12] != history[11]
 
 
 def test_wavetable_toneporta_command(song):
     speed = song.speedtable.add(0x08, 0x00)
     song.wavetable.left = [0x81, 0xF3, 0xFF]
     song.wavetable.right = [0x80 + 60, speed, 0x02]
-    history = freq_history(song, 20)
+    history = freq_history(song, 22)
     # Starts on absolute C-5, slides down to the pattern note C-4.
-    assert history[6] == constants.FREQ_TABLE[60]
-    assert history[7] < constants.FREQ_TABLE[60]
-    assert history[16] == C4_FREQ
+    assert history[8] == constants.FREQ_TABLE[60]
+    assert history[9] < constants.FREQ_TABLE[60]
     assert history[18] == C4_FREQ
+    assert history[20] == C4_FREQ
 
 
 def test_wavetable_filter_and_volume_commands(song):
     song.wavetable.left = [0x41, 0xFB, 0xFC, 0xFD, 0xFB, 0xFF]
     song.wavetable.right = [0x00, 0xF1, 0x55, 0x07, 0x00, 0x00]
     player = Player(song)
-    frames = play(player, 12)
-    assert (constants.RES_FILT_REG, 0xF1) in frames[8]
-    assert (constants.FC_HI_REG, 0x55) in frames[9]
-    assert (constants.MODE_VOL_REG, 0x07) in frames[10]
+    frames = play(player, 14)
+    assert (constants.RES_FILT_REG, 0xF1) in frames[10]
+    assert (constants.FC_HI_REG, 0x55) in frames[11]
+    assert (constants.MODE_VOL_REG, 0x07) in frames[12]
     # Filter control $00 also stops filter execution.
-    assert (constants.RES_FILT_REG, 0x00) in frames[12 - 1]
+    assert (constants.RES_FILT_REG, 0x00) in frames[14 - 1]
 
 
 def test_wavetable_ad_pulse_filter_pointer_commands(song):
@@ -561,12 +592,12 @@ def test_wavetable_ad_pulse_filter_pointer_commands(song):
     song.wavetable.left = [0x41, 0xF5, 0xF9, 0xFA, 0xFF]
     song.wavetable.right = [0x00, 0x42, 0x01, 0x01, 0x00]
     player = Player(song)
-    frames = play(player, 12)
-    assert (constants.AD_REG, 0x42) in frames[7]
+    frames = play(player, 14)
+    assert (constants.AD_REG, 0x42) in frames[9]
     # Pulse runs right after the wavetable in the same frame; the
     # filter table runs at the start of the next frame's routine.
-    assert (constants.PULSE_HI_REG, 0x04) in frames[8]
-    assert (constants.FC_HI_REG, 0x66) in frames[10]
+    assert (constants.PULSE_HI_REG, 0x04) in frames[10]
+    assert (constants.FC_HI_REG, 0x66) in frames[12]
 
 
 def test_keyon_passes_wavetable_gate(song):
@@ -575,6 +606,6 @@ def test_keyon_passes_wavetable_gate(song):
     song.wavetable.right = [0x00, 0x80, 0x00]
     song.patterns[0].rows[2] = Row(note=constants.KEYON)
     history = reg_history(song, 20, constants.CONTROL_REG)
-    assert history[7] == 0x40
+    assert history[9] == 0x40
     # Keyon sets the gate mask, but the wavetable wave stays $40.
-    assert history[15] == 0x40
+    assert history[17] == 0x40

@@ -89,9 +89,23 @@ class Player:
         adparam: int = constants.DEFAULT_ADPARAM,
         optimize_pulse: bool = True,
         optimize_realtime: bool = True,
+        freq_table=None,
     ):
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
+        # The editor playroutine (gplay.c) reads a fixed note-frequency table
+        # zero-padded to 128 entries. The PACKED player (gt2reloc/player.s) lays
+        # the table out as ``freqtbllo[firstnote..lastnote]`` followed
+        # immediately by ``freqtblhi[...]`` with NO padding, then the songtable;
+        # an out-of-range note (a wavetable relative step past the last note)
+        # therefore overruns into the adjacent relocated memory and yields an
+        # image-specific frequency. ``freq_table`` lets a caller (the packed-SID
+        # decompiler) supply that exact 128-entry table read from the image so
+        # the render reproduces the packed player's overrun frequencies. When
+        # None the editor's zero-padded ``constants.FREQ_TABLE`` is used.
+        self._freq_table = (
+            constants.FREQ_TABLE if freq_table is None else tuple(freq_table)
+        )
         self.adparam = adparam & 0xFFFF
         self.optimize_pulse = optimize_pulse
         self.optimize_realtime = optimize_realtime
@@ -201,7 +215,7 @@ class Player:
         return self._rtable[table][(ptr - 1) & 0xFF]
 
     def _freq(self, note: int) -> int:
-        return constants.FREQ_TABLE[note & 0x7F]
+        return self._freq_table[note & 0x7F]
 
     def _speed_value(self, idx: int, chan: _Channel) -> int:
         """16-bit speedtable value; high bit selects realtime calculation."""

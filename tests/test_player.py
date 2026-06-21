@@ -89,6 +89,24 @@ def test_single_note_timeline(song):
     assert (constants.CONTROL_REG, 0x09) in frames[55]
 
 
+def test_freq_table_override(song):
+    """A per-instance ``freq_table`` overrides the editor's fixed note table so
+    the packed-SID decompiler can reproduce the packed player's overrun
+    frequencies (it lays the table out unpadded, so out-of-range notes read
+    adjacent image bytes). Default (None) keeps the editor table."""
+    # The default render emits C-4 at the standard table frequency.
+    base = play(Player(song), 60)
+    assert (constants.FREQ_LO_REG, C4_FREQ & 0xFF) in base[8]
+    assert (constants.FREQ_HI_REG, C4_FREQ >> 8) in base[8]
+    # Override note 48 (C-4) to an arbitrary image-specific value; the render
+    # now emits that frequency for the same note, nothing else changes.
+    table = list(constants.FREQ_TABLE)
+    table[48] = 0xBEEF
+    frames = play(Player(song, freq_table=table), 60)
+    assert (constants.FREQ_LO_REG, 0xEF) in frames[8]
+    assert (constants.FREQ_HI_REG, 0xBE) in frames[8]
+
+
 def test_keyoff_keyon(song):
     song.patterns[0].rows[4] = Row(note=constants.KEYOFF)
     song.patterns[0].rows[5] = Row(note=constants.KEYON)

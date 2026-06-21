@@ -258,20 +258,31 @@ class Player:
     def _toneporta(self, chan: _Channel, idx: int) -> None:
         targetfreq = self._freq(chan.note)
         if not idx:
-            chan.freq = targetfreq
-            chan.vibtime = 0
+            self._toneporta_reached(chan)
             return
         speed = self._speed_value(idx, chan)
         if chan.freq < targetfreq:
             chan.freq = (chan.freq + speed) & 0xFFFF
             if chan.freq > targetfreq:
-                chan.freq = targetfreq
-                chan.vibtime = 0
+                self._toneporta_reached(chan)
         if chan.freq > targetfreq:
             chan.freq = (chan.freq - speed) & 0xFFFF
             if chan.freq < targetfreq:
-                chan.freq = targetfreq
-                chan.vibtime = 0
+                self._toneporta_reached(chan)
+
+    def _toneporta_reached(self, chan: _Channel) -> None:
+        """Toneporta has reached/crossed the target note (player.s
+        ``mt_effect_3_found``): snap freq to the target, reset the vibrato phase,
+        and -- for the calculated-speed build (``mt_wavenoteabs``) -- latch the
+        channel ``lastnote`` to the target note. Without the lastnote latch, a
+        following calculated-speed (instrument or pattern) vibrato keeps deriving
+        its step from the PRE-porta note interval, so its depth is off by the
+        note-distance the porta covered (the dominant GoatTracker FREQ-class
+        mismatch). ``mt_chnlastnote`` is only written under ``NOCALCULATEDSPEED``,
+        so we mirror that by only latching it here."""
+        chan.freq = self._freq(chan.note)
+        chan.vibtime = 0
+        chan.lastnote = chan.note
 
     def _vibrato(self, chan: _Channel, idx: int) -> None:
         speed = 0

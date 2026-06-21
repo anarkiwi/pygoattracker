@@ -354,6 +354,36 @@ def test_tie_note(song):
     assert history[27] == constants.FREQ_TABLE[52]
 
 
+def test_toneporta_latches_lastnote_for_calculated_vibrato():
+    """When a toneportamento reaches its target, the calculated-speed build
+    latches ``lastnote`` to the target note (player.s ``mt_effect_3_found`` ->
+    ``mt_wavenoteabs`` stores ``mt_chnlastnote``). A following calculated-speed
+    vibrato must therefore derive its step from the TARGET note's interval, not
+    the pre-porta note's. Regression for the dominant GoatTracker FREQ-class
+    mismatch (the render kept a stale lastnote, so post-porta vibrato depth was
+    off by the porta's note distance)."""
+    # Toneporta C-4 -> E-4, then a calculated-speed vibrato (speedtable left
+    # high bit set -> note-relative depth, divisor 0).
+    song = basic_song(length=12)
+    add_test_instrument(song)
+    porta = song.speedtable.add(0x08, 0x00)
+    vib = song.speedtable.add(0x80, 0x00)
+    song.patterns[0].rows[2] = Row(note=note("E-4"), command=0x3, data=porta)
+    for row in range(4, 12):
+        song.patterns[0].rows[row] = Row(command=0x4, data=vib)
+    history = freq_history(song, 78)
+    e4 = constants.FREQ_TABLE[52]
+    # The porta reaches E-4 before the vibrato rows run.
+    assert e4 in history
+    # The calculated-speed vibrato depth around E-4 is the E-4 -> F-4 interval
+    # (lastnote latched to E-4), NOT the stale C-4 -> C#4 interval.
+    e_step = constants.FREQ_TABLE[53] - constants.FREQ_TABLE[52]
+    c_step = constants.FREQ_TABLE[49] - constants.FREQ_TABLE[48]
+    assert e_step != c_step
+    max_dev = max(history[30:]) - e4
+    assert max_dev == e_step  # not c_step (the pre-fix stale-lastnote value)
+
+
 def test_pulse_program(song):
     song.pulsetable.left = [0x88, 0x10, 0xFF]
     song.pulsetable.right = [0x00, 0x40, 0x00]

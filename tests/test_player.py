@@ -268,6 +268,49 @@ def test_instrument_vibrato_runs_during_gateoff_intro(song):
     assert set(freq_history(song, 14)) == {0}
 
 
+def _two_instr_gateoff_song():
+    """Two notes on the same voice using two different instruments, so the
+    second note's fetch flips the channel instrument during the gate-off window
+    before that note inits. Instrument 1 carries NO vibrato; instrument 2 a
+    strong, delay-0 speed-table vibrato. The freq held from note 1 is therefore
+    modulated by instrument 2's param ONLY when the param is read live."""
+    song = basic_song(length=16)
+    idx = song.speedtable.add(8, 0x60)  # large cmpvalue so vibtime keeps wobbling
+    add_test_instrument(song, vibrato_param=idx, vibrato_delay=0)
+    song.patterns[0].rows[0] = Row(note=note("C-4"), instrument=1)
+    song.patterns[0].rows[2] = Row(note=note("E-4"), instrument=2)
+    return song
+
+
+def test_live_vibrato_modulates_gateoff_window():
+    """With ``live_vibrato`` the continuous instrument vibrato reads its param
+    LIVE from the channel's current instrument (player.s ``mt_chninstr`` ->
+    ``mt_insvibparam-1``). When the second note's fetch has flipped the channel
+    to instrument 2 but the note has not yet inited (the 1-2 gate-off frames),
+    the held note-1 frequency is wobbled by instrument 2's vibrato."""
+    song = _two_instr_gateoff_song()
+    history = freq_history(song, 22, live_vibrato=True)
+    note1 = C4_FREQ
+    # The gate-off window (frames 18-19, before E-4 inits at 20) perturbs the
+    # held note-1 frequency off C4 by instrument 2's vibrato.
+    window = history[18:20]
+    assert all(f != note1 for f in window)
+    assert all(0 < f and abs(f - note1) <= 0x200 for f in window)
+
+
+def test_live_vibrato_default_off_holds_gateoff_frequency():
+    """Default ``live_vibrato=False`` keeps the editor/full-FX behavior: the
+    instrument-vibrato param is the one LATCHED at note-init (``cmddata``), so
+    the gate-off window before a new note inits does NOT vibrate the held
+    frequency with the incoming instrument's param. The voice frequency through
+    that window is exactly the held note-1 pitch (or 0 at gate-off retrigger)."""
+    song = _two_instr_gateoff_song()
+    history = freq_history(song, 22)  # live_vibrato defaults to False
+    # Through the same gate-off window the held frequency is exactly note-1's
+    # pitch -- the incoming instrument 2's vibrato is NOT applied.
+    assert history[18:20] == [C4_FREQ, C4_FREQ]
+
+
 def test_portamento_up(song):
     idx = song.speedtable.add(0x01, 0x00)
     for row in range(1, 4):

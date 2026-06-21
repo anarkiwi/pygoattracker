@@ -90,6 +90,7 @@ class Player:
         optimize_pulse: bool = True,
         optimize_realtime: bool = True,
         freq_table=None,
+        simplepulse: bool = False,
     ):
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
@@ -106,6 +107,13 @@ class Player:
         self._freq_table = (
             constants.FREQ_TABLE if freq_table is None else tuple(freq_table)
         )
+        # ``simplepulse`` selects the packed player's SIMPLEPULSE pulse code
+        # path (greloc's one-byte pulse optimization), which computes pulse
+        # width differently from the editor player. The pulse table must then
+        # be the PACKED table (greloc's set-pulse byte + swapped speed); see
+        # ``_pulse_exec_simple``. Default False = the editor's full-mod path,
+        # so .SNG / editor playback is unchanged.
+        self.simplepulse = simplepulse
         self.adparam = adparam & 0xFFFF
         self.optimize_pulse = optimize_pulse
         self.optimize_realtime = optimize_realtime
@@ -551,6 +559,9 @@ class Player:
             self._toneporta(chan, chan.cmddata)
 
     def _pulse_exec(self, chan: _Channel) -> None:
+        if self.simplepulse:
+            self._pulse_exec_simple(chan)
+            return
         ptbl = constants.PTBL
         if self._lt(ptbl, chan.pulse_table_ptr) == constants.TABLEJUMP:
             chan.pulse_table_ptr = self._rt(ptbl, chan.pulse_table_ptr)
@@ -568,6 +579,50 @@ class Player:
             if speed >= 0x80:
                 speed -= 0x100
             chan.pulse = (chan.pulse + speed) & 0xFFF
+            chan.pulsetime -= 1
+            if not chan.pulsetime:
+                chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
+
+    def _pulse_exec_simple(self, chan: _Channel) -> None:
+        """SIMPLEPULSE pulse executor (player.s mt_setpulse/mt_pulsemod,
+        ``.IF SIMPLEPULSE != 0``).
+
+        greloc's SIMPLEPULSE optimization (greloc.c ~888/1302) packs the
+        pulse table so a SET-PULSE step is ONE byte ``(pulsehi & 0x0f) |
+        (pulselo & 0xf0)`` and the modulation speed is pre-swapped
+        (``swapnybbles``). The packed player keeps a single ghost pulse byte:
+        mt_setpulse stores that one packed byte to BOTH ghostpulselo and
+        ghostpulsehi (no separate hi store, no ``& 0x0F``), and mt_pulsemod
+        does an 8-bit ``lo = lo + speed + carry`` accumulate writing the same
+        byte to both lo and hi. The SID then masks the high pulse nibble to 12
+        bits. The editor player (``_pulse_exec``) instead computes
+        ``pulse = (left & 0x0f) << 8 | right`` giving pulse-hi 0 where this
+        packed player gives pulse-hi = the packed byte's low nibble.
+
+        ``chan.pulse`` carries that single packed byte in its low 8 bits; the
+        12-bit SID pulse is ``((byte & 0x0f) << 8) | byte``.
+        """
+        ptbl = constants.PTBL
+        if self._lt(ptbl, chan.pulse_table_ptr) == constants.TABLEJUMP:
+            chan.pulse_table_ptr = self._rt(ptbl, chan.pulse_table_ptr)
+            if not chan.pulse_table_ptr:
+                return
+        byte = chan.pulse & 0xFF
+        if not chan.pulsetime:
+            left = self._lt(ptbl, chan.pulse_table_ptr)
+            if left >= 0x80:
+                # Set pulse: one packed byte -> both lo and hi ghost registers.
+                byte = self._rt(ptbl, chan.pulse_table_ptr)
+                chan.pulse = ((byte & 0x0F) << 8) | byte
+                chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
+                return
+            chan.pulsetime = left
+        if chan.pulsetime:
+            # mt_pulsemod: lo = lo + speed + carry-out; hi = lo (same byte).
+            speed = self._rt(ptbl, chan.pulse_table_ptr)
+            total = byte + speed
+            byte = (total + (total >> 8)) & 0xFF
+            chan.pulse = ((byte & 0x0F) << 8) | byte
             chan.pulsetime -= 1
             if not chan.pulsetime:
                 chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF

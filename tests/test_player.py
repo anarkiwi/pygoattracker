@@ -341,6 +341,57 @@ def test_pulse_low_byte_unmasked(song):
     assert player.regs[constants.PULSE_LO_REG] == 0x01
 
 
+def test_simplepulse_set_writes_packed_byte_to_both_nibbles(song):
+    # greloc's SIMPLEPULSE optimization packs a set-pulse step into one byte and
+    # the packed player stores it to BOTH ghostpulselo and ghostpulsehi.  For a
+    # packed set byte $88 the SID pulse is ((0x88 & 0x0f) << 8) | 0x88 == $888
+    # (pulse-hi nibble = the byte's low nibble), whereas the editor player
+    # computes (left & 0x0f) << 8 | right == $088 (pulse-hi 0).
+    song.pulsetable.left = [0x80, 0xFF]
+    song.pulsetable.right = [0x88, 0x00]
+    song.instruments[0].pulse_ptr = 1
+    editor = Player(song)
+    play(editor, 10)
+    assert (editor.regs[3] << 8) | editor.regs[2] == 0x088
+
+    packed = Player(song, simplepulse=True)
+    play(packed, 10)
+    assert (packed.regs[3] << 8) | packed.regs[2] == 0x888
+
+
+def test_simplepulse_modulation_accumulates_one_byte(song):
+    # SIMPLEPULSE modulation does lo = lo + speed + carry and mirrors the byte
+    # into pulse-hi.  Start at packed byte $08, then a 16-step modulation of $10:
+    # the byte walks $08,$18,$28,... and pulse-hi tracks its low nibble ($8).
+    song.pulsetable.left = [0x80, 0x10, 0xFF]
+    song.pulsetable.right = [0x08, 0x10, 0x00]
+    song.instruments[0].pulse_ptr = 1
+    player = Player(song, simplepulse=True)
+    play(player, 10)
+    history = []
+    for _ in range(20):
+        player.play_frame()
+        history.append((player.regs[3], player.regs[2]))  # (hi, lo)
+    # The defining SIMPLEPULSE invariant: the one ghost byte feeds both pulse
+    # registers, so pulse-hi is ALWAYS the low nibble of pulse-lo (the editor's
+    # 12-bit pulse keeps an independent hi byte and would not hold this).
+    assert all(hi == (lo & 0x0F) for hi, lo in history)
+    # While in the $10-per-step ramp the low byte climbs by $10 (low nibble
+    # fixed at $8) until a low-nibble carry advances the table.
+    assert history[0] == (0x08, 0x28)
+    assert history[2] == (0x08, 0x38)
+
+
+def test_simplepulse_default_off_matches_editor(song):
+    # Default simplepulse=False leaves the editor pulse path byte-identical.
+    song.pulsetable.left = [0x88, 0x10, 0xFF]
+    song.pulsetable.right = [0x00, 0x40, 0x00]
+    song.instruments[0].pulse_ptr = 1
+    a = reg_history(song, 40, constants.PULSE_HI_REG)
+    b = reg_history(song, 40, constants.PULSE_HI_REG, simplepulse=False)
+    assert a == b
+
+
 def test_filter_program():
     # A long pattern so the looping song does not retrigger the note
     # (and with it the filter program) during the measurement.

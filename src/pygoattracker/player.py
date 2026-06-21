@@ -91,6 +91,7 @@ class Player:
         optimize_realtime: bool = True,
         freq_table=None,
         simplepulse: bool = False,
+        live_vibrato: bool = False,
     ):
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
@@ -114,6 +115,19 @@ class Player:
         # ``_pulse_exec_simple``. Default False = the editor's full-mod path,
         # so .SNG / editor playback is unchanged.
         self.simplepulse = simplepulse
+        # ``live_vibrato`` selects the packed player's instrument-vibrato-only
+        # build (greloc NOEFFECTS != 0, i.e. no pattern-FX machinery). In that
+        # build the continuous instrument-vibrato effect reads its speed-table
+        # param LIVE from the channel's CURRENT instrument every tick
+        # (player.s ``ldy mt_chninstr,y ; lda mt_insvibparam-1,y``), so at a
+        # gate-off boundary -- where mt_getnewnote flips mt_chninstr to the new
+        # note's instrument 1-2 frames before the note inits -- it vibrates the
+        # held (old) frequency with the NEW instrument's param. The default
+        # full-FX build (NOEFFECTS == 0, and the editor's gplay.c) instead
+        # dispatches through ``mt_chnfx``/``mt_chnparam``, a param LATCHED only
+        # at note-init; default False keeps that editor-faithful latched read so
+        # .SNG / editor playback and full-FX packed tunes are unchanged.
+        self.live_vibrato = live_vibrato
         self.adparam = adparam & 0xFFFF
         self.optimize_pulse = optimize_pulse
         self.optimize_realtime = optimize_realtime
@@ -538,21 +552,32 @@ class Player:
         elif command == constants.CMD_PORTADOWN:
             self._porta_down(chan, chan.cmddata)
         elif command == constants.CMD_DONOTHING:
-            # Instrument vibrato (player.s mt_effect_0). Speed 0 = no vibrato.
-            # Otherwise count the vibrato delay down and vibrate once it runs
-            # out. The real player decrements while the delay is non-zero and
-            # vibrates at zero; the channel's delay starts at zero (the reset
-            # loop clears it and mt_initchn never reloads it), so an
-            # instrument-1 speed-table vibrato is audible from the gate-off
-            # intro frames -- the editor's gplay.c skips it instead. A note's
-            # init reloads the delay (>= 1), so this stays byte-exact with the
-            # editor for normal notes.
-            if not chan.cmddata:
+            # Instrument vibrato (player.s mt_effect_0). Speed 0 = no vibrato AND
+            # no vibdelay decrement (mt_effect_0's leading ``beq`` is before the
+            # dec). vibdelay is channel-retained, reloaded only at note-init
+            # (_new_note_init), matching mt_chnvibdelay; the channel delay starts
+            # at zero (the reset loop clears it and mt_initchn never reloads it),
+            # so an instrument-1 speed-table vibrato is audible from the gate-off
+            # intro frames -- the editor's gplay.c skips it instead.
+            #
+            # ``param`` source is build-dependent. The packed instrument-vibrato-
+            # only build (NOEFFECTS != 0, ``live_vibrato``) reads it LIVE from
+            # the channel's CURRENT instrument every tick (mt_chninstr ->
+            # mt_insvibparam-1), so at a gate-off boundary -- where mt_getnewnote
+            # flips mt_chninstr to the new note's instrument 1-2 frames before
+            # the note inits -- it vibrates the held (old) frequency with the NEW
+            # instrument's param. The full-FX build (NOEFFECTS == 0) and the
+            # editor instead use ``cmddata``, the param LATCHED at note-init.
+            if self.live_vibrato:
+                param = self._instr[chan.instr & 0x3F].speed_ptr
+            else:
+                param = chan.cmddata
+            if not param:
                 return
             if chan.vibdelay > 1:
                 chan.vibdelay -= 1
                 return
-            self._vibrato(chan, chan.cmddata)
+            self._vibrato(chan, param)
         elif command == constants.CMD_VIBRATO:
             self._vibrato(chan, chan.cmddata)
         elif command == constants.CMD_TONEPORTA:

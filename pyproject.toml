@@ -25,9 +25,13 @@ classifiers = [
 # Audio rendering drives an emulated SID via pyresidfp; everything else
 # (read/write/play/register logs) is pure stdlib.
 audio = ["pyresidfp>=0.17"]
+# Decompiling crunched/relocated .sid files runs their 6502 init in py65;
+# direct-load packed .sid files decompile with stdlib only.
+sid = ["py65>=1.1"]
 dev = [
     "black>=24",
     "pylint>=3",
+    "py65>=1.1",
     "pyresidfp>=0.17",
     "pytest>=7",
     "pytest-cov>=4",

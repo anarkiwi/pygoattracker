@@ -23,3 +23,7 @@ class NinjaValidationError(GoatTrackerError):
 
 class ConversionError(GoatTrackerError):
     """A song uses features the target format cannot express."""
+
+
+class SidParseError(GoatTrackerError):
+    """A .sid file could not be parsed or is not a packed GoatTracker tune."""

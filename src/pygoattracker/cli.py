@@ -66,6 +66,22 @@ def _nt2(args) -> None:
     print(f"wrote {args.output}")
 
 
+def _sid2sng(args) -> None:
+    from pygoattracker import sid
+    from pygoattracker.writer import write_sng
+
+    result = sid.decompile_sid(args.sid, subtune=args.subtune)
+    write_sng(result.song, args.output)
+    song = result.song
+    print(f"decompiled {args.sid}")
+    print(f"  name:        {song.name}")
+    print(f"  subtunes:    {len(song.subtunes)}")
+    print(f"  patterns:    {len(song.patterns)}")
+    print(f"  instruments: {len(song.instruments)}")
+    print(f"  simplepulse: {result.info.simplepulse}")
+    print(f"wrote {args.output}")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pygoattracker", description="GoatTracker 2 song tools"
@@ -100,6 +116,14 @@ def _parser() -> argparse.ArgumentParser:
     wav.add_argument("--seconds", type=float, default=60.0)
     wav.add_argument("--model", choices=audio.CHIP_MODELS, default="8580")
     wav.set_defaults(func=_wav)
+
+    sid2sng = commands.add_parser(
+        "sid2sng", help="decompile a packed GoatTracker .sid into a .sng"
+    )
+    sid2sng.add_argument("sid", help="packed GoatTracker .sid file")
+    sid2sng.add_argument("output", help=".sng file to write")
+    sid2sng.add_argument("--subtune", type=int, default=0)
+    sid2sng.set_defaults(func=_sid2sng)
     return parser
 
 

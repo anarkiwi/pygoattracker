@@ -7,6 +7,7 @@ from pygoattracker.errors import (
     GoatTrackerError,
     NinjaParseError,
     NinjaValidationError,
+    SidParseError,
     SngParseError,
     SngValidationError,
 )
@@ -36,6 +37,14 @@ from pygoattracker.model import (
 )
 from pygoattracker.player import Player, iter_frames
 from pygoattracker.reader import parse_sng, read_sng
+from pygoattracker.sid import (
+    DecompiledSid,
+    PackedInfo,
+    SidHeader,
+    decompile_sid,
+    parse_sid_header,
+    read_sid,
+)
 from pygoattracker.reglog import (
     RegWrite,
     iter_register_writes,
@@ -48,6 +57,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "ConversionError",
+    "DecompiledSid",
     "GoatTrackerError",
     "Instrument",
     "NinjaCommand",
@@ -57,12 +67,15 @@ __all__ = [
     "NinjaSong",
     "NinjaValidationError",
     "Orderlist",
+    "PackedInfo",
     "Pattern",
     "PlayPattern",
     "Player",
     "RegWrite",
     "Repeat",
     "Row",
+    "SidHeader",
+    "SidParseError",
     "SngParseError",
     "SngValidationError",
     "Song",
@@ -72,14 +85,17 @@ __all__ = [
     "__version__",
     "build_nt2",
     "build_sng",
+    "decompile_sid",
     "entry_from_byte",
     "gt_to_nt2",
     "iter_frames",
     "iter_register_writes",
     "parse_nt2",
+    "parse_sid_header",
     "parse_sng",
     "read_nt2",
     "read_reglog",
+    "read_sid",
     "read_sng",
     "render_samples",
     "render_wav",

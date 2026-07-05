@@ -196,6 +196,39 @@ them instead. Some mappings are inherently approximate: pulse widths
 quantize to NinjaTracker's mirrored 8-bit register, filter resonance
 couples to the passband, and vibrato parameters map by analogy.
 
+## Recover a song from a .sid file
+
+`.sid` files (PSID/RSID) wrap a 6502 program: the GoatTracker *packed*
+playroutine (as produced by `gt2reloc`) followed by the song data.
+`decompile_sid` locates that data in the loaded image and inverts it back
+into a `Song`.
+
+```python
+from pygoattracker import decompile_sid, write_sng
+
+result = decompile_sid("tune.sid")     # path, bytes, or a binary file object
+write_sng(result.song, "tune.sng")     # a .SNG this library reads and plays
+print(result.info.simplepulse, result.info.firstnote)
+```
+
+The decompiler reads the frequency table, orderlists, packed patterns,
+per-field instrument arrays and the four wave/pulse/filter/speed tables,
+reversing greloc's byte transforms to editor form. The build flags that
+live in the player *code* rather than the song data (which instrument
+fields are present, table lengths, `nowavedelay`, `simplepulse`) are
+recovered by re-deriving greloc's deterministic rules and by an exact-fit
+tiling of the instrument/table region. `result.info` carries the packed
+playroutine options (`freq_table`, `simplepulse`) for building a matching
+`Player`.
+
+Direct-load images decompile with the standard library only. Crunched or
+relocated images have their init routine run in a 6502 emulator first;
+that path needs the `sid` extra:
+
+```bash
+pip install pygoattracker[sid]         # adds py65 for crunched .sid files
+```
+
 ## Command line
 
 ```bash
@@ -203,6 +236,7 @@ pygoattracker info tune.sng        # also detects NinjaTracker 2 files
 pygoattracker reglog tune.sng tune.reglog --seconds 30
 pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
 pygoattracker nt2 tune.sng tune.nt2 --lenient
+pygoattracker sid2sng tune.sid tune.sng   # decompile a packed GoatTracker .sid
 ```
 
 ## Tests

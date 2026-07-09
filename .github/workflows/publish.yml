@@ -47,8 +47,6 @@ jobs:
 
       - name: Smoke test the wheel
         run: |
-          # TODO: switch to PyPI once pysidtracker is published
-          pip install "pysidtracker @ git+https://github.com/anarkiwi/pysidtracker@main"
           pip install dist/*.whl
           python -c "import pygoattracker; print(pygoattracker.__version__)"
           pygoattracker --help

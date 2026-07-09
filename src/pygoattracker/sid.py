@@ -152,8 +152,7 @@ def _find_freq_hi_anchor(image: SidImage):
     best = None
     for firstnote in range(n - window + 1):
         needle = hi[firstnote : firstnote + window]
-        pos = data.find(needle, load)
-        while pos != -1:
+        for pos in image.find_all(needle):
             length = 0
             while (
                 firstnote + length < n
@@ -165,7 +164,6 @@ def _find_freq_hi_anchor(image: SidImage):
             if length >= _FREQ_MIN_LEN and lo_addr >= load:
                 if best is None or length > best[2]:
                     best = (lo_addr, firstnote, length)
-            pos = data.find(needle, pos + 1)
     return best
 
 

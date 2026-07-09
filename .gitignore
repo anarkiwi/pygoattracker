@@ -219,4 +219,6 @@ __marimo__/
 
 # test fixture downloads
 tests/.fixture_cache/
+# HVSC corpus tunes are copyright works -- fetched on demand, never committed.
+tests/.tunecache/
 .coverage.floor

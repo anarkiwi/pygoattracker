@@ -20,6 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Sound/Audio",
 ]
+dependencies = [
+    "pysidtracker>=0.1",
+]
 
 [project.optional-dependencies]
 # Audio rendering drives an emulated SID via pyresidfp; everything else
@@ -35,6 +38,7 @@ dev = [
     "pyresidfp>=0.17",
     "pytest>=7",
     "pytest-cov>=4",
+    "pytest-xdist>=3",
 ]
 
 [project.scripts]
@@ -51,7 +55,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -n auto"
 
 [tool.coverage.run]
 branch = true

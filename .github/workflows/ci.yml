@@ -20,6 +20,8 @@ jobs:
       - name: Install package + dev deps
         run: |
           python -m pip install --upgrade pip
+          # TODO: switch to PyPI once pysidtracker is published
+          pip install "pysidtracker @ git+https://github.com/anarkiwi/pysidtracker@main"
           pip install -e ".[dev]"
       - name: black --check
         run: black --check src/pygoattracker tests
@@ -41,6 +43,8 @@ jobs:
           python -m build
       - name: Smoke test the wheel
         run: |
+          # TODO: switch to PyPI once pysidtracker is published
+          pip install "pysidtracker @ git+https://github.com/anarkiwi/pysidtracker@main"
           pip install dist/*.whl
           python -c "import pygoattracker; print(pygoattracker.__version__)"
           pygoattracker --help

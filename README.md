@@ -1,268 +1,58 @@
 # pygoattracker
 
 Pure-Python reader, writer, and player for
-[GoatTracker 2](https://sourceforge.net/projects/goattracker2/) `.SNG`
-songs, with SID register log output and audio rendering through an
-emulated SID.
+[GoatTracker 2](https://sourceforge.net/projects/goattracker2/) `.SNG` songs,
+with SID register-log output and audio rendering through an emulated SID.
 
-GoatTracker is a family of tracker applications for composing C64/SID
-music by Lasse Öörni (Cadaver). pygoattracker implements the GTS5 song
-format and the playroutine from first principles, following the
-GoatTracker 2.76 format documentation and `gplay.c`.
+Consumes `.sid` files (PSID/RSID containers) and bare `.prg` images through the
+shared [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) base: the
+packed GoatTracker playroutine (as produced by `gt2reloc`) is detected and
+decompiled back to a `Song`, including crunched/relocated images whose init is
+run in a 6502 emulator — container headers are not trusted.
 
 ## Install
 
 ```bash
 pip install pygoattracker          # read/write/play/register logs
 pip install pygoattracker[audio]   # + WAV rendering via pyresidfp
+pip install pygoattracker[sid]     # + py65 for crunched/relocated .sid files
 ```
 
-No required dependencies: everything except audio rendering is stdlib
-only.
+Everything except audio rendering and crunched-`.sid` emulation is stdlib only.
 
-## Read a song
+## Usage
+
+Recover a song from a `.sid` file:
+
+```python
+from pygoattracker import decompile_sid, write_sng
+
+result = decompile_sid("tune.sid")     # path, bytes, or binary file object
+song = result.song                     # the parsed Song model
+write_sng(song, "tune.sng")            # a .SNG this library reads and plays
+```
+
+Read a GoatTracker `.SNG` song:
 
 ```python
 from pygoattracker import read_sng
 
 song = read_sng("tune.sng")
 print(song.name, song.author, song.copyright)
-
-for instrument in song.instruments:
-    print(instrument.name, hex(instrument.attack_decay))
-
-# Patterns are typed rows; orderlists are typed entries.
-for row in song.patterns[0].rows[:4]:
-    print(row)                      # e.g. "C-4 01000"
-print(song.subtunes[0].channels[0].entries)
 ```
 
-`read_sng` accepts a path, bytes, or a binary file object, and reads
-every GoatTracker song generation: GTS5/GTS4/GTS3, GTS2 (early
-3-table GoatTracker 2.xx) and GTS! (GoatTracker 1.x). Old formats are
-converted on load exactly as GoatTracker 2.76 imports them --
-including GT1's inline instrument wavetables, synthesized pulse
-programs, filtertable conversion and 0XY-arpeggio extraction -- so
-they play and write back as GTS5. The writer always emits GTS5;
-GTS5 read -> write round trips are byte-identical.
+See [docs/usage.md](docs/usage.md) for building songs, playback, register logs,
+WAV rendering, NinjaTracker 2, and the command line, and
+[docs/format.md](docs/format.md) for the format specification, data model, and
+`.sid` decompilation notes.
 
-## Build a song from scratch
-
-```python
-from pygoattracker import (
-    Instrument, Pattern, Row, Song, write_sng,
-)
-from pygoattracker.constants import note_value
-
-song = Song(name="DEMO", author="ME", copyright="2026")
-
-# A pulse waveform program: one wavetable row + stop.
-wave_ptr = song.wavetable.add(0x41, 0x00)
-song.wavetable.add(0xFF, 0x00)
-
-song.instruments.append(
-    Instrument(
-        attack_decay=0x09,
-        sustain_release=0x00,
-        wave_ptr=wave_ptr,
-        gateoff_timer=2,
-        first_wave=0x09,           # test+gate on the init frame
-        name="LEAD",
-    )
-)
-
-pattern = Pattern.empty(16)
-pattern.rows[0] = Row(note=note_value("C-4"), instrument=1)
-pattern.rows[8] = Row(note=note_value("G-4"), instrument=1)
-song.patterns = [pattern]
-
-write_sng(song, "demo.sng")        # loads in GoatTracker 2
-```
-
-The writer validates format limits and references (patterns,
-instruments, table pointers) before emitting anything; you describe
-content, not bytes.
-
-## Play a song: SID register writes
-
-The player ports the GoatTracker 2 playroutine tick for tick:
-sequencer (transpose/repeat/restart), funktempo, wave/pulse/filter
-table execution including wavetable command execution, speedtable
-vibrato/portamento (including note-independent speeds), gateoff timer,
-and hard restart.
-
-```python
-from pygoattracker import Player, read_sng
-
-player = Player(read_sng("tune.sng"), subtune=0)
-for _ in range(50 * 60):                  # one minute at 50 Hz
-    for reg, value in player.play_frame():
-        print(f"${0xD400 + reg:04X} = ${value:02X}")
-```
-
-`play_frame()` returns one PAL frame's register writes in ascending
-register order (the first frame initializes all 25 registers).
-
-Not implemented: multispeed playback and the editor's jamming /
-mid-song start modes.
-
-## Write a SID register log
-
-```python
-from pygoattracker import iter_register_writes, write_reglog, read_sng
-
-song = read_sng("tune.sng")
-writes = iter_register_writes(song, until_loop=True)
-write_reglog(writes, "tune.reglog")
-```
-
-Logs are one `clock reg val` triple per line (absolute clock in PAL
-CPU cycles, decimal, `#` comments). They load straight into pandas:
-
-```python
-import pandas as pd
-
-df = pd.read_csv(
-    "tune.reglog", sep=" ", comment="#", names=["clock", "reg", "val"]
-)
-```
-
-`read_reglog` reads the format back as a list of `RegWrite` tuples.
-
-## Render through an emulated SID
-
-```python
-from pygoattracker import read_sng, render_wav
-
-render_wav(read_sng("tune.sng"), "tune.wav", seconds=60, model="8580")
-```
-
-Rendering drives [pyresidfp](https://pypi.org/project/pyresidfp/)
-(reSIDfp emulation), clocking each register write individually at the
-same in-frame offsets the register log uses. `render_samples` returns
-raw 16-bit samples instead; pass `device=` to use any other emulator
-object with `write_register`/`clock`/`sampling_frequency`.
-
-## NinjaTracker 2
-
-[NinjaTracker 2](http://covertbitops.c64.org) songs (the C64 editor's
-`N2` work files) read and write through their own typed model:
-
-```python
-from pygoattracker import read_nt2, write_nt2
-
-song = read_nt2("tune")            # files saved by the C64 editor
-print(song.hr_param, song.first_wave)
-for command in song.commands:      # NT2 commands double as instruments
-    print(command.name, hex(command.attack_decay))
-for row in song.patterns[0].rows[:4]:
-    print(row)                     # e.g. "C-2 01 08"
-write_nt2(song, "tune.out")
-```
-
-Tracks reuse the typed `PlayPattern`/`Transpose` entries (NinjaTracker
-transposes are -64..+63 halftones; byte `$FF` is zero -- the format
-doc's "$C0 = zero" does not match the player or the example tunes).
-The writer emits canonical output: stale editor bytes after pattern
-terminators are not preserved, so real files round-trip semantically
-(byte-identically when they carry no stale bytes). There is no
-NinjaTracker playroutine port; parsing and writing only.
-
-### Convert GoatTracker songs to NinjaTracker 2
-
-```python
-from pygoattracker import gt_to_nt2, read_sng, write_nt2
-
-song = read_sng("tune.sng")
-report = []
-converted = gt_to_nt2(song, errors="drop", report=report)
-write_nt2(converted, "tune.nt2")
-print(report)   # one line per feature NinjaTracker cannot express
-```
-
-NinjaTracker has no tempo, so conversion replays the playroutine's
-sequencer/tempo logic (funktempo and FXY commands included) to bake
-every row's frame count into NinjaTracker durations; rests merge into
-the previous row and long holds split into continuation rows. The
-song is simulated for two full loops and must play both identically.
-Instruments become commands (vibrato folds into the wavetable),
-toneportamento becomes NinjaTracker's slide-to-target, 4XY vibrato
-and 8/9/AXY pointers become synthesized legato commands, and 5/6XY
-become ADSR commands. ``errors="strict"`` (default) raises
-``ConversionError`` on anything inexpressible (free 1/2XY portamento,
-7XY/BXY/CXY/DXY, wavetable command execution, notes below C-1,
-non-uniform hardrestart setups); ``errors="drop"`` drops and reports
-them instead. Some mappings are inherently approximate: pulse widths
-quantize to NinjaTracker's mirrored 8-bit register, filter resonance
-couples to the passband, and vibrato parameters map by analogy.
-
-## Recover a song from a .sid file
-
-`.sid` files (PSID/RSID) wrap a 6502 program: the GoatTracker *packed*
-playroutine (as produced by `gt2reloc`) followed by the song data.
-`decompile_sid` locates that data in the loaded image and inverts it back
-into a `Song`.
-
-```python
-from pygoattracker import decompile_sid, write_sng
-
-result = decompile_sid("tune.sid")     # path, bytes, or a binary file object
-write_sng(result.song, "tune.sng")     # a .SNG this library reads and plays
-print(result.info.simplepulse, result.info.firstnote)
-```
-
-The decompiler reads the frequency table, orderlists, packed patterns,
-per-field instrument arrays and the four wave/pulse/filter/speed tables,
-reversing greloc's byte transforms to editor form. The build flags that
-live in the player *code* rather than the song data (which instrument
-fields are present, table lengths, `nowavedelay`, `simplepulse`) are
-recovered by re-deriving greloc's deterministic rules and by an exact-fit
-tiling of the instrument/table region. `result.info` carries the packed
-playroutine options (`freq_table`, `simplepulse`) for building a matching
-`Player`.
-
-Direct-load images decompile with the standard library only. Crunched or
-relocated images have their init routine run in a 6502 emulator first;
-that path needs the `sid` extra:
-
-```bash
-pip install pygoattracker[sid]         # adds py65 for crunched .sid files
-```
-
-## Command line
-
-```bash
-pygoattracker info tune.sng        # also detects NinjaTracker 2 files
-pygoattracker reglog tune.sng tune.reglog --seconds 30
-pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
-pygoattracker nt2 tune.sng tune.nt2 --lenient
-pygoattracker sid2sng tune.sid tune.sng   # decompile a packed GoatTracker .sid
-```
-
-## Tests
+## Development
 
 ```bash
 pip install -e ".[dev]"
 ./run_tests.sh        # black + pylint + pytest with coverage gate
 ```
 
-CI (`.github/workflows/ci.yml`) runs black, pylint, and the test suite
-with a `--cov-fail-under=85` coverage gate on Python 3.10-3.13, and
-builds + smoke tests the wheel. Publishing a GitHub release uploads
-sdist + wheel to PyPI via trusted publishing
-(`.github/workflows/publish.yml`); Dependabot keeps dependencies and
-actions current. The suite also enforces the gates from
-within: `tests/test_lint.py` runs black/pylint and
-`tests/test_coverage.py` re-runs the suite under coverage and fails
-below the floor, so a plain `pytest` cannot pass with lint errors or
-insufficient coverage.
-
-The integration tests download three GoatTracker 2 example songs and
-the NinjaTracker 2 distribution disk image (SHA-256 pinned; a minimal
-1541 reader extracts the six example tunes from the .d64). They verify
-byte-identical .SNG round trips plus 500 frames of playback each, and
-NinjaTracker round trips against all six tunes; they skip offline.
-
 ## License
 
-Apache 2.0 - see [`LICENSE`](LICENSE).
+Apache 2.0 — see [`LICENSE`](LICENSE).

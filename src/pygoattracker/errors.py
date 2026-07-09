@@ -1,7 +1,9 @@
 """Exceptions raised by pygoattracker."""
 
+from pysidtracker import SidError
 
-class GoatTrackerError(Exception):
+
+class GoatTrackerError(SidError):
     """Base class for all pygoattracker errors."""
 
 

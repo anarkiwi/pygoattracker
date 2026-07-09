@@ -39,6 +39,7 @@ from pygoattracker.player import Player, iter_frames
 from pygoattracker.reader import parse_sng, read_sng
 from pygoattracker.sid import (
     DecompiledSid,
+    GoatTrackerSidParser,
     PackedInfo,
     SidHeader,
     decompile_sid,
@@ -59,6 +60,7 @@ __all__ = [
     "ConversionError",
     "DecompiledSid",
     "GoatTrackerError",
+    "GoatTrackerSidParser",
     "Instrument",
     "NinjaCommand",
     "NinjaParseError",

@@ -10,9 +10,11 @@ import struct
 
 import pytest
 
+from pysidtracker import PlayroutineKind, SidError
+
 from pygoattracker import constants
 from pygoattracker import sid
-from pygoattracker.errors import SidParseError
+from pygoattracker.errors import GoatTrackerError, SidParseError
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
 
@@ -45,8 +47,17 @@ def _psid(
     return bytes(header) + struct.pack("<H", LOAD) + data
 
 
-def _minimal_packed() -> bytes:
-    """One subtune, one instrument, a 2-row wavetable, two 1-row patterns."""
+def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1) -> bytes:
+    """One subtune, one instrument, a 2-row wavetable, two 1-row patterns.
+
+    ``trailer`` appends bytes after the pattern block (as greloc does with
+    author info); the pattern count must come from the pattern-pointer table,
+    not the data end, so these must be ignored. ``freq_lo`` overrides the
+    frequency-table low column (to model a finetuned table whose high column is
+    stock but whose low column has been retuned). ``songs`` sets the PSID header
+    subtune count without changing the single-subtune data (to model a header
+    that mis-advertises the count).
+    """
     note_c4 = constants.note_value("C-4")
     mem = bytearray(0x100)
     freqlen = 12
@@ -59,7 +70,8 @@ def _minimal_packed() -> bytes:
         pos += len(chunk)
         return start
 
-    emit(constants.FREQ_LO[:freqlen])
+    lo_col = constants.FREQ_LO[:freqlen] if freq_lo is None else freq_lo[:freqlen]
+    emit(lo_col)
     emit(constants.FREQ_HI[:freqlen])
     songtbllo = emit([0, 0, 0])
     songtblhi = emit([0, 0, 0])
@@ -82,7 +94,7 @@ def _minimal_packed() -> bytes:
     for i, addr in enumerate((patt0, patt1)):
         mem[patttbllo + i] = (LOAD + addr) & 0xFF
         mem[patttblhi + i] = (LOAD + addr) >> 8
-    return _psid(bytes(mem[:pos]))
+    return _psid(bytes(mem[:pos]) + trailer, songs=songs)
 
 
 @pytest.fixture(name="packed")
@@ -145,6 +157,29 @@ def test_roundtrips_through_writer(packed):
     assert len(reparsed.patterns) == len(song.patterns)
     assert len(reparsed.instruments) == len(song.instruments)
     assert reparsed.wavetable.left == song.wavetable.left
+
+
+def test_pattern_count_ignores_trailing_bytes():
+    # Bytes trailing the pattern block (e.g. author info, or an unbounded
+    # decrunched image) must not be decoded as extra patterns.
+    junk = bytes([0x01, 0x60, 0x00] * 8)  # would parse as spurious patterns
+    song = sid.decompile_sid(_minimal_packed(trailer=junk)).song
+    assert len(song.patterns) == 2
+
+
+def test_count_patterns_from_pointer_table():
+    # patttbl with two entries; a valid third pattern follows but is not
+    # pointed to, so the count is 2.
+    mem = bytearray(0x40)
+    patt_lo = 0x00
+    first = 0x10
+    mem[patt_lo + 0] = first  # patttbllo[0]
+    mem[patt_lo + 1] = first + 4  # patttbllo[1]
+    mem[patt_lo + 2] = 0x00  # patttblhi[0]
+    mem[patt_lo + 3] = 0x00  # patttblhi[1]
+    mem[first : first + 4] = bytes([0x60, 0x60, 0x60, 0x00])  # pattern 0
+    mem[first + 4 : first + 8] = bytes([0x61, 0x61, 0x61, 0x00])  # pattern 1
+    assert sid._count_patterns(mem, patt_lo, first, order_start=0x30) == 2
 
 
 def test_no_frequency_table():
@@ -232,6 +267,107 @@ def test_cli_sid2sng(tmp_path, packed):
     assert main(["sid2sng", str(sid_path), str(out)]) == 0
     reparsed = parse_sng(out.read_bytes())
     assert len(reparsed.patterns) == 2
+
+
+def test_error_base_is_sid_error():
+    # The pygoattracker error hierarchy is re-parented onto pysidtracker's.
+    assert issubclass(GoatTrackerError, SidError)
+    assert issubclass(SidParseError, SidError)
+
+
+def test_parser_detects_direct_load(packed):
+    detection = sid.GoatTrackerSidParser().detect(packed)
+    assert detection.kind is PlayroutineKind.DIRECT
+    assert detection.trustworthy_header
+    assert not detection.ran_init
+    assert detection.anchor  # the frequency-table anchor tuple
+
+
+def test_parser_parse_returns_song(packed):
+    song = sid.GoatTrackerSidParser().parse(packed)
+    assert len(song.patterns) == 2
+
+
+# --- finetuned frequency table (stock high column, retuned low column) --------
+
+
+def _retuned_low():
+    # A low column that differs from the stock table so the exact both-column
+    # anchor misses, but the high column is left stock so the fallback finds it.
+    return tuple((b + 3) & 0xFF for b in constants.FREQ_LO)
+
+
+def test_finetuned_freqtable_split_anchor_misses():
+    from pysidtracker import SidImage
+
+    image = SidImage.from_sid(_minimal_packed(freq_lo=_retuned_low()))
+    # exact both-column match fails on the retuned low bytes ...
+    assert (
+        image.find_split_table(constants.FREQ_LO, constants.FREQ_HI, min_length=8)
+        is None
+    )
+    # ... but the high-column fallback recovers the anchor.
+    assert sid._find_freq_hi_anchor(image) is not None
+
+
+def test_finetuned_freqtable_decompiles():
+    song = sid.decompile_sid(_minimal_packed(freq_lo=_retuned_low())).song
+    assert len(song.patterns) == 2
+    assert song.patterns[0].rows[0].note == constants.note_value("C-4")
+
+
+def test_finetuned_freqtable_recovers_retuned_low_bytes():
+    lo = _retuned_low()
+    result = sid.decompile_sid(_minimal_packed(freq_lo=lo))
+    # The reported frequency table reflects the retuned low bytes read from the
+    # image, not the stock table.
+    freq = result.info.freq_table
+    assert (freq[0] & 0xFF) == lo[0]
+
+
+def test_parser_detects_finetuned_as_direct():
+    detection = sid.GoatTrackerSidParser().detect(
+        _minimal_packed(freq_lo=_retuned_low())
+    )
+    assert detection.kind is PlayroutineKind.DIRECT
+
+
+# --- subtune count recovered from the packed layout, not the header -----------
+
+
+def test_candidate_song_counts_prefers_header():
+    class H:
+        songs = 4
+
+    counts = sid._candidate_song_counts(H())
+    assert counts[0] == 4
+    assert set(counts) == set(range(1, constants.MAX_SONGS + 1))
+
+
+def test_candidate_song_counts_skips_implausible_header():
+    class H:
+        songs = 99  # out of range, must not be tried first
+
+    counts = sid._candidate_song_counts(H())
+    assert counts[0] == 1
+    assert 99 not in counts
+
+
+def test_subtune_count_derived_when_header_wrong():
+    # Header advertises 2 subtunes but the data holds 1; decode must fall back
+    # to the count the packed layout actually supports.
+    song = sid.decompile_sid(_minimal_packed(songs=2)).song
+    assert len(song.subtunes) == 1
+    assert len(song.patterns) == 2
+
+
+# --- orderlist decode is bounded (a wrong subtune-count guess lands here) -----
+
+
+def test_decode_orderlist_without_terminator_raises():
+    mem = bytearray([0x00] * 4096)  # no 0xFF LOOPSONG marker anywhere
+    with pytest.raises(ValueError, match="terminator"):
+        sid.decode_packed_orderlist(mem, 0)
 
 
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")

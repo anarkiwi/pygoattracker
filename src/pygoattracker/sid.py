@@ -21,9 +21,19 @@ Images that are crunched or relocated on init are unpacked first by
 running the init routine in a 6502 emulator (:mod:`py65`, optional).
 """
 
-import io
 from dataclasses import dataclass
-from pathlib import Path
+
+from pysidtracker import (
+    BaseSidParser,
+    EmulatorUnavailable,
+    SidError,
+    SidFormatError,
+    SidHeader,
+    SidImage,
+    read_bytes,
+    run_init,
+)
+from pysidtracker import parse_sid_header as _parse_sid_header
 
 from pygoattracker import constants
 from pygoattracker.errors import SidParseError
@@ -53,24 +63,6 @@ _REPEAT = 0xD0
 _TRANSDOWN = 0xE0
 _TRANSUP = 0xF0
 _LOOPSONG = 0xFF
-
-
-@dataclass
-class SidHeader:
-    """Parsed PSID/RSID header fields (see the HVSC SID format spec)."""
-
-    magic: bytes
-    version: int
-    data_offset: int
-    load_address: int
-    init_address: int
-    play_address: int
-    songs: int
-    start_song: int
-    name: str
-    author: str
-    released: str
-    flags: int
 
 
 @dataclass
@@ -104,35 +96,26 @@ class DecompiledSid:
     subtune: int = 0
 
 
-def _u16be(data: bytes, off: int) -> int:
-    return (data[off] << 8) | data[off + 1]
-
-
-def _decode_str(raw: bytes) -> str:
-    return raw.split(b"\0", 1)[0].decode("latin-1")
-
-
 def parse_sid_header(raw: bytes) -> SidHeader:
     """Parse a PSID/RSID header from ``raw`` file bytes."""
-    magic = bytes(raw[:4])
+    data = bytes(raw)
+    magic = data[:4]
     if magic not in (b"PSID", b"RSID"):
         raise SidParseError(f"not a PSID/RSID file (identifier {magic!r})")
-    version = _u16be(raw, 4)
-    data_offset = _u16be(raw, 6)
-    return SidHeader(
-        magic=magic,
-        version=version,
-        data_offset=data_offset,
-        load_address=_u16be(raw, 8),
-        init_address=_u16be(raw, 10),
-        play_address=_u16be(raw, 12),
-        songs=_u16be(raw, 14),
-        start_song=_u16be(raw, 16),
-        name=_decode_str(raw[0x16:0x36]),
-        author=_decode_str(raw[0x36:0x56]),
-        released=_decode_str(raw[0x56:0x76]),
-        flags=_u16be(raw, 0x76) if version >= 2 else 0,
-    )
+    try:
+        return _parse_sid_header(data)
+    except SidFormatError as exc:
+        raise SidParseError(str(exc)) from exc
+
+
+def _load_image(raw: bytes) -> SidImage:
+    """Load ``raw`` ``.sid`` bytes into a :class:`~pysidtracker.SidImage`."""
+    data = bytes(raw)
+    parse_sid_header(data)  # validate magic, raising pygoattracker SidParseError
+    try:
+        return SidImage.from_sid(data)
+    except SidError as exc:
+        raise SidParseError(str(exc)) from exc
 
 
 def load_sid(raw: bytes):
@@ -142,54 +125,19 @@ def load_sid(raw: bytes):
     ``bytearray`` of length ``0x10000`` with the C64 data placed at its load
     address.
     """
-    header = parse_sid_header(raw)
-    data = raw[header.data_offset :]
-    load = header.load_address
-    if load == 0:
-        if len(data) < 2:
-            raise SidParseError("truncated: no in-file load address")
-        load = data[0] | (data[1] << 8)
-        data = data[2:]
-    end = load + len(data)
-    if end > 0x10000:
-        raise SidParseError(
-            f"data overruns memory (load {load:#06x}, {len(data)} bytes)"
-        )
-    mem = bytearray(0x10000)
-    mem[load:end] = data
-    return mem, header, load, end
+    image = _load_image(raw)
+    return image.mem, image.header, image.load, image.end
 
 
-def _find_freq_anchor(mem, lo, hi):
-    """Locate ``mt_freqtbllo`` in ``mem``.
+def _recognize(image: SidImage):
+    """Locate the greloc frequency-table anchor in ``image``.
 
     greloc emits ``freqtbllo[firstnote..lastnote]`` immediately followed by
     ``freqtblhi[firstnote..lastnote]`` (a contiguous slice of the known GT
     tables). Returns ``(addr, firstnote, length)`` for the longest match, or
     ``None``.
     """
-    best = None
-    n = len(lo)
-    for addr in range(0, 0x10000 - 8):
-        first = mem[addr]
-        for fn in range(n):
-            if lo[fn] != first:
-                continue
-            length = 0
-            while (
-                fn + length < n
-                and addr + length < 0x10000
-                and mem[addr + length] == lo[fn + length]
-            ):
-                length += 1
-            if length < 8:
-                continue
-            if addr + 2 * length > 0x10000:
-                continue
-            if all(mem[addr + length + i] == hi[fn + i] for i in range(length)):
-                if best is None or length > best[2]:
-                    best = (addr, fn, length)
-    return best
+    return image.find_split_table(constants.FREQ_LO, constants.FREQ_HI, min_length=8)
 
 
 def decode_packed_pattern(mem, addr):
@@ -247,6 +195,40 @@ def decode_packed_pattern(mem, addr):
             pos += 1
         rows.append(Row(note=note, instrument=instrument, command=command, data=data))
     return rows, pos
+
+
+def _count_patterns(mem, patt_lo, first_patt, order_start):
+    """Number of patterns, taken from the pattern-pointer table.
+
+    greloc stores a ``patttbllo``/``patttblhi`` pointer array at ``patt_lo``
+    with one entry per pattern; the patterns themselves are contiguous
+    starting at ``first_patt`` (just past the orderlists). This bounds the
+    pattern block exactly -- unlike the file end, which may have author info
+    or other bytes trailing the patterns, or (for a decrunched image) no
+    marker at all. Returns the largest pattern count whose pointer table
+    matches the sequentially decoded pattern start addresses, or ``None``.
+    """
+    best = None
+    for npat in range(1, constants.MAX_PATT + 1):
+        if patt_lo + 2 * npat >= order_start:
+            break
+        if (mem[patt_lo] | (mem[patt_lo + npat] << 8)) != first_patt:
+            continue
+        pos = first_patt
+        ok = True
+        for i in range(npat):
+            addr = mem[patt_lo + i] | (mem[patt_lo + npat + i] << 8)
+            if addr != pos:
+                ok = False
+                break
+            try:
+                _, pos = decode_packed_pattern(mem, pos)
+            except IndexError:
+                ok = False
+                break
+        if ok:
+            best = npat
+    return best
 
 
 def decode_packed_orderlist(mem, addr):
@@ -591,30 +573,6 @@ def _build_song(
     return song, info
 
 
-def _run_init(mem, header, subtune, max_cycles=8_000_000):
-    """Run a crunched/relocated image's init routine so data lands in place."""
-    try:
-        from py65.devices.mpu6502 import MPU
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        raise SidParseError(
-            "py65 is required to unpack this .sid (crunched/relocated): "
-            "pip install pygoattracker[sid]"
-        ) from exc
-    mpu = MPU(memory=mem)
-    start_sp = mpu.sp
-    mem[0x0100 + mpu.sp] = 0x00
-    mpu.sp = (mpu.sp - 1) & 0xFF
-    mem[0x0100 + mpu.sp] = 0x01
-    mpu.sp = (mpu.sp - 1) & 0xFF
-    mpu.a = subtune & 0xFF
-    mpu.pc = header.init_address
-    start_cycles = mpu.processorCycles
-    while mpu.sp < start_sp:
-        mpu.step()
-        if mpu.processorCycles - start_cycles > max_cycles:
-            break
-
-
 def decompile_sid(src, subtune=0) -> DecompiledSid:
     """Decompile a packed GoatTracker ``.sid`` into a :class:`DecompiledSid`.
 
@@ -622,17 +580,21 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
     images are inverted statically; crunched or relocated images have their
     init routine run in a 6502 emulator first (requires :mod:`py65`).
     """
-    raw = _read_bytes(src)
-    mem, header, _, dataend = load_sid(raw)
-    anchor = _find_freq_anchor(mem, constants.FREQ_LO, constants.FREQ_HI)
+    image = _load_image(read_bytes(src))
+    header = image.header
+    dataend = image.end
+    anchor = _recognize(image)
     if anchor is None:
-        _run_init(mem, header, subtune)
+        try:
+            run_init(image, subtune=subtune)
+        except EmulatorUnavailable as exc:
+            raise SidParseError(str(exc)) from exc
         dataend = 0x10000
-        anchor = _find_freq_anchor(mem, constants.FREQ_LO, constants.FREQ_HI)
+        anchor = _recognize(image)
     if anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
     try:
-        return _decompile(mem, header, dataend, anchor, subtune)
+        return _decompile(image.mem, header, dataend, anchor, subtune)
     except (IndexError, ValueError) as exc:
         raise SidParseError(f"malformed packed GoatTracker data: {exc}") from exc
 
@@ -651,18 +613,21 @@ def _decompile(mem, header, dataend, anchor, subtune) -> DecompiledSid:
     patt_lo = songtbl + 6 * songs
     orderlists = []
     order_end = 0
+    order_start = min(order_addrs)
     for base in order_addrs:
         olist, nxt = decode_packed_orderlist(mem, base)
         orderlists.append(olist)
         order_end = max(order_end, nxt)
+    npat = _count_patterns(mem, patt_lo, order_end, order_start)
+    if npat is None:
+        raise SidParseError("could not locate pattern-pointer table")
     patterns = []
     pos = order_end
-    while pos < dataend - 1:
-        rows, nxt = decode_packed_pattern(mem, pos)
+    for _ in range(npat):
+        rows, pos = decode_packed_pattern(mem, pos)
         patterns.append(rows)
-        pos = nxt
-    region_start = patt_lo + 2 * len(patterns)
-    region_end = min(order_addrs)
+    region_start = patt_lo + 2 * npat
+    region_end = order_start
     if not region_start < region_end:
         raise SidParseError("bad packed layout (instrument/table region empty)")
     num_instr = max((r.instrument for rows in patterns for r in rows), default=1)
@@ -674,16 +639,24 @@ def _decompile(mem, header, dataend, anchor, subtune) -> DecompiledSid:
     return DecompiledSid(song=song, info=info, header=header, subtune=subtune)
 
 
-def _read_bytes(src) -> bytes:
-    if isinstance(src, bytes):
-        return src
-    if isinstance(src, (str, Path)):
-        return Path(src).read_bytes()
-    if isinstance(src, io.IOBase) or hasattr(src, "read"):
-        return src.read()
-    raise TypeError(f"cannot read a sid from {type(src).__name__}")
-
-
 def read_sid(src, subtune=0) -> Song:
     """Read a packed GoatTracker ``.sid`` and return its :class:`Song`."""
     return decompile_sid(src, subtune=subtune).song
+
+
+class GoatTrackerSidParser(BaseSidParser):
+    """Plug GoatTracker ``.sid`` decompilation into the shared parser API.
+
+    :meth:`parse` returns the recovered :class:`~pygoattracker.model.Song`;
+    :meth:`recognize` locates the greloc frequency-table anchor so the inherited
+    :meth:`~pysidtracker.BaseSidParser.detect` can classify direct-load vs
+    packed/relocated tunes.
+    """
+
+    error_class = SidParseError
+
+    def parse(self, data, subtune=0, **kwargs) -> Song:
+        return read_sid(data, subtune=subtune)
+
+    def recognize(self, image: SidImage):
+        return _recognize(image)

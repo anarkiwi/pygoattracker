@@ -10,9 +10,11 @@ import struct
 
 import pytest
 
+from pysidtracker import PlayroutineKind, SidError
+
 from pygoattracker import constants
 from pygoattracker import sid
-from pygoattracker.errors import SidParseError
+from pygoattracker.errors import GoatTrackerError, SidParseError
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
 
@@ -45,8 +47,13 @@ def _psid(
     return bytes(header) + struct.pack("<H", LOAD) + data
 
 
-def _minimal_packed() -> bytes:
-    """One subtune, one instrument, a 2-row wavetable, two 1-row patterns."""
+def _minimal_packed(trailer: bytes = b"") -> bytes:
+    """One subtune, one instrument, a 2-row wavetable, two 1-row patterns.
+
+    ``trailer`` appends bytes after the pattern block (as greloc does with
+    author info); the pattern count must come from the pattern-pointer table,
+    not the data end, so these must be ignored.
+    """
     note_c4 = constants.note_value("C-4")
     mem = bytearray(0x100)
     freqlen = 12
@@ -82,7 +89,7 @@ def _minimal_packed() -> bytes:
     for i, addr in enumerate((patt0, patt1)):
         mem[patttbllo + i] = (LOAD + addr) & 0xFF
         mem[patttblhi + i] = (LOAD + addr) >> 8
-    return _psid(bytes(mem[:pos]))
+    return _psid(bytes(mem[:pos]) + trailer)
 
 
 @pytest.fixture(name="packed")
@@ -145,6 +152,29 @@ def test_roundtrips_through_writer(packed):
     assert len(reparsed.patterns) == len(song.patterns)
     assert len(reparsed.instruments) == len(song.instruments)
     assert reparsed.wavetable.left == song.wavetable.left
+
+
+def test_pattern_count_ignores_trailing_bytes():
+    # Bytes trailing the pattern block (e.g. author info, or an unbounded
+    # decrunched image) must not be decoded as extra patterns.
+    junk = bytes([0x01, 0x60, 0x00] * 8)  # would parse as spurious patterns
+    song = sid.decompile_sid(_minimal_packed(trailer=junk)).song
+    assert len(song.patterns) == 2
+
+
+def test_count_patterns_from_pointer_table():
+    # patttbl with two entries; a valid third pattern follows but is not
+    # pointed to, so the count is 2.
+    mem = bytearray(0x40)
+    patt_lo = 0x00
+    first = 0x10
+    mem[patt_lo + 0] = first  # patttbllo[0]
+    mem[patt_lo + 1] = first + 4  # patttbllo[1]
+    mem[patt_lo + 2] = 0x00  # patttblhi[0]
+    mem[patt_lo + 3] = 0x00  # patttblhi[1]
+    mem[first : first + 4] = bytes([0x60, 0x60, 0x60, 0x00])  # pattern 0
+    mem[first + 4 : first + 8] = bytes([0x61, 0x61, 0x61, 0x00])  # pattern 1
+    assert sid._count_patterns(mem, patt_lo, first, order_start=0x30) == 2
 
 
 def test_no_frequency_table():
@@ -232,6 +262,25 @@ def test_cli_sid2sng(tmp_path, packed):
     assert main(["sid2sng", str(sid_path), str(out)]) == 0
     reparsed = parse_sng(out.read_bytes())
     assert len(reparsed.patterns) == 2
+
+
+def test_error_base_is_sid_error():
+    # The pygoattracker error hierarchy is re-parented onto pysidtracker's.
+    assert issubclass(GoatTrackerError, SidError)
+    assert issubclass(SidParseError, SidError)
+
+
+def test_parser_detects_direct_load(packed):
+    detection = sid.GoatTrackerSidParser().detect(packed)
+    assert detection.kind is PlayroutineKind.DIRECT
+    assert detection.trustworthy_header
+    assert not detection.ran_init
+    assert detection.anchor  # the frequency-table anchor tuple
+
+
+def test_parser_parse_returns_song(packed):
+    song = sid.GoatTrackerSidParser().parse(packed)
+    assert len(song.patterns) == 2
 
 
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")

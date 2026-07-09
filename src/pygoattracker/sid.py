@@ -129,15 +129,61 @@ def load_sid(raw: bytes):
     return image.mem, image.header, image.load, image.end
 
 
+_FREQ_MIN_LEN = 8
+
+
+def _find_freq_hi_anchor(image: SidImage):
+    """Locate the frequency table by its high-byte column alone.
+
+    Many real GoatTracker tunes ship a *finetuned* frequency table: the
+    ``freqtblhi`` column is the stock GT progression but ``freqtbllo`` has been
+    retuned, so the both-columns match in :func:`SidImage.find_split_table`
+    misses them. The high column (a long monotonic run unique to GT) is the
+    reliable signature; greloc still emits ``freqtbllo[first..last]`` in the
+    ``length`` bytes immediately before it, so the low column is read from
+    memory as-is. Returns ``(lo_addr, firstnote, length)`` for the longest high
+    run of at least ``_FREQ_MIN_LEN`` whose low column stays in the image, else
+    ``None``.
+    """
+    data = bytes(image.mem)
+    hi = bytes(constants.FREQ_HI)
+    load, end, n = image.load, image.end, len(constants.FREQ_HI)
+    window = _FREQ_MIN_LEN
+    best = None
+    for firstnote in range(n - window + 1):
+        needle = hi[firstnote : firstnote + window]
+        pos = data.find(needle, load)
+        while pos != -1:
+            length = 0
+            while (
+                firstnote + length < n
+                and pos + length < end
+                and data[pos + length] == hi[firstnote + length]
+            ):
+                length += 1
+            lo_addr = pos - length
+            if length >= _FREQ_MIN_LEN and lo_addr >= load:
+                if best is None or length > best[2]:
+                    best = (lo_addr, firstnote, length)
+            pos = data.find(needle, pos + 1)
+    return best
+
+
 def _recognize(image: SidImage):
     """Locate the greloc frequency-table anchor in ``image``.
 
     greloc emits ``freqtbllo[firstnote..lastnote]`` immediately followed by
     ``freqtblhi[firstnote..lastnote]`` (a contiguous slice of the known GT
     tables). Returns ``(addr, firstnote, length)`` for the longest match, or
-    ``None``.
+    ``None``. Falls back to :func:`_find_freq_hi_anchor` for finetuned tables
+    whose low column has been retuned away from the stock GT values.
     """
-    return image.find_split_table(constants.FREQ_LO, constants.FREQ_HI, min_length=8)
+    anchor = image.find_split_table(
+        constants.FREQ_LO, constants.FREQ_HI, min_length=_FREQ_MIN_LEN
+    )
+    if anchor is not None:
+        return anchor
+    return _find_freq_hi_anchor(image)
 
 
 def decode_packed_pattern(mem, addr):
@@ -237,10 +283,19 @@ def decode_packed_orderlist(mem, addr):
     Packed orderlists use the .SNG entry encoding except that a repeat
     (``0xD0``-``0xDF``) trails the pattern it repeats instead of prefixing
     it. Ends at ``0xFF`` followed by a restart-position byte.
+
+    An orderlist holds at most ``MAX_SONGLEN`` positions, each contributing a
+    pattern plus an optional trailing repeat/leading transpose; walking more
+    entries than that means the pointer was not a real orderlist (a wrong
+    subtune-count guess in :func:`decompile_sid` lands here), so bail with
+    ``ValueError`` instead of scanning unbounded garbage to the next ``0xFF``.
     """
     entries = []
     pos = addr
+    limit = 3 * constants.MAX_SONGLEN
     while mem[pos] != _LOOPSONG:
+        if len(entries) > limit:
+            raise ValueError("orderlist has no terminator (not an orderlist)")
         byte = mem[pos]
         if byte < _REPEAT:
             nxt = mem[pos + 1]
@@ -500,7 +555,7 @@ def _read_table(mem, start, length):
 
 
 def _build_song(
-    mem, header, layout, addr, firstnote, length, orderlists, patterns, num_instr
+    mem, header, layout, addr, firstnote, length, orderlists, patterns, num_instr, songs
 ):
     sol = layout
     arrays = sol["arrays"]
@@ -557,7 +612,6 @@ def _build_song(
         )
     song.instruments = instruments
 
-    songs = header.songs
     song.subtunes = [
         Subtune(channels=orderlists[s * 3 : s * 3 + 3]) for s in range(songs)
     ]
@@ -593,17 +647,43 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
         anchor = _recognize(image)
     if anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
-    try:
-        return _decompile(image.mem, header, dataend, anchor, subtune)
-    except (IndexError, ValueError) as exc:
-        raise SidParseError(f"malformed packed GoatTracker data: {exc}") from exc
+    return _decompile_any_songs(image.mem, header, dataend, anchor, subtune)
 
 
-def _decompile(mem, header, dataend, anchor, subtune) -> DecompiledSid:
+def _candidate_song_counts(header):
+    """Subtune counts to try, most-trusted first.
+
+    The PSID ``songs`` field is preferred but is not reliable: gt2reloc emits a
+    song(order)-table sized to the GoatTracker song's subtune count, which some
+    tunes leave larger than the exported PSID ``songs`` value (and a few PSIDs
+    advertise an implausible count). The true count is fixed by the packed
+    layout, so fall back to scanning ``1..MAX_SONGS`` and take the first count
+    whose whole structure decodes.
+    """
+    counts = []
+    if 1 <= header.songs <= constants.MAX_SONGS:
+        counts.append(header.songs)
+    counts.extend(n for n in range(1, constants.MAX_SONGS + 1) if n not in counts)
+    return counts
+
+
+def _decompile_any_songs(mem, header, dataend, anchor, subtune) -> DecompiledSid:
+    """Decompile trying each candidate subtune count until one decodes."""
+    last_exc = None
+    for songs in _candidate_song_counts(header):
+        try:
+            return _decompile(mem, header, dataend, anchor, subtune, songs)
+        except (SidParseError, IndexError, ValueError) as exc:
+            last_exc = exc
+    if isinstance(last_exc, (IndexError, ValueError)):
+        raise SidParseError(
+            f"malformed packed GoatTracker data: {last_exc}"
+        ) from last_exc
+    raise last_exc if last_exc is not None else SidParseError("empty subtune search")
+
+
+def _decompile(mem, header, dataend, anchor, subtune, songs) -> DecompiledSid:
     addr, firstnote, length = anchor
-    songs = header.songs
-    if not 1 <= songs <= constants.MAX_SONGS:
-        raise SidParseError(f"implausible subtune count {songs}")
     songtbl = addr + 2 * length
     order_addrs = [
         mem[songtbl + i] | (mem[songtbl + 3 * songs + i] << 8) for i in range(3 * songs)
@@ -618,6 +698,12 @@ def _decompile(mem, header, dataend, anchor, subtune) -> DecompiledSid:
         olist, nxt = decode_packed_orderlist(mem, base)
         orderlists.append(olist)
         order_end = max(order_end, nxt)
+    # Cheap necessary condition: pattern 0 starts right after the orderlists, so
+    # patttbllo[0] must equal the low byte of that address. This rejects a wrong
+    # subtune count in O(1) before the O(patterns) scan below (the count search
+    # in decompile_sid tries many candidates against packed/unrelated data).
+    if mem[patt_lo] != (order_end & 0xFF):
+        raise SidParseError("could not locate pattern-pointer table")
     npat = _count_patterns(mem, patt_lo, order_end, order_start)
     if npat is None:
         raise SidParseError("could not locate pattern-pointer table")
@@ -634,7 +720,16 @@ def _decompile(mem, header, dataend, anchor, subtune) -> DecompiledSid:
     eps = _pattern_features(patterns)[1:]
     layout = _solve_layout(mem, region_start, region_end, num_instr, eps)
     song, info = _build_song(
-        mem, header, layout, addr, firstnote, length, orderlists, patterns, num_instr
+        mem,
+        header,
+        layout,
+        addr,
+        firstnote,
+        length,
+        orderlists,
+        patterns,
+        num_instr,
+        songs,
     )
     return DecompiledSid(song=song, info=info, header=header, subtune=subtune)
 

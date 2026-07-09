@@ -36,6 +36,9 @@ dev = [
     "pylint>=3",
     "py65>=1.1",
     "pyresidfp>=0.17",
+    # numpy accelerates pysidtracker's image anchor scan (pysidtracker[fast]);
+    # the HVSC corpus test relies on it to stay well under its time budget.
+    "numpy>=1.23",
     "pytest>=7",
     "pytest-cov>=4",
     "pytest-xdist>=3",

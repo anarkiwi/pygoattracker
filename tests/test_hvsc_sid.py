@@ -4,12 +4,14 @@ Unlike :mod:`tests.test_sid` (which assembles a synthetic packed image), this
 exercises the ``.sid`` decompiler against a deterministic, committed sample of
 real High Voltage SID Collection tunes that ``sidid`` identifies as GoatTracker
 players. HVSC tunes are copyright works and are never committed; only their
-relative paths are (``tests/data/hvsc_goattracker_sample.txt``). The test runs
-for real when the local tree is available and skips cleanly otherwise, so
-offline CI stays green.
+relative paths are (``tests/data/hvsc_goattracker_sample.txt``). Each tune is
+resolved from a local HVSC ``C64Music`` tree (``$HVSC``) when present, else
+fetched from the public HVSC mirror into the gitignored ``tests/.tunecache``
+(with retries), so the test runs for real in CI and skips an individual tune
+only when it is genuinely unreachable.
 
 Point it at a local HVSC ``C64Music`` directory with the ``HVSC`` environment
-variable::
+variable (otherwise it fetches from ``$HVSC_MIRROR``)::
 
     HVSC=/path/to/C64Music pytest tests/test_hvsc_sid.py
 
@@ -33,6 +35,7 @@ raises a clean ``SidParseError`` (never any other exception).
 """
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -43,6 +46,11 @@ from pygoattracker import sid
 from pygoattracker.errors import SidParseError
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
+
+import fetch_tunes  # noqa: E402  (after sys.path tweak)
 
 _SAMPLE_FILE = Path(__file__).parent / "data" / "hvsc_goattracker_sample.txt"
 
@@ -69,24 +77,39 @@ _REPRESENTATIVES = {
 }
 
 
-def _hvsc_root() -> Path:
-    root = os.environ.get("HVSC")
-    if not root:
-        pytest.skip("set HVSC to a local C64Music tree to run the corpus test")
-    path = Path(root)
-    if not path.is_dir():
-        pytest.skip(f"HVSC path {root} is not a directory")
-    return path
-
-
 def _sample() -> list:
     return [
         line.strip() for line in _SAMPLE_FILE.read_text().splitlines() if line.strip()
     ]
 
 
-def _present(root: Path) -> list:
-    return [rel for rel in _sample() if (root / rel).is_file()]
+def _resolve(rel: str):
+    """Local ``$HVSC`` path or a mirror-fetched cache path for ``rel``.
+
+    Prefers a local HVSC ``C64Music`` tree (``$HVSC``); otherwise fetches the
+    tune from the public HVSC mirror into the gitignored cache (with retries).
+    Returns ``None`` only when the tune is genuinely unreachable after retries,
+    so an individual tune skips cleanly rather than failing offline CI.
+    """
+    root = os.environ.get("HVSC")
+    if root:
+        cand = Path(root) / rel
+        if cand.is_file():
+            return cand
+    try:
+        return fetch_tunes.fetch(rel)
+    except Exception:  # pylint: disable=broad-except  # unreachable -> skip tune
+        return None
+
+
+def _present() -> list:
+    """``(rel, path)`` for each sampled tune resolvable locally or via mirror."""
+    out = []
+    for rel in _sample():
+        path = _resolve(rel)
+        if path is not None:
+            out.append((rel, path))
+    return out
 
 
 def test_sample_list_is_deterministic():
@@ -97,15 +120,14 @@ def test_sample_list_is_deterministic():
 
 
 def test_hvsc_corpus_decompiles():
-    root = _hvsc_root()
-    present = _present(root)
+    present = _present()
     if len(present) < 100:
-        pytest.skip(f"only {len(present)} sample tunes present under {root}")
+        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
 
     parsed = 0
     excluded = 0
-    for rel in present:
-        raw = (root / rel).read_bytes()
+    for rel, path in present:
+        raw = path.read_bytes()
         try:
             result = sid.decompile_sid(raw)
         except SidParseError:
@@ -136,14 +158,13 @@ def test_hvsc_corpus_all_direct_load():
     # Every recognised HVSC GoatTracker tune is a direct-load image: static
     # recognition succeeds without emulating init. init=False proves no tune in
     # the sample needs the unpack path (and keeps the test emulator-free/fast).
-    root = _hvsc_root()
-    present = _present(root)
+    present = _present()
     if len(present) < 100:
-        pytest.skip(f"only {len(present)} sample tunes present under {root}")
+        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
     parser = sid.GoatTrackerSidParser()
     non_direct = []
-    for rel in present:
-        raw = (root / rel).read_bytes()
+    for rel, path in present:
+        raw = path.read_bytes()
         detection = parser.detect(raw, init=False)
         if detection.kind is not PlayroutineKind.DIRECT:
             non_direct.append(rel)
@@ -154,10 +175,9 @@ def test_hvsc_corpus_all_direct_load():
 
 @pytest.mark.parametrize("rel,expect", _REPRESENTATIVES.items())
 def test_hvsc_representatives(rel, expect):
-    root = _hvsc_root()
-    path = root / rel
-    if not path.is_file():
-        pytest.skip(f"representative {rel} not present under {root}")
+    path = _resolve(rel)
+    if path is None:
+        pytest.skip(f"representative {rel} unavailable (local or mirror)")
     raw = path.read_bytes()
 
     detection = sid.GoatTrackerSidParser().detect(raw, init=False)

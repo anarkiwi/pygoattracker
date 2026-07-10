@@ -19,12 +19,13 @@ Loading an old song therefore gives a normal
 :class:`~pygoattracker.model.Song` that plays and writes back as GTS5.
 """
 
+from pysidtracker import decode_cstr
+
 from pygoattracker import constants
 from pygoattracker.errors import SngParseError
 from pygoattracker.model import Instrument, Pattern, Row, Song, Subtune, Table
 from pygoattracker.reader import (
     _Cursor,
-    _decode_str,
     _parse_orderlist,
     _parse_pattern,
     _parse_table,
@@ -105,9 +106,9 @@ def apply_legacy_conversions(song: Song, magic: bytes) -> None:
 
 def _parse_header(cur: _Cursor) -> Song:
     song = Song(
-        name=_decode_str(cur.take(constants.MAX_STR, "song name")),
-        author=_decode_str(cur.take(constants.MAX_STR, "author name")),
-        copyright=_decode_str(cur.take(constants.MAX_STR, "copyright")),
+        name=decode_cstr(cur.take(constants.MAX_STR, "song name")),
+        author=decode_cstr(cur.take(constants.MAX_STR, "author name")),
+        copyright=decode_cstr(cur.take(constants.MAX_STR, "copyright")),
         wavetable=Table(),
         pulsetable=Table(),
         filtertable=Table(),
@@ -142,7 +143,7 @@ def parse_gts2(data: bytes, finevibrato: bool = True) -> Song:
     for num in range(1, num_instruments + 1):
         what = f"instrument {num}"
         params = cur.take(9, what)
-        name = _decode_str(cur.take(constants.MAX_INSTRNAMELEN, f"{what} name"))
+        name = decode_cstr(cur.take(constants.MAX_INSTRNAMELEN, f"{what} name"))
         song.instruments.append(
             Instrument(
                 attack_decay=params[0],
@@ -221,7 +222,7 @@ class _Gts1Converter:
             instrument.gateoff_timer |= 0x80
         self.pulse[num] &= 0xFE
         wave_rows = params[7] // 2
-        instrument.name = _decode_str(
+        instrument.name = decode_cstr(
             cur.take(constants.MAX_INSTRNAMELEN, f"{what} name")
         )
         self._convert_wavetable(instrument, wave_rows, cur)

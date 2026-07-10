@@ -9,14 +9,15 @@ byte-identical output.
 import io
 from pathlib import Path
 
+from pysidtracker import check
+
 from pygoattracker import constants
 from pygoattracker.errors import SngValidationError
 from pygoattracker.model import Row, Song
 
 
 def _check(condition: bool, message: str) -> None:
-    if not condition:
-        raise SngValidationError(message)
+    check(condition, message, SngValidationError)
 
 
 def _encode_str(text: str, size: int, what: str) -> bytes:

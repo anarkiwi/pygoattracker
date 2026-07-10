@@ -27,6 +27,8 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pysidtracker import ByteCursor, check, decode_cstr
+
 from pygoattracker.errors import NinjaParseError, NinjaValidationError
 from pygoattracker.model import Orderlist, PlayPattern, Subtune, Table, Transpose
 
@@ -298,19 +300,6 @@ def _build_pattern_stream(pattern: NinjaPattern, num: int) -> bytes:
     return bytes(out)
 
 
-class _Block:
-    """Field cursor over the decoded song memory block."""
-
-    def __init__(self, block: bytes):
-        self.block = block
-        self.pos = 0
-
-    def take(self, size: int) -> bytes:
-        chunk = self.block[self.pos : self.pos + size]
-        self.pos += size
-        return chunk
-
-
 def parse_nt2(data: bytes) -> NinjaSong:
     """Parse NinjaTracker 2 song bytes into a :class:`NinjaSong`."""
     if data[:2] != NT2_MAGIC:
@@ -320,17 +309,19 @@ def parse_nt2(data: bytes) -> NinjaSong:
         raise NinjaParseError(
             f"bad song memory size {len(block)}, expected {_BLOCK_SIZE}"
         )
-    cur = _Block(block)
-    table_sides = [cur.take(_TABLE_BYTES) for _ in range(6)]
-    pattern_slots = [cur.take(NT2_MAX_PATTLEN) for _ in range(NT2_MAX_PATT)]
-    track_blocks = [cur.take(NT2_MAX_SONGLEN) for _ in range(NT2_MAX_SONGS)]
-    cmd_fields = [cur.take(NT2_MAX_CMD) for _ in range(5)]
-    cmd_names = [cur.take(NT2_MAX_CMDNAMELEN + 1) for _ in range(NT2_MAX_CMD)]
-    songlen = cur.take(NT2_MAX_SONGS * 3)
-    tbllen = cur.take(3)
-    num_commands = cur.take(1)[0]
-    hr_param = cur.take(1)[0]
-    first_wave = cur.take(1)[0]
+    cur = ByteCursor(block)
+    table_sides = [cur.take(_TABLE_BYTES, "table") for _ in range(6)]
+    pattern_slots = [cur.take(NT2_MAX_PATTLEN, "pattern") for _ in range(NT2_MAX_PATT)]
+    track_blocks = [cur.take(NT2_MAX_SONGLEN, "track") for _ in range(NT2_MAX_SONGS)]
+    cmd_fields = [cur.take(NT2_MAX_CMD, "command field") for _ in range(5)]
+    cmd_names = [
+        cur.take(NT2_MAX_CMDNAMELEN + 1, "command name") for _ in range(NT2_MAX_CMD)
+    ]
+    songlen = cur.take(NT2_MAX_SONGS * 3, "track lengths")
+    tbllen = cur.take(3, "table lengths")
+    num_commands = cur.u8("command count")
+    hr_param = cur.u8("hardrestart param")
+    first_wave = cur.u8("first wave")
 
     if num_commands > NT2_MAX_CMD:
         raise NinjaParseError(f"bad command count {num_commands}")
@@ -389,7 +380,7 @@ def parse_nt2(data: bytes) -> NinjaSong:
             wave_ptr=cmd_fields[2][num],
             pulse_ptr=cmd_fields[3][num],
             filter_ptr=cmd_fields[4][num],
-            name=cmd_names[num].split(b"\0", 1)[0].decode("latin-1").rstrip(),
+            name=decode_cstr(cmd_names[num]).rstrip(),
         )
         for num in range(num_commands)
     ]
@@ -397,8 +388,7 @@ def parse_nt2(data: bytes) -> NinjaSong:
 
 
 def _check(condition: bool, message: str) -> None:
-    if not condition:
-        raise NinjaValidationError(message)
+    check(condition, message, NinjaValidationError)
 
 
 def validate_nt2(song: NinjaSong) -> None:

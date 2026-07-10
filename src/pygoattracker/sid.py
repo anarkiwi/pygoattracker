@@ -18,15 +18,16 @@ The packed data layout and byte transforms follow GoatTracker 2.76's
   (and :class:`~pygoattracker.player.Player`) expect.
 
 Images that are crunched or relocated on init are unpacked first by
-running the init routine in a 6502 emulator (:mod:`py65`, optional).
+running the init routine in a 6502 emulator (:mod:`py65`).
 """
 
 from dataclasses import dataclass
 
 from pysidtracker import (
+    PSID_MAGIC,
+    RSID_MAGIC,
     BaseSidParser,
     CodePattern,
-    EmulatorUnavailable,
     SidError,
     SidFormatError,
     SidHeader,
@@ -130,7 +131,7 @@ def parse_sid_header(raw: bytes) -> SidHeader:
     """Parse a PSID/RSID header from ``raw`` file bytes."""
     data = bytes(raw)
     magic = data[:4]
-    if magic not in (b"PSID", b"RSID"):
+    if magic not in (PSID_MAGIC, RSID_MAGIC):
         raise SidParseError(f"not a PSID/RSID file (identifier {magic!r})")
     try:
         return _parse_sid_header(data)
@@ -846,10 +847,7 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
     dataend = image.end
     anchor = _recognize(image)
     if anchor is None:
-        try:
-            run_init(image, subtune=subtune)
-        except EmulatorUnavailable as exc:
-            raise SidParseError(str(exc)) from exc
+        run_init(image, subtune=subtune)
         dataend = 0x10000
         anchor = _recognize(image)
     if anchor is None:

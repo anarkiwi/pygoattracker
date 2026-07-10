@@ -8,6 +8,8 @@ the four tables, then patterns.
 import io
 from pathlib import Path
 
+from pysidtracker import decode_cstr
+
 from pygoattracker import constants
 from pygoattracker.errors import SngParseError
 from pygoattracker.model import (
@@ -43,10 +45,6 @@ class _Cursor:
         return self.take(1, what)[0]
 
 
-def _decode_str(raw: bytes) -> str:
-    return raw.split(b"\0", 1)[0].decode("latin-1")
-
-
 def _parse_orderlist(cur: _Cursor, subtune: int, channel: int) -> Orderlist:
     what = f"orderlist (subtune {subtune}, channel {channel})"
     length = cur.u8(f"{what} length")
@@ -65,7 +63,7 @@ def _parse_orderlist(cur: _Cursor, subtune: int, channel: int) -> Orderlist:
 def _parse_instrument(cur: _Cursor, num: int) -> Instrument:
     what = f"instrument {num}"
     params = cur.take(9, what)
-    name = _decode_str(cur.take(constants.MAX_INSTRNAMELEN, f"{what} name"))
+    name = decode_cstr(cur.take(constants.MAX_INSTRNAMELEN, f"{what} name"))
     return Instrument(
         attack_decay=params[0],
         sustain_release=params[1],
@@ -131,9 +129,9 @@ def parse_sng(data: bytes, finevibrato: bool = True) -> Song:
         return legacy.parse_gts2(data, finevibrato=finevibrato)
     cur = _Cursor(data)
     cur.take(4, "identifier")
-    name = _decode_str(cur.take(constants.MAX_STR, "song name"))
-    author = _decode_str(cur.take(constants.MAX_STR, "author name"))
-    copyright_ = _decode_str(cur.take(constants.MAX_STR, "copyright"))
+    name = decode_cstr(cur.take(constants.MAX_STR, "song name"))
+    author = decode_cstr(cur.take(constants.MAX_STR, "author name"))
+    copyright_ = decode_cstr(cur.take(constants.MAX_STR, "copyright"))
 
     num_subtunes = cur.u8("subtune count")
     if not 1 <= num_subtunes <= constants.MAX_SONGS:

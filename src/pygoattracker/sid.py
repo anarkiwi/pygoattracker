@@ -666,18 +666,29 @@ def _candidate_song_counts(header):
 
 
 def _decompile_any_songs(mem, header, dataend, anchor, subtune) -> DecompiledSid:
-    """Decompile trying each candidate subtune count until one decodes."""
-    last_exc = None
+    """Decompile trying each candidate subtune count until one decodes.
+
+    Candidates are tried most-trusted first. On total failure the reported
+    error is the one from the trusted (``header.songs``) attempt, falling back
+    to the first-tried candidate: a later candidate's error (e.g. ``orderlist
+    pointer out of range``) misattributes the real cause of the failure.
+    """
+    primary_exc = None
+    first_exc = None
     for songs in _candidate_song_counts(header):
         try:
             return _decompile(mem, header, dataend, anchor, subtune, songs)
         except (SidParseError, IndexError, ValueError) as exc:
-            last_exc = exc
-    if isinstance(last_exc, (IndexError, ValueError)):
-        raise SidParseError(
-            f"malformed packed GoatTracker data: {last_exc}"
-        ) from last_exc
-    raise last_exc if last_exc is not None else SidParseError("empty subtune search")
+            if first_exc is None:
+                first_exc = exc
+            if songs == header.songs:
+                primary_exc = exc
+    exc = primary_exc if primary_exc is not None else first_exc
+    if exc is None:
+        raise SidParseError("empty subtune search")
+    if isinstance(exc, (IndexError, ValueError)):
+        raise SidParseError(f"malformed packed GoatTracker data: {exc}") from exc
+    raise exc
 
 
 def _decompile(mem, header, dataend, anchor, subtune, songs) -> DecompiledSid:

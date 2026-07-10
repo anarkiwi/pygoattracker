@@ -4,6 +4,8 @@ DEMOS/A-F/FamiCommodore.sid
 DEMOS/G-L/Hey_Ya.sid
 DEMOS/G-L/Little_Lame_Intro.sid
 DEMOS/M-R/Oldschool_Streamer.sid
+DEMOS/M-R/Penumbra.sid
+DEMOS/M-R/Robots_Can_Dance.sid
 DEMOS/S-Z/SWABBASWAG.sid
 DEMOS/S-Z/Sweden.sid
 DEMOS/UNKNOWN/Hitlerpack.sid

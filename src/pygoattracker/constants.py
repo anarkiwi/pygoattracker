@@ -2,7 +2,33 @@
 
 Values follow GoatTracker 2.76 (``gcommon.h`` and the format description
 in its ``readme.txt`` section 6.1).
+
+SID chip timing and register-file constants are sourced from
+:mod:`pysidtracker.registers` and re-exported here for back-compat.
 """
+
+from pysidtracker.registers import (
+    NTSC_CLOCK_HZ,
+    NTSC_CYCLES_PER_FRAME,
+    PAL_CLOCK_HZ,
+    PAL_CYCLES_PER_FRAME,
+    PW_HI_REGS,
+    SID_BASE,
+    SID_REG_COUNT,
+    SID_VOICE_OFFSET,
+)
+
+# Re-exported from pysidtracker.registers for back-compat.
+__all__ = [
+    "NTSC_CLOCK_HZ",
+    "NTSC_CYCLES_PER_FRAME",
+    "PAL_CLOCK_HZ",
+    "PAL_CYCLES_PER_FRAME",
+    "PW_HI_REGS",
+    "SID_BASE",
+    "SID_REG_COUNT",
+    "SID_VOICE_OFFSET",
+]
 
 SNG_MAGIC = b"GTS5"
 # GTS3/GTS4 share GTS5's binary layout (with small post-load value
@@ -70,7 +96,7 @@ WAVELASTCMD = 0xFE
 TABLEJUMP = 0xFF
 
 # SID register map (offsets within the chip's 25 registers).
-SID_REGISTERS = 25
+SID_REGISTERS = SID_REG_COUNT
 VOICES = 3
 VOICE_REG_SIZE = 7
 FREQ_LO_REG = 0x00
@@ -85,11 +111,8 @@ FC_HI_REG = 0x16
 RES_FILT_REG = 0x17
 MODE_VOL_REG = 0x18
 
-# C64 timing. A PAL frame is 312 rasterlines x 63 cycles.
-PAL_CLOCK_HZ = 985248
-PAL_CYCLES_PER_FRAME = 19656
-NTSC_CLOCK_HZ = 1022727
-NTSC_CYCLES_PER_FRAME = 17095
+# C64 timing (PAL_CLOCK_HZ, PAL_CYCLES_PER_FRAME, NTSC_CLOCK_HZ,
+# NTSC_CYCLES_PER_FRAME) is imported from pysidtracker.registers above.
 
 # Default player options, as in the GoatTracker editor.
 DEFAULT_ADPARAM = 0x0F00

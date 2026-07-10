@@ -34,13 +34,13 @@ Roughly 70% of the sampled corpus is in scope and must decompile; the remainder
 raises a clean ``SidParseError`` (never any other exception).
 """
 
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 from pysidtracker import PlayroutineKind
+from pysidtracker.testing import resolve_tune
 
 from pygoattracker import sid
 from pygoattracker.errors import SidParseError
@@ -91,15 +91,7 @@ def _resolve(rel: str):
     Returns ``None`` only when the tune is genuinely unreachable after retries,
     so an individual tune skips cleanly rather than failing offline CI.
     """
-    root = os.environ.get("HVSC")
-    if root:
-        cand = Path(root) / rel
-        if cand.is_file():
-            return cand
-    try:
-        return fetch_tunes.fetch(rel)
-    except Exception:  # pylint: disable=broad-except  # unreachable -> skip tune
-        return None
+    return resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
 
 
 def _present() -> list:

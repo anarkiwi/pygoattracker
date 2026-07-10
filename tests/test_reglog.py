@@ -4,6 +4,8 @@ import io
 
 import pytest
 
+from pysidtracker import SidParseError
+
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.reglog import (
@@ -73,5 +75,5 @@ def test_read_blank_lines_and_comments():
 
 @pytest.mark.parametrize("bad", ["0 24", "0 24 15 16", "a b c"])
 def test_read_bad_lines(bad):
-    with pytest.raises(GoatTrackerError, match="line 1"):
+    with pytest.raises(SidParseError, match="line 1"):
         read_reglog(io.StringIO(bad))

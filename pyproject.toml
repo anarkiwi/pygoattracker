@@ -21,13 +21,13 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.2",
+    "pysidtracker>=0.3",
 ]
 
 [project.optional-dependencies]
-# Audio rendering drives an emulated SID via pyresidfp; everything else
-# (read/write/play/register logs) is pure stdlib.
-audio = ["pyresidfp>=0.17"]
+# Audio rendering drives an emulated SID via pysidtracker's pyresidfp backend;
+# everything else (read/write/play/register logs) is pure stdlib.
+audio = ["pysidtracker[audio]>=0.3"]
 # Decompiling crunched/relocated .sid files runs their 6502 init in py65;
 # direct-load packed .sid files decompile with stdlib only.
 sid = ["py65>=1.1"]

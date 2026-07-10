@@ -6,15 +6,15 @@ C64 CPU cycles. Logs serialize to plain text, one ``clock reg val``
 triple per line (decimal, space separated, ``#`` comments allowed), so
 they load directly into pandas or any line-based tooling.
 
-:class:`RegWrite`, :func:`read_reglog`, and the framing loop are the
-shared :mod:`pysidtracker.reglog` primitives; :func:`write_reglog` keeps
-this package's own header line, and :func:`iter_register_writes` is a
-thin wrapper feeding the player's per-frame writes to
+:class:`RegWrite`, :func:`read_reglog`, :func:`write_reglog`, and the
+framing loop are the shared :mod:`pysidtracker.reglog` primitives;
+:data:`REGLOG_HEADER` is this package's own header line (passed to the
+shared writer's ``header=`` argument), and :func:`iter_register_writes`
+is a thin wrapper feeding the player's per-frame writes to
 :func:`pysidtracker.reglog.frame_writes`.
 """
 
-from pathlib import Path
-from typing import IO, Iterable, Iterator
+from typing import Iterator
 
 from pysidtracker.errors import SidParseError
 from pysidtracker.reglog import (  # re-exported for back-compat
@@ -22,6 +22,7 @@ from pysidtracker.reglog import (  # re-exported for back-compat
     RegWrite,
     frame_writes,
     read_reglog,
+    write_reglog,
 )
 
 from pygoattracker import constants
@@ -73,19 +74,3 @@ def iter_register_writes(
         )
     except SidParseError as exc:
         raise GoatTrackerError(str(exc)) from exc
-
-
-def write_reglog(writes: Iterable[RegWrite], dst, header: bool = True) -> None:
-    """Write a register log to a path or text file-like object."""
-
-    def _dump(out: IO[str]) -> None:
-        if header:
-            print(REGLOG_HEADER, file=out)
-        for write in writes:
-            print(f"{write.clock} {write.reg} {write.val}", file=out)
-
-    if isinstance(dst, (str, Path)):
-        with open(dst, "w", encoding="utf-8") as out:
-            _dump(out)
-        return
-    _dump(dst)

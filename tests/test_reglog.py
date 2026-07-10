@@ -9,6 +9,7 @@ from pysidtracker import SidParseError
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.reglog import (
+    REGLOG_HEADER,
     RegWrite,
     iter_register_writes,
     read_reglog,
@@ -50,7 +51,7 @@ def test_until_loop(song):
 def test_write_read_path_round_trip(song, tmp_path):
     writes = list(iter_register_writes(song, max_frames=60))
     path = tmp_path / "song.reglog"
-    write_reglog(writes, path)
+    write_reglog(writes, path, header=REGLOG_HEADER)
     text = path.read_text(encoding="utf-8")
     assert text.startswith("# pygoattracker register log")
     assert read_reglog(path) == writes

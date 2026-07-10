@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pygoattracker"
-version = "0.1.6"
+version = "0.2.0"
 description = "Pure-Python reader, writer, and player for GoatTracker 2 (.SNG) songs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,20 +20,17 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.4",
+    "pysidtracker>=0.5",
+    "py65>=1.1",
 ]
 
 [project.optional-dependencies]
 # Audio rendering drives an emulated SID via pysidtracker's pyresidfp backend;
 # everything else (read/write/play/register logs) is pure stdlib.
-audio = ["pysidtracker[audio]>=0.4"]
-# Decompiling crunched/relocated .sid files runs their 6502 init in py65;
-# direct-load packed .sid files decompile with stdlib only.
-sid = ["py65>=1.1"]
+audio = ["pysidtracker[audio]>=0.5"]
 dev = [
     "black>=24",
     "pylint>=3",
-    "py65>=1.1",
     "pyresidfp>=0.17",
     # numpy accelerates pysidtracker's image anchor scan (pysidtracker[fast]);
     # the HVSC corpus test relies on it to stay well under its time budget.

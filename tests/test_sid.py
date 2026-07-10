@@ -473,6 +473,9 @@ def test_decompile_reports_trusted_count_error(monkeypatch):
         load = LOAD
         end = 0x1000
 
+        def __bytes__(self):
+            return bytes(self.mem)
+
     def fake_decompile(
         _image, header, _dataend, _anchor, _subtune, _songtbl, songs, _patt_lo
     ):

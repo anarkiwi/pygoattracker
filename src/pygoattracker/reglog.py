@@ -5,30 +5,40 @@ one :class:`RegWrite` per SID register write, with an absolute clock in
 C64 CPU cycles. Logs serialize to plain text, one ``clock reg val``
 triple per line (decimal, space separated, ``#`` comments allowed), so
 they load directly into pandas or any line-based tooling.
+
+:class:`RegWrite`, :func:`read_reglog`, and the framing loop are the
+shared :mod:`pysidtracker.reglog` primitives; :func:`write_reglog` keeps
+this package's own header line, and :func:`iter_register_writes` is a
+thin wrapper feeding the player's per-frame writes to
+:func:`pysidtracker.reglog.frame_writes`.
 """
 
-import io
 from pathlib import Path
-from typing import IO, Iterable, Iterator, NamedTuple
+from typing import IO, Iterable, Iterator
+
+from pysidtracker.errors import SidParseError
+from pysidtracker.reglog import (  # re-exported for back-compat
+    DEFAULT_WRITE_SPACING,
+    RegWrite,
+    frame_writes,
+    read_reglog,
+)
 
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Song
 from pygoattracker.player import iter_frames
 
-# Cycles between consecutive writes within one frame, approximating the
-# store instructions of the 6502 playroutine.
-DEFAULT_WRITE_SPACING = 16
-
 REGLOG_HEADER = "# pygoattracker register log: clock reg val"
 
-
-class RegWrite(NamedTuple):
-    """One SID register write at an absolute CPU clock (in cycles)."""
-
-    clock: int
-    reg: int
-    val: int
+__all__ = [
+    "DEFAULT_WRITE_SPACING",
+    "REGLOG_HEADER",
+    "RegWrite",
+    "iter_register_writes",
+    "read_reglog",
+    "write_reglog",
+]
 
 
 def iter_register_writes(
@@ -43,22 +53,26 @@ def iter_register_writes(
     """Yield :class:`RegWrite` for ``song``, frame by frame.
 
     Writes within a frame are spaced ``write_spacing`` cycles apart from
-    the frame boundary; frames are ``cycles_per_frame`` apart.
+    the frame boundary; frames are ``cycles_per_frame`` apart. The player
+    already yields ``0..24`` register offsets, so framing runs with
+    ``sid_reg_base=0``.
     """
-    if write_spacing * constants.SID_REGISTERS >= cycles_per_frame:
-        raise GoatTrackerError("write_spacing too large for one frame")
-    for frame, writes in enumerate(
-        iter_frames(
-            song,
-            subtune=subtune,
-            max_frames=max_frames,
-            until_loop=until_loop,
-            **player_options,
+    frames = iter_frames(
+        song,
+        subtune=subtune,
+        max_frames=max_frames,
+        until_loop=until_loop,
+        **player_options,
+    )
+    try:
+        yield from frame_writes(
+            frames,
+            cycles_per_frame=cycles_per_frame,
+            write_spacing=write_spacing,
+            sid_reg_base=0,
         )
-    ):
-        clock = frame * cycles_per_frame
-        for offset, (reg, val) in enumerate(writes):
-            yield RegWrite(clock + offset * write_spacing, reg, val)
+    except SidParseError as exc:
+        raise GoatTrackerError(str(exc)) from exc
 
 
 def write_reglog(writes: Iterable[RegWrite], dst, header: bool = True) -> None:
@@ -75,26 +89,3 @@ def write_reglog(writes: Iterable[RegWrite], dst, header: bool = True) -> None:
             _dump(out)
         return
     _dump(dst)
-
-
-def read_reglog(src) -> list[RegWrite]:
-    """Read a register log from a path or text file-like object."""
-    if isinstance(src, (str, Path)):
-        text = Path(src).read_text(encoding="utf-8")
-    elif isinstance(src, io.IOBase) or hasattr(src, "read"):
-        text = src.read()
-    else:
-        raise TypeError(f"cannot read a register log from {type(src).__name__}")
-    writes = []
-    for num, line in enumerate(text.splitlines(), start=1):
-        line = line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        fields = line.split()
-        if len(fields) != 3:
-            raise GoatTrackerError(f"bad register log line {num}: {line!r}")
-        try:
-            writes.append(RegWrite(*(int(field) for field in fields)))
-        except ValueError as exc:
-            raise GoatTrackerError(f"bad register log line {num}: {line!r}") from exc
-    return writes

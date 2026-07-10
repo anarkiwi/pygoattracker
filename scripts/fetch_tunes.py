@@ -7,6 +7,9 @@ are copyright works and are **never** committed to this repo (see
 ``tests/.tunecache/`` (gitignored), so the corpus decompile test runs against a
 local HVSC tree (``$HVSC``) when present, and otherwise fetches from the mirror.
 
+The download/validate/retry core is :func:`pysidtracker.testing.fetch_tune`;
+this script keeps the repo's corpus sample list and CLI.
+
 Usage::
 
     python scripts/fetch_tunes.py            # fetch the whole corpus sample
@@ -17,61 +20,21 @@ from __future__ import annotations
 
 import argparse
 import os
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+from pysidtracker.testing import DEFAULT_MIRROR, fetch_tune
 
 REPO = Path(__file__).resolve().parent.parent
 CACHE = Path(os.environ.get("GT_TUNECACHE", str(REPO / "tests" / ".tunecache")))
 SAMPLE_FILE = REPO / "tests" / "data" / "hvsc_goattracker_sample.txt"
 
 # Public HVSC mirror.  Override with ``$HVSC_MIRROR``.
-MIRROR = os.environ.get("HVSC_MIRROR", "https://hvsc.brona.dk/HVSC/C64Music").rstrip(
-    "/"
-)
-
-# Transient-failure retry policy for mirror fetches (attempts, fixed backoff).
-_FETCH_ATTEMPTS = 4
-_FETCH_BACKOFF = 2.0
-
-
-def _is_sid(data: bytes) -> bool:
-    return data[:4] in (b"PSID", b"RSID")
+MIRROR = os.environ.get("HVSC_MIRROR", DEFAULT_MIRROR).rstrip("/")
 
 
 def fetch(relpath: str, *, force: bool = False) -> Path:
     """Fetch ``relpath`` from the HVSC mirror into the cache; return its path."""
-    relpath = relpath.lstrip("/")
-    dest = CACHE / relpath
-    if dest.exists() and not force:
-        return dest
-    url = f"{MIRROR}/{urllib.request.quote(relpath)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "pygoattracker/fetch"})
-    data = None
-    last_exc = None
-    for attempt in range(_FETCH_ATTEMPTS):
-        try:
-            with urllib.request.urlopen(  # nosec B310 (https mirror)
-                req, timeout=60
-            ) as resp:
-                data = resp.read()
-            break
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:  # genuinely absent -- do not retry
-                raise
-            last_exc = exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            last_exc = exc
-        if attempt < _FETCH_ATTEMPTS - 1:
-            time.sleep(_FETCH_BACKOFF)
-    if data is None:
-        raise RuntimeError(f"{url}: fetch failed after retries: {last_exc}")
-    if not _is_sid(data):
-        raise RuntimeError(f"{url}: not a SID file (magic {data[:4]!r})")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
-    return dest
+    return fetch_tune(relpath, cache_dir=CACHE, mirror=MIRROR, force=force)
 
 
 def sample_paths() -> list:

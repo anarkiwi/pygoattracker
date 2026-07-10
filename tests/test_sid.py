@@ -370,6 +370,23 @@ def test_decode_orderlist_without_terminator_raises():
         sid.decode_packed_orderlist(mem, 0)
 
 
+def test_decompile_reports_trusted_count_error(monkeypatch):
+    # The trusted (header.songs) attempt fails with its own cause; later
+    # candidate counts fail with a different, misleading cause. The raised
+    # error must attribute the trusted-count cause, not the last candidate's.
+    class H:
+        songs = 3
+
+    def fake_decompile(_mem, header, _dataend, _anchor, _subtune, songs):
+        if songs == header.songs:
+            raise SidParseError("could not segment packed instruments/tables")
+        raise SidParseError("orderlist pointer out of range")
+
+    monkeypatch.setattr(sid, "_decompile", fake_decompile)
+    with pytest.raises(SidParseError, match="segment packed instruments"):
+        sid._decompile_any_songs(bytearray(16), H(), 0x1000, (LOAD, 0, 1), 0)
+
+
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")
 
 

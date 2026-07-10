@@ -73,10 +73,11 @@ for _ in range(50 * 60):                  # one minute at 50 Hz
 
 ```python
 from pygoattracker import iter_register_writes, write_reglog, read_sng
+from pygoattracker.reglog import REGLOG_HEADER
 
 song = read_sng("tune.sng")
 writes = iter_register_writes(song, until_loop=True)
-write_reglog(writes, "tune.reglog")
+write_reglog(writes, "tune.reglog", header=REGLOG_HEADER)
 ```
 
 Logs load straight into pandas:

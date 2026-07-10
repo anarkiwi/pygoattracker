@@ -39,7 +39,7 @@ def _reglog(args) -> None:
     song = read_sng(args.song)
     frames = round(args.seconds * 50)
     writes = reglog.iter_register_writes(song, subtune=args.subtune, max_frames=frames)
-    reglog.write_reglog(writes, args.output)
+    reglog.write_reglog(writes, args.output, header=reglog.REGLOG_HEADER)
     print(f"wrote {args.output}")
 
 

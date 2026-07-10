@@ -361,6 +361,95 @@ def test_subtune_count_derived_when_header_wrong():
     assert len(song.patterns) == 2
 
 
+# --- code-scan layout: song/pattern tables and instrument/table region are ----
+# --- located from the player's own table-access instructions ------------------
+
+
+def _img_from_data(data: bytes):
+    from pysidtracker import SidImage
+
+    return SidImage.from_sid(_psid(data))
+
+
+def _le(addr):
+    return bytes([addr & 0xFF, addr >> 8])
+
+
+def test_layout_candidates_reads_song_table_from_code():
+    # A player-code sequencer idiom (LDA songtbllo,Y / STA zp / LDA songtblhi,Y /
+    # STA zp / LDY chn,X / LDA (zp),Y / CMP #LOOPSONG) pins the song(order)-table
+    # base and subtune count regardless of where the song data actually sits.
+    slo, shi = 0x2000, 0x2009  # songs = (0x2009 - 0x2000)/3 = 3
+    idiom = (
+        b"\xb9" + _le(slo) + b"\x85\x00"
+        b"\xb9" + _le(shi) + b"\x85\x00"
+        b"\xbc\x00\x00\xb1\x00\xc9\xff"
+    )
+    image = _img_from_data(idiom)
+    cands = sid._layout_candidates(image, image.header, (LOAD, 0, 1))
+    assert (slo, 3, slo + 6 * 3) in cands
+    # the stock "right after the frequency table" hypothesis is still tried first
+    assert cands[0][0] == LOAD + 2 * 1
+
+
+def test_layout_candidates_ignores_implausible_song_idiom():
+    # A song idiom whose (hi - lo) is not a multiple of 3, or implies too many
+    # subtunes, is not offered as a candidate.
+    slo, shi = 0x2000, 0x2001  # (1)/3 -> not a whole subtune count
+    idiom = (
+        b"\xb9" + _le(slo) + b"\x85\x00"
+        b"\xb9" + _le(shi) + b"\x85\x00"
+        b"\xbc\x00\x00\xb1\x00\xc9\xff"
+    )
+    image = _img_from_data(idiom)
+    cands = sid._layout_candidates(image, image.header, (LOAD, 0, 1))
+    assert all(c[0] != slo for c in cands)
+
+
+def _packed_needing_chain():
+    """Image whose instrument/table region is located only from player code.
+
+    Lays out a single-instrument, one-row-wavetable region (no pulse/filter/
+    vibrato/gate arrays), plus the wave "nextstep" table-access idiom whose
+    operands point at the wavetable columns, so :func:`sid._chain_layout` can
+    read the geometry. Returns ``(image, insad, order_start)``.
+    """
+    mem = bytearray(0x80)
+    # Wave table-access idiom near the start (code area): LDA wavetbl,Y ; CMP
+    # #LOOPWAVE ; INY ; TYA ; BCC ; ... ; LDA notetbl-1,Y.
+    insad = LOAD + 0x30
+    wavetbl = insad + 3  # ad, sr, waveptr (K = 3, no optional arrays)
+    notetbl = wavetbl + 1  # wlen = 1
+    idiom = b"\xb9" + _le(wavetbl) + b"\xc9\xff\xc8\x98\x90\x00" b"\xb9" + _le(
+        notetbl - 1
+    )
+    mem[0 : len(idiom)] = idiom
+    off = 0x30
+    mem[off : off + 3] = bytes([0x09, 0x00, 0x01])  # insad, inssr, inswaveptr=1
+    mem[off + 3] = 0xFF  # wavetbl left: jump row (executed length 1)
+    mem[off + 4] = 0x00  # notetbl right
+    order_start = wavetbl + 2  # tables end here (speed table absent)
+    image = _img_from_data(bytes(mem))
+    return image, insad, order_start
+
+
+def test_chain_layout_reads_tables_from_code():
+    image, insad, order_start = _packed_needing_chain()
+    eps = (set(), set(), set(), set())
+    sol = sid._chain_layout(image, image.mem, insad, 1, order_start, eps)
+    assert sol is not None
+    assert sol["tstart"] == insad + 3
+    assert (sol["wlen"], sol["plen"], sol["flen"], sol["slen"]) == (1, 0, 0, 0)
+    assert (sol["pulse"], sol["filt"], sol["vib"], sol["gate"]) == (0, 0, 0, 0)
+
+
+def test_chain_layout_returns_none_without_table_idiom():
+    # No table-access idiom in the image -> nothing to locate; caller falls back.
+    image = _img_from_data(b"\x00" * 0x40)
+    eps = (set(), set(), set(), set())
+    assert sid._chain_layout(image, image.mem, LOAD + 0x10, 1, LOAD + 0x20, eps) is None
+
+
 # --- orderlist decode is bounded (a wrong subtune-count guess lands here) -----
 
 
@@ -377,14 +466,23 @@ def test_decompile_reports_trusted_count_error(monkeypatch):
     class H:
         songs = 3
 
-    def fake_decompile(_mem, header, _dataend, _anchor, _subtune, songs):
+    class Img:
+        # Empty image: no player-code song-table idiom matches, so the only
+        # layout candidates are the stock-layout subtune-count guesses.
+        mem = bytearray(0x10000)
+        load = LOAD
+        end = 0x1000
+
+    def fake_decompile(
+        _image, header, _dataend, _anchor, _subtune, _songtbl, songs, _patt_lo
+    ):
         if songs == header.songs:
             raise SidParseError("could not segment packed instruments/tables")
         raise SidParseError("orderlist pointer out of range")
 
     monkeypatch.setattr(sid, "_decompile", fake_decompile)
     with pytest.raises(SidParseError, match="segment packed instruments"):
-        sid._decompile_any_songs(bytearray(16), H(), 0x1000, (LOAD, 0, 1), 0)
+        sid._decompile_any_songs(Img(), H(), 0x1000, (LOAD, 0, 1), 0)
 
 
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")

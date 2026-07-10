@@ -30,6 +30,38 @@ present, table lengths, `nowavedelay`, `simplepulse`) are recovered by
 re-deriving greloc's deterministic rules and by an exact-fit tiling of the
 instrument/table region.
 
+### Locating tables from the player code
+
+gt2reloc shipped many packer/player revisions whose table geometry differs, and
+several do not lay the song data out immediately after the frequency table. The
+absolute base of every table is baked into the playroutine as an `LDA table,Y`
+(`$B9`) operand, and the player relocates as one block, so those operands are
+version-tolerant anchors. `decompile_sid` reads them directly with
+[`pysidtracker`](https://github.com/anarkiwi/pysidtracker)'s masked-opcode
+code-scan (`CodePattern` / `find_code_all`):
+
+- **song(order)-table** — the sequencer idiom `LDA songtbllo,Y; STA zp;
+  LDA songtblhi,Y; STA zp; LDY chn,X; LDA (zp),Y; CMP #$FF` gives the base and
+  subtune count (`songs = (songtblhi - songtbllo) / 3`).
+- **pattern-pointer table** — the same idiom ending `CMP #$40` (new-note fetch).
+- **wave/pulse/filter tables** — the shared "nextstep" idiom `LDA lefttbl,Y;
+  CMP #$FF; INY; TYA; BCC; ...; LDA righttbl-1,Y`. Because the tables abut, the
+  captured pairs form a self-validating chain (wave, then pulse and/or filter);
+  the instrument region size then fixes `K = 3 + pulse + filt + 2·vib + 2·gate`,
+  with gate read from the `insgatetimer` load idiom.
+
+The stock "right after the frequency table" layout and exact-fit tiling are
+tried first (unchanged for tunes that already resolve); the code-scan song-table
+and instrument/table location are the recovery path for revisions they miss.
+A code-located instrument/table layout is accepted only after the same
+executable-consistency checks the tiling uses (jump-terminated tables, in-range
+instrument/pattern pointers).
+
+**Out of scope.** GoatTracker **V1.x** (a distinct earlier format) and a
+residual minority of **V2.x** tunes whose packer stores the song(order)-table in
+a different column geometry (its high column does not hold orderlist-pointer high
+bytes) are not decoded and raise a clean `SidParseError`.
+
 Direct-load images decompile with the standard library only. Crunched or
 relocated images have their init routine run in a 6502 emulator first (the
 `sid` extra, which adds py65). Container header fields are not trusted; this

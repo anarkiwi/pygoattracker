@@ -19,18 +19,23 @@ Scope. The decompiler targets gt2reloc-*packed* GoatTracker 2 images (the
 ``decompile_sid`` path). Empirically every HVSC GoatTracker tune is a
 direct-load image -- none are crunched/relocated, so the emulated-init unpack
 path is never needed for this corpus (it stays covered by the synthetic tests).
-Two tune families share the GoatTracker frequency-table signature but not the
-packed data layout and are therefore out of scope; they are *excluded* here (the
-public parse raises :class:`SidParseError`, which the test tallies rather than
+The song(order)-table, pattern-pointer table and wave/pulse/filter/speed table
+bases are located from the player's own table-access code (relocation-invariant
+``LDA table,Y`` operand capture), so gt2reloc/player revisions that move the
+song data off the stock "right after the frequency table" position, or whose
+instrument/table region the exact-fit tiling cannot segment, still decode.
+
+A residual cluster remains *out of scope* and is *excluded* here (the public
+parse raises :class:`SidParseError`, which the test tallies rather than
 asserting against):
 
   * GoatTracker **V1.x** tunes -- an older player with a different on-image
     layout after the frequency table.
-  * A minority of **V2** tunes whose player stores the frequency table and song
-    data in a different (non-gt2reloc) arrangement (e.g. the table in high/low
-    rather than low/high column order).
+  * A minority of **V2.x** tunes whose packer stores the song(order)-table in a
+    different column geometry (its high column does not hold orderlist-pointer
+    high bytes), so the gt2reloc pointer grammar does not apply.
 
-Roughly 70% of the sampled corpus is in scope and must decompile; the remainder
+Roughly 79% of the sampled corpus is in scope and must decompile; the remainder
 raises a clean ``SidParseError`` (never any other exception).
 """
 
@@ -55,13 +60,13 @@ import fetch_tunes  # noqa: E402  (after sys.path tweak)
 _SAMPLE_FILE = Path(__file__).parent / "data" / "hvsc_goattracker_sample.txt"
 
 # Fraction of the (present) sample that must decompile: a regression floor for
-# the packed decoder. The committed sample decompiles ~70%; the rest are the
+# the packed decoder. The committed sample decompiles ~79%; the rest are the
 # documented out-of-scope variants above.
-_MIN_PASS_RATE = 0.60
-# Exact floor asserted when the whole local sample is present (measured 215/307
+_MIN_PASS_RATE = 0.70
+# Exact floor asserted when the whole local sample is present (measured 243/307
 # with the current decoder); guards against regressions the rate alone would
 # let through.
-_FULL_SAMPLE_MIN_PASS = 210
+_FULL_SAMPLE_MIN_PASS = 235
 
 # Representatives, one per decoder capability, that must fully decompile and
 # round-trip. Each stresses a specific real-corpus fix:
@@ -74,6 +79,14 @@ _REPRESENTATIVES = {
     # PSID header advertises 1 subtune but the song(order)-table holds 2: the
     # subtune count is recovered from the packed layout, not trusted from it.
     "DEMOS/G-L/In_High_Spirits.sid": dict(subtunes=2, min_patterns=10),
+    # gt2reloc revision whose song data is NOT right after the frequency table:
+    # the song(order)-table base + subtune count are read from the player's
+    # sequencer code (``mt_songtbllo``/``mt_songtblhi`` operands), not assumed.
+    "DEMOS/M-R/Penumbra.sid": dict(subtunes=1, min_patterns=10),
+    # instrument/table region that the exact-fit tiling cannot segment: the
+    # wave/pulse/filter table bases are located from the player's table-access
+    # code (the "nextstep" chain) and the instrument flags from ``K``.
+    "DEMOS/M-R/Robots_Can_Dance.sid": dict(subtunes=1, min_patterns=10),
 }
 
 

@@ -221,4 +221,6 @@ __marimo__/
 tests/.fixture_cache/
 # HVSC corpus tunes are copyright works -- fetched on demand, never committed.
 tests/.tunecache/
+# Oracle sidtrace CSVs (derived from copyright tunes) -- rendered on demand.
+.oracle-cache/
 .coverage.floor

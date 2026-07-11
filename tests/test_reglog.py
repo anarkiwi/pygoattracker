@@ -1,10 +1,14 @@
-"""Register log generation and serialization."""
+"""GoatTracker register log generation.
+
+The read/write/framing primitives are the shared :mod:`pysidtracker.reglog`
+surface (covered by the base package's tests); these tests cover only the
+GoatTracker-facing :func:`iter_register_writes` wrapper and this package's
+header line.
+"""
 
 import io
 
 import pytest
-
-from pysidtracker import SidParseError
 
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
@@ -17,17 +21,16 @@ from pygoattracker.reglog import (
 )
 
 
-def test_clock_layout(song):
+def test_baseline_then_frames(song):
     writes = list(iter_register_writes(song, max_frames=2))
-    # Frame 0 initializes all 25 registers, 16 cycles apart.
-    first = writes[: constants.SID_REGISTERS]
-    assert [w.reg for w in first] == list(range(constants.SID_REGISTERS))
-    assert [w.clock for w in first] == [16 * n for n in range(25)]
-    assert all(w.val == 0 for w in first)
-    # Frame 1 starts one PAL frame later with the volume write.
-    second = writes[constants.SID_REGISTERS :]
-    assert second[0].clock == constants.PAL_CYCLES_PER_FRAME
-    assert (constants.MODE_VOL_REG, 0x0F) == (second[0].reg, second[0].val)
+    # The post-init register file is emitted at clock 0, one register every 16
+    # cycles, with master volume ($D418) seeded to $0F.
+    baseline = writes[: constants.SID_REGISTERS]
+    assert [w.reg for w in baseline] == list(range(constants.SID_REGISTERS))
+    assert [w.clock for w in baseline] == [16 * n for n in range(25)]
+    assert baseline[constants.MODE_VOL_REG].val == 0x0F
+    # The first played frame's writes start one PAL frame later.
+    assert writes[constants.SID_REGISTERS].clock == constants.PAL_CYCLES_PER_FRAME
 
 
 def test_clock_options(song):
@@ -43,22 +46,20 @@ def test_bad_spacing(song):
         list(iter_register_writes(song, max_frames=1, cycles_per_frame=100))
 
 
-def test_until_loop(song):
+def test_until_loop_is_finite(song):
     writes = list(iter_register_writes(song, until_loop=True))
+    assert writes
     assert writes[-1].clock < 48 * constants.PAL_CYCLES_PER_FRAME
 
 
-def test_write_read_path_round_trip(song, tmp_path):
+def test_write_read_round_trip(song, tmp_path):
     writes = list(iter_register_writes(song, max_frames=60))
     path = tmp_path / "song.reglog"
     write_reglog(writes, path, header=REGLOG_HEADER)
     text = path.read_text(encoding="utf-8")
     assert text.startswith("# pygoattracker register log")
     assert read_reglog(path) == writes
-    assert read_reglog(str(path)) == writes
     assert read_reglog(io.StringIO(text)) == writes
-    with pytest.raises(TypeError):
-        read_reglog(12345)
 
 
 def test_write_stream_no_header():
@@ -67,14 +68,3 @@ def test_write_stream_no_header():
     write_reglog(writes, out, header=False)
     assert out.getvalue() == "0 24 15\n19656 4 65\n"
     assert read_reglog(io.StringIO(out.getvalue())) == writes
-
-
-def test_read_blank_lines_and_comments():
-    text = "# comment\n\n0 24 15  # trailing comment\n"
-    assert read_reglog(io.StringIO(text)) == [RegWrite(0, 24, 15)]
-
-
-@pytest.mark.parametrize("bad", ["0 24", "0 24 15 16", "a b c"])
-def test_read_bad_lines(bad):
-    with pytest.raises(SidParseError, match="line 1"):
-        read_reglog(io.StringIO(bad))

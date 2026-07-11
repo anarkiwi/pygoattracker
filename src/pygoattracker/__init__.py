@@ -54,7 +54,7 @@ from pygoattracker.reglog import (
 )
 from pygoattracker.writer import build_sng, validate_song, write_sng
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ConversionError",

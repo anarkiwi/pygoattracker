@@ -60,6 +60,12 @@ The writer validates format limits and references before emitting anything.
 
 ## Play a song: SID register writes
 
+`Player` is a single class that transcribes the whole GoatTracker 2 playroutine
+and derives from [`pysidtracker.MemPlayer`](https://github.com/anarkiwi/pysidtracker),
+so it inherits the base per-frame machinery — `play_frame` (this frame's changed
+`(reg, value)` writes), `render_grid` (forward-filled 25-register per-frame grid,
+`$D400..$D418`) and `iter_frames`:
+
 ```python
 from pygoattracker import Player, read_sng
 
@@ -67,7 +73,12 @@ player = Player(read_sng("tune.sng"), subtune=0)
 for _ in range(50 * 60):                  # one minute at 50 Hz
     for reg, value in player.play_frame():
         print(f"${0xD400 + reg:04X} = ${value:02X}")
+
+grid = Player(read_sng("tune.sng")).render_grid(250)   # 250 x 25 register grid
 ```
+
+The render is validated byte-exactly against a `sidplayfp` oracle — see
+[oracle-testing.md](oracle-testing.md).
 
 ## Write a SID register log
 

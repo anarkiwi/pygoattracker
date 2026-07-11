@@ -111,14 +111,19 @@ passband, and vibrato parameters map by analogy.
 
 ## Player and playback notes
 
-The player ports the GoatTracker 2 playroutine tick for tick: sequencer
+The player is one class (`Player`) deriving from `pysidtracker.MemPlayer`; it
+ports the GoatTracker 2 playroutine tick for tick: sequencer
 (transpose/repeat/restart), funktempo, wave/pulse/filter table execution
 including wavetable command execution, speedtable vibrato/portamento (including
-note-independent speeds), gateoff timer, and hard restart.
+note-independent speeds), gateoff timer, and hard restart. Its render is
+validated byte-exactly against a `sidplayfp` oracle
+([oracle-testing.md](oracle-testing.md)).
 
-`play_frame()` returns one PAL frame's register writes in ascending register
-order (the first frame initializes all 25 registers). Not implemented:
-multispeed playback and the editor's jamming / mid-song start modes.
+`play_frame()` returns one PAL frame's changed register writes in ascending
+register order (the first frame returns all 25 registers, since the base
+`MemPlayer` diff has no prior snapshot); `render_grid(nframes)` returns the
+forward-filled 25-register per-frame grid. Not implemented: multispeed playback,
+stereo/2SID, and the editor's jamming / mid-song start modes.
 
 Register logs are one `clock reg val` triple per line (absolute clock in PAL CPU
 cycles, decimal, `#` comments). `write_reglog` / `read_reglog` write and read

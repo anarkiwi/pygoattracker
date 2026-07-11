@@ -1,34 +1,28 @@
-"""SID register write logs.
+"""SID register write logs for GoatTracker songs.
 
-A register log is the player's output flattened to timed chip writes:
-one :class:`RegWrite` per SID register write, with an absolute clock in
-C64 CPU cycles. Logs serialize to plain text, one ``clock reg val``
-triple per line (decimal, space separated, ``#`` comments allowed), so
-they load directly into pandas or any line-based tooling.
-
-:class:`RegWrite`, :func:`read_reglog`, :func:`write_reglog`, and the
-framing loop are the shared :mod:`pysidtracker.reglog` primitives;
-:data:`REGLOG_HEADER` is this package's own header line (passed to the
-shared writer's ``header=`` argument), and :func:`iter_register_writes`
-is a thin wrapper feeding the player's per-frame writes to
-:func:`pysidtracker.reglog.frame_writes`.
+:class:`RegWrite`, :func:`read_reglog`, :func:`write_reglog` and the framing
+loop are the shared :mod:`pysidtracker.reglog` primitives (re-exported here);
+:data:`REGLOG_HEADER` is this package's own header line and
+:func:`iter_register_writes` frames a :class:`~pygoattracker.player.Player`
+(a :class:`pysidtracker.MemPlayer`) into that log via the base
+:func:`pysidtracker.reglog.register_writes_from_player`.
 """
 
 from typing import Iterator
 
 from pysidtracker.errors import SidParseError
-from pysidtracker.reglog import (  # re-exported for back-compat
+from pysidtracker.reglog import (
     DEFAULT_WRITE_SPACING,
     RegWrite,
-    frame_writes,
     read_reglog,
+    register_writes_from_player,
     write_reglog,
 )
 
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Song
-from pygoattracker.player import iter_frames
+from pygoattracker.player import Player
 
 REGLOG_HEADER = "# pygoattracker register log: clock reg val"
 
@@ -42,6 +36,20 @@ __all__ = [
 ]
 
 
+def _frame_count(song: Song, subtune: int, max_frames, until_loop: bool, **opts) -> int:
+    """Frames to log, honoring ``until_loop`` and the song's natural stop."""
+    player = Player(song, subtune=subtune, **opts)
+    count = 0
+    while max_frames is None or count < max_frames:
+        if until_loop and min(player.loops) > 0:
+            break
+        writes = player.play_frame()
+        if not player.playing and not writes:
+            break
+        count += 1
+    return count
+
+
 def iter_register_writes(
     song: Song,
     subtune: int = 0,
@@ -53,24 +61,20 @@ def iter_register_writes(
 ) -> Iterator[RegWrite]:
     """Yield :class:`RegWrite` for ``song``, frame by frame.
 
-    Writes within a frame are spaced ``write_spacing`` cycles apart from
-    the frame boundary; frames are ``cycles_per_frame`` apart. The player
-    already yields ``0..24`` register offsets, so framing runs with
-    ``sid_reg_base=0``.
+    The player's post-init register file is emitted at clock 0 and each frame's
+    changed registers ``write_spacing`` cycles apart, frames ``cycles_per_frame``
+    apart -- the base :func:`~pysidtracker.reglog.register_writes_from_player`
+    framing. ``until_loop`` or an open-ended ``max_frames`` first measure the
+    frame count (honoring the song's natural stop).
     """
-    frames = iter_frames(
-        song,
-        subtune=subtune,
-        max_frames=max_frames,
-        until_loop=until_loop,
-        **player_options,
-    )
+    if until_loop or max_frames is None:
+        max_frames = _frame_count(
+            song, subtune, max_frames, until_loop, **player_options
+        )
+    player = Player(song, subtune=subtune, **player_options)
     try:
-        yield from frame_writes(
-            frames,
-            cycles_per_frame=cycles_per_frame,
-            write_spacing=write_spacing,
-            sid_reg_base=0,
+        yield from register_writes_from_player(
+            player, max_frames, cycles_per_frame, write_spacing
         )
     except SidParseError as exc:
         raise GoatTrackerError(str(exc)) from exc

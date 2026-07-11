@@ -1,18 +1,21 @@
 """GoatTracker 2 playroutine in Python.
 
-This is a port of the reference playroutine (``gplay.c`` in the
-GoatTracker 2.76 source): the sequencer, tempo/funktempo handling,
-wave/pulse/filter/speed table execution, realtime commands, gateoff
-timer and hard restart all follow the original tick for tick, including
-its 8-bit wraparound arithmetic.
-
-Each :meth:`Player.play_frame` call runs one 50 Hz tick and returns the
-SID register writes for that frame as ``(register, value)`` pairs, in
-ascending register order. Multispeed playback and the editor's jamming
-and mid-song start modes are not implemented.
+:class:`Player` is a :class:`pysidtracker.MemPlayer`: it inherits the flat
+64 KiB memory, the post-init snapshot, the diffing :meth:`play_frame` and the
+:meth:`render_grid`/:meth:`iter_frames` drivers, and implements only the two
+tracker-specific hooks -- :meth:`_init` (build the playroutine state and run the
+editor's reset) and :meth:`_frame` (advance one 50 Hz tick, writing this frame's
+SID registers into ``$D400``). Everything else here is a private transcription of
+the reference playroutine (``gplay.c`` / ``player.s`` in the GoatTracker 2.76
+source): the sequencer, tempo/funktempo handling, wave/pulse/filter/speed table
+execution, realtime commands, gateoff timer and hard restart, all following the
+original tick for tick with its 8-bit wraparound arithmetic. Multispeed playback
+and the editor's jamming/mid-song-start modes are not implemented.
 """
 
 from dataclasses import dataclass
+
+from pysidtracker import MemPlayer
 
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
@@ -73,13 +76,17 @@ class _Channel:
     gatetimer: int = 0
 
 
-class Player:
+class Player(MemPlayer):
     """Play a :class:`~pygoattracker.model.Song` one frame at a time.
 
-    Options match the GoatTracker editor defaults: ``adparam`` is the
-    hard restart ADSR parameter, ``optimize_pulse`` and
-    ``optimize_realtime`` are the pulse/realtime command skip
-    optimizations (both enabled in the editor).
+    A :class:`pysidtracker.MemPlayer`: :meth:`~pysidtracker.MemPlayer.play_frame`,
+    :meth:`~pysidtracker.MemPlayer.render_grid` and
+    :meth:`~pysidtracker.MemPlayer.iter_frames` come from the base; this class
+    only builds the playroutine state and runs the per-frame tick.
+
+    Options match the GoatTracker editor defaults: ``adparam`` is the hard
+    restart ADSR parameter, ``optimize_pulse`` and ``optimize_realtime`` are the
+    pulse/realtime command skip optimizations (both enabled in the editor).
     """
 
     def __init__(
@@ -95,6 +102,7 @@ class Player:
     ):
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
+        self._song = song
         # The editor playroutine (gplay.c) reads a fixed note-frequency table
         # zero-padded to 128 entries. The PACKED player (gt2reloc/player.s) lays
         # the table out as ``freqtbllo[firstnote..lastnote]`` followed
@@ -131,9 +139,16 @@ class Player:
         self.adparam = adparam & 0xFFFF
         self.optimize_pulse = optimize_pulse
         self.optimize_realtime = optimize_realtime
-        self.regs = [0] * constants.SID_REGISTERS
         self.loops = [0] * constants.MAX_CHN
-        self._compile(song, subtune)
+        # MemPlayer has no code image to mount (this is a model-driven, not a
+        # 6502-driven, transcription); it seeds ``$D418`` to max volume, runs
+        # ``_init`` (below), then snapshots the register file so ``render_grid``
+        # emits the same forward-filled 25-register grid the oracle compares.
+        super().__init__(b"", 0, subtune)
+
+    def _init(self, subtune: int) -> None:
+        """Build the playroutine data + state and run the editor reset."""
+        self._compile(self._song, subtune)
         self._channels = [_Channel() for _ in range(constants.MAX_CHN)]
         self._funktable = [8, 5]
         self._masterfader = 0x0F
@@ -143,7 +158,27 @@ class Player:
         self._filtertime = 0
         self._filterptr = 0
         self._state = _INIT
-        self._last_regs = None
+        self._init_routine()
+
+    def _frame(self) -> None:
+        """Advance one player tick, writing this frame's SID registers to memory.
+
+        The song's stop request only takes effect one frame later (as in the
+        original: ``PLAY_STOP`` becomes ``PLAY_STOPPED`` on the next call), so a
+        mid-frame stop still finishes the frame.
+        """
+        if self._state == _STOPPED:
+            return
+        if self._state == _STOP:
+            self._state = _STOPPED
+            return
+        self._filter_routine()
+        for channel in range(constants.MAX_CHN):
+            self._play_channel(channel)
+        base = self.SID_BASE
+        self._mem[base : base + constants.SID_REGISTERS] = bytes(
+            value & 0xFF for value in self.regs
+        )
 
     def _compile(self, song: Song, subtune: int) -> None:
         """Flatten the typed model into playroutine data arrays."""
@@ -202,27 +237,6 @@ class Player:
     def mute(self, channel: int, muted: bool = True) -> None:
         """Mute or unmute a voice (its oscillator keeps running)."""
         self._channels[channel].mute = muted
-
-    def play_frame(self) -> list[tuple[int, int]]:
-        """Run one player tick; return this frame's SID register writes.
-
-        The first frame returns all 25 registers (the player assumes a
-        reset chip); later frames return only registers that changed.
-        After the song stops, returns no writes.
-        """
-        if self._state == _STOPPED:
-            return []
-        self._play_routine()
-        if self._last_regs is None:
-            writes = list(enumerate(self.regs))
-        else:
-            writes = [
-                (reg, value)
-                for reg, (value, last) in enumerate(zip(self.regs, self._last_regs))
-                if value != last
-            ]
-        self._last_regs = list(self.regs)
-        return writes
 
     # Playroutine internals. Structure and naming follow gplay.c.
 
@@ -742,17 +756,6 @@ class Player:
         if fetch_tick:
             self._get_new_notes(channel, chan)
         self._write_voice_regs(channel, chan)
-
-    def _play_routine(self) -> None:
-        if self._state in (_INIT, _STOP):
-            if self._state == _STOP:
-                self._state = _STOPPED
-                return
-            self._init_routine()
-            return
-        self._filter_routine()
-        for channel in range(constants.MAX_CHN):
-            self._play_channel(channel)
 
 
 def iter_frames(

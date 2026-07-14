@@ -29,7 +29,7 @@ jobs:
         # HVSC corpus tunes are copyright and never committed; the corpus
         # decompile test fetches them from the mirror into a gitignored cache.
         # Cache that dir across runs, keyed on the sample list + fetch script.
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: tests/.tunecache
           key: hvsc-tunes-${{ hashFiles('tests/data/hvsc_goattracker_sample.txt', 'scripts/fetch_tunes.py') }}
@@ -59,13 +59,13 @@ jobs:
           digest=$(docker inspect --format '{{index .RepoDigests 0}}' anarkiwi/sidtrace:latest)
           echo "digest=${digest##*@}" >> "$GITHUB_OUTPUT"
       - name: Cache HVSC tunes
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: tests/.tunecache
           key: hvsc-${{ hashFiles('tests/test_oracle_hvsc.py') }}
           restore-keys: hvsc-
       - name: Cache oracle CSVs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .oracle-cache/csv
           key: oracle-csv-${{ steps.image.outputs.digest }}-${{ hashFiles('tests/test_oracle_hvsc.py') }}

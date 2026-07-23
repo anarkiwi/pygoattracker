@@ -18,7 +18,7 @@ pip install pygoattracker[audio]   # + WAV rendering via pyresidfp
 ```
 
 Decompiling `.sid` files (including crunched/relocated images, run in a 6502
-emulator via py65) works out of the box; only WAV rendering needs the extra.
+emulator via jennings) works out of the box; only WAV rendering needs the extra.
 
 ## Usage
 

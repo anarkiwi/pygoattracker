@@ -18,7 +18,7 @@ The packed data layout and byte transforms follow GoatTracker 2.76's
   (and :class:`~pygoattracker.player.Player`) expect.
 
 Images that are crunched or relocated on init are unpacked first by
-running the init routine in a 6502 emulator (:mod:`py65`).
+running the init routine in a 6502 emulator (:mod:`jennings`).
 """
 
 from dataclasses import dataclass
@@ -840,7 +840,7 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
 
     ``src`` may be a path, ``bytes``, or a binary file object. Direct-load
     images are inverted statically; crunched or relocated images have their
-    init routine run in a 6502 emulator first (requires :mod:`py65`).
+    init routine run in a 6502 emulator first (requires :mod:`jennings`).
     """
     image = _load_image(read_bytes(src))
     header = image.header

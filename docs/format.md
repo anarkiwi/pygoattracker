@@ -63,7 +63,7 @@ a different column geometry (its high column does not hold orderlist-pointer hig
 bytes) are not decoded and raise a clean `SidParseError`.
 
 Direct-load images decompile with the standard library only. Crunched or
-relocated images have their init routine run in a 6502 emulator first (py65,
+relocated images have their init routine run in a 6502 emulator first (jennings,
 a required dependency). Container header fields are not trusted; this
 detection is provided by the shared
 [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) base.

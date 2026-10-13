@@ -1,6 +1,7 @@
 """Exceptions raised by pygoattracker."""
 
 from pysidtracker import SidError
+from pysidtracker import SidParseError as BaseSidParseError
 
 
 class GoatTrackerError(SidError):
@@ -27,5 +28,5 @@ class ConversionError(GoatTrackerError):
     """A song uses features the target format cannot express."""
 
 
-class SidParseError(GoatTrackerError):
+class SidParseError(GoatTrackerError, BaseSidParseError):
     """A .sid file could not be parsed or is not a packed GoatTracker tune."""

@@ -1,9 +1,14 @@
 """Shared helpers for building small test songs."""
 
-import pytest
+import os
 
-from pygoattracker import constants
-from pygoattracker.model import Instrument, Pattern, Row, Song
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(_v, "2")
+
+import pytest  # noqa: E402  (after the BLAS thread caps)
+
+from pygoattracker import constants  # noqa: E402
+from pygoattracker.model import Instrument, Pattern, Row, Song  # noqa: E402
 
 
 def note(name: str) -> int:

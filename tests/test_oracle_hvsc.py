@@ -16,14 +16,16 @@ slides over them.
 """
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 from pysidtracker import make_oracle_fixtures
 
-from pygoattracker import sid
-from pygoattracker.player import Player
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+import oracle_hvsc  # noqa: E402  (after sys.path tweak)
 
 # HVSC .sid cache (shared with the corpus decompile test) and the sidtrace CSV
 # cache. ``$PYGOATTRACKER_ORACLE_CACHE`` overrides the CSV location.
@@ -51,15 +53,7 @@ TUNES = {
 
 
 def _render(data, nframes):
-    result = sid.decompile_sid(data)
-    player = Player(
-        result.typed,
-        subtune=result.subtune,
-        freq_table=result.info.note_read,
-        simplepulse=result.info.simplepulse,
-        live_vibrato=result.info.live_vibrato,
-    )
-    return player.render_grid(nframes + _LEAD)
+    return oracle_hvsc.render(data, 1, nframes + _LEAD)[0].tolist()
 
 
 tune_id, oracle_match = make_oracle_fixtures(

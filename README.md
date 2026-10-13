@@ -10,6 +10,8 @@ packed GoatTracker playroutine (as produced by `gt2reloc`) is detected and
 decompiled back to a `Song`, including crunched/relocated images whose init is
 run in a 6502 emulator — container headers are not trusted.
 
+`TypedSong` states the same song as typed operations (commands, table steps, instruments) and round-trips losslessly to the `.sng` and to the packed bytes; see `docs/format.md`.
+
 ## Install
 
 ```bash

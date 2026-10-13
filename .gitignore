@@ -224,3 +224,4 @@ tests/.tunecache/
 # Oracle sidtrace CSVs (derived from copyright tunes) -- rendered on demand.
 .oracle-cache/
 .coverage.floor
+.roundtrip/

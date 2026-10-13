@@ -9,10 +9,7 @@ cache (or a local ``$HVSC`` tree), never committed.
 
 Each tune is a distinct GoatTracker play-routine / packed-decode variation, and
 every one must render frame-for-frame identically to the deterministic
-``sidplayfp`` oracle. The player has a few leading gate-off "settling" frames
-that the oracle collapses into its baseline (its gap anchor discards write-free
-frames), so the render carries ``_LEAD`` extra frames and ``aligned_match``
-slides over them.
+``sidplayfp`` oracle, one frame per play-routine interrupt.
 """
 
 import os
@@ -31,7 +28,6 @@ import oracle_hvsc  # noqa: E402  (after sys.path tweak)
 # cache. ``$PYGOATTRACKER_ORACLE_CACHE`` overrides the CSV location.
 _HVSC = Path(__file__).parent / ".tunecache"
 _CSV = Path(os.environ.get("PYGOATTRACKER_ORACLE_CACHE", ".oracle-cache/csv"))
-_LEAD = 8
 
 # One representative HVSC tune per play-routine / packed-decode variation, each
 # verified to render byte-exactly against the deterministic sidtrace oracle:
@@ -53,7 +49,7 @@ TUNES = {
 
 
 def _render(data, nframes):
-    return oracle_hvsc.render(data, 1, nframes + _LEAD)[0].tolist()
+    return oracle_hvsc.render(data, 1, nframes)[0].tolist()
 
 
 tune_id, oracle_match = make_oracle_fixtures(
@@ -62,7 +58,7 @@ tune_id, oracle_match = make_oracle_fixtures(
     oracle_cache=_CSV,
     render=_render,
     frames=250,
-    max_lead=_LEAD,
+    max_lead=0,
 )
 
 

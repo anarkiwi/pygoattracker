@@ -9,6 +9,7 @@ filesystem reader extracts them.
 """
 
 import hashlib
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -58,7 +59,9 @@ def _download(name: str, url: str, sha256: str) -> bytes:
         except (urllib.error.URLError, OSError) as exc:
             pytest.skip(f"cannot download {name}: {exc}")
         CACHE_DIR.mkdir(exist_ok=True)
-        cached.write_bytes(data)
+        tmp = cached.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, cached)
     data = cached.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     if digest != sha256:

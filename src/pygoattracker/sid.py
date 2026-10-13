@@ -21,7 +21,7 @@ Images that are crunched or relocated on init are unpacked first by
 running the init routine in a 6502 emulator (:mod:`jennings`).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pysidtracker import (
     PSID_MAGIC,
@@ -40,16 +40,23 @@ from pysidtracker import parse_sid_header as _parse_sid_header
 
 from pygoattracker import constants
 from pygoattracker.errors import SidParseError
+from pygoattracker.packed import (
+    PackedLayout,
+    PlayerBuild,
+    PlayerState,
+    decode,
+    pack,
+    read_build,
+    read_state,
+)
+from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.model import (
-    Instrument,
     Orderlist,
-    Pattern,
     PlayPattern,
     Repeat,
     Row,
     Song,
     Subtune,
-    Table,
     Transpose,
 )
 
@@ -98,33 +105,47 @@ _P_PULSEPTR = CodePattern("B9 {v:w} F0 ?? 9D ?? ?? A9 00")
 
 @dataclass
 class PackedInfo:
-    """Playroutine options recovered from the packed image.
+    """Playroutine options and layout recovered from the packed image.
 
-    These let a caller build a :class:`~pygoattracker.player.Player` that
-    reproduces the packed player exactly::
-
-        song, info = decompile_sid(data).song, decompile_sid(data).info
-        player = Player(song, freq_table=info.freq_table,
-                        simplepulse=info.simplepulse,
-                        live_vibrato=info.live_vibrato)
+    ``freq_table`` is the tuning greloc packed, entry ``n`` for note
+    ``firstnote + n``; ``note_read`` is what the packed player reads for each
+    note index 0-127, the tuning and the bytes around it, which is what a
+    :class:`~pygoattracker.player.Player` takes as its ``freq_table``.
     """
 
     firstnote: int = 0
     lastnote: int = constants.MAX_NOTES - 1
     freq_table: tuple = ()
+    note_read: tuple = ()
     simplepulse: bool = False
     live_vibrato: bool = False
     nowavedelay: bool = False
+    layout: PackedLayout | None = None
+    build: PlayerBuild = field(default_factory=PlayerBuild)
+    state: PlayerState | None = None
 
 
 @dataclass
 class DecompiledSid:
-    """Result of decompiling a ``.sid``: the song and how to play it back."""
+    """Result of decompiling a ``.sid``: the song, its typed form, and how to play it."""
 
     song: Song
     info: PackedInfo
     header: SidHeader
     subtune: int = 0
+    typed: TypedSong | None = None
+    image: SidImage | None = field(default=None, repr=False)
+
+    def repack(self) -> list[tuple[int, bytes, bytes]]:
+        """``(address, packed, image)`` for each piece :func:`pack` writes that the image
+        does not hold: empty where the typed song re-encodes to the image's own bytes.
+        """
+        out = []
+        for addr, data in pack(self.typed, self.info):
+            have = bytes(self.image.mem[addr : addr + len(data)])
+            if have != data:
+                out.append((addr, data, have))
+        return out
 
 
 def parse_sid_header(raw: bytes) -> SidHeader:
@@ -414,7 +435,7 @@ def _executed_length(mem, start, entry_points, limit=constants.MAX_TABLELEN):
     return max(reached), True
 
 
-def _solve_layout(mem, region_start, region_end, num_instr, eps):
+def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
     """Return the unique valid (flags, table lengths) tiling of the region."""
     region_len = region_end - region_start
     solutions = []
@@ -438,10 +459,16 @@ def _solve_layout(mem, region_start, region_end, num_instr, eps):
                         solutions.append(sol)
     if not solutions:
         raise SidParseError("could not segment packed instruments/tables")
-    # vib-vs-gate can be genuinely ambiguous (same K, same tiling); greloc
-    # would suppress an all-identical, normal gatetimer/firstwave pair via the
-    # FIXEDPARAMS optimization, so such a pair must be the vibrato pair.
-    solutions.sort(key=lambda s: s["gate"])
+    # vib-vs-gate can be ambiguous (same K, same tiling): the player's code says
+    # which pair it reads, else a FIXEDPARAMS-suppressible pair is the vibrato's.
+    build = build or PlayerBuild()
+    solutions.sort(
+        key=lambda s: (
+            build.insvib is not None and s["vib"] != build.insvib,
+            build.gatecol is not None and s["gate"] != build.gatecol,
+            s["gate"],
+        )
+    )
     return solutions[0]
 
 
@@ -705,34 +732,6 @@ def _chain_valid(mem, arrays, eps, wtbl, wlen, pulse, plen, filt, flen, vib, sle
 # ---------------------------------------------------------------------------
 
 
-def _reverse_wave(left, right, nowavedelay):
-    """Reverse greloc's packed wavetable to editor left/right columns."""
-    out_left, out_right = [], []
-    for lbyte, rbyte in zip(left, right):
-        if lbyte == 0xFF or constants.WAVECMD <= lbyte <= constants.WAVELASTCMD:
-            out_left.append(lbyte)
-            out_right.append(rbyte)
-            continue
-        if nowavedelay:
-            out_left.append((constants.WAVESILENT | lbyte) if lbyte <= 0x0F else lbyte)
-        elif lbyte <= 0x0F:
-            out_left.append(lbyte)
-        elif lbyte <= 0x1F:
-            out_left.append(constants.WAVESILENT | (lbyte & 0x0F))
-        else:
-            out_left.append(lbyte - 0x10)
-        out_right.append(rbyte ^ 0x80)
-    return out_left, out_right
-
-
-def _reverse_filter(left, right):
-    """Reverse greloc's filter passband-bit transform (left column)."""
-    out_left = [
-        (0x80 | ((b & 0x38) << 1)) if (b != 0xFF and b > 0x80) else b for b in left
-    ]
-    return out_left, list(right)
-
-
 def _detect_nowavedelay(wave_left):
     """greloc clears NOWAVEDELAY when a wavetable delay row (0x01-0x0F) exists."""
     return not any(0x01 <= b <= 0x0F for b in wave_left)
@@ -756,83 +755,59 @@ def _freq_table(mem, addr, firstnote, length):
     return tuple(table)
 
 
-def _read_table(mem, start, length):
-    return list(mem[start : start + length]), list(
-        mem[start + length : start + 2 * length]
+def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build):
+    """The typed song, the editor-form :class:`Song` it states, and the info."""
+    addr, firstnote, length = anchor
+    songtbl, patt_lo, patt_addrs = where
+    tstart, wlen, plen, flen = sol["tstart"], sol["wlen"], sol["plen"], sol["flen"]
+    lay = PackedLayout(
+        freq_addr=addr,
+        firstnote=firstnote,
+        notes=length,
+        songtbl=songtbl,
+        songs=len(orderlists),
+        order_addrs=tuple(order_addrs),
+        patt_lo=patt_lo,
+        patt_addrs=tuple(patt_addrs),
+        ins_start=tstart - len(next(iter(sol["arrays"].values()))) * len(sol["arrays"]),
+        num_instr=len(next(iter(sol["arrays"].values()))),
+        pulse=bool(sol["pulse"]),
+        filt=bool(sol["filt"]),
+        vib=bool(sol["vib"]),
+        gate=bool(sol["gate"]),
+        tstart=tstart,
+        wlen=wlen,
+        plen=plen,
+        flen=flen,
+        slen=sol["slen"],
+        zeros=sol["zeros"],
+        gate_flags=any(v & 0xC0 for v in sol["arrays"].get("gatetimer", ())),
     )
-
-
-def _build_song(
-    mem, header, layout, addr, firstnote, length, orderlists, patterns, num_instr, songs
-):
-    sol = layout
-    arrays = sol["arrays"]
-    tstart = sol["tstart"]
-    wlen, plen, flen, slen, zeros = (
-        sol["wlen"],
-        sol["plen"],
-        sol["flen"],
-        sol["slen"],
-        sol["zeros"],
-    )
-    wleft, wright = _read_table(mem, tstart, wlen)
-    ppos = tstart + 2 * wlen
-    pleft, pright = _read_table(mem, ppos, plen) if sol["pulse"] else ([], [])
-    fpos = ppos + 2 * plen
-    fleft, fright = _read_table(mem, fpos, flen) if sol["filt"] else ([], [])
-    spos = fpos + 2 * flen + zeros
-    sleft = list(mem[spos : spos + slen])
-    sright = list(mem[spos + slen + zeros : spos + slen + zeros + slen])
-
-    nowavedelay = _detect_nowavedelay(wleft)
+    pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
+    nowavedelay = _detect_nowavedelay(mem[tstart : tstart + wlen])
     simplepulse = _detect_simplepulse(pleft)
-    ewl, ewr = _reverse_wave(wleft, wright, nowavedelay)
-    efl, efr = _reverse_filter(fleft, fright)
-
-    limit = constants.MAX_STR - 1
-    song = Song(
-        name=header.name[:limit],
-        author=header.author[:limit],
-        copyright=header.released[:limit],
-    )
-    song.wavetable = Table(left=ewl, right=ewr)
-    # SIMPLEPULSE pulse tables stay in packed form (the Player replays them via
-    # its simplepulse path); un-optimized pulse tables are already editor form.
-    song.pulsetable = Table(left=list(pleft), right=list(pright))
-    song.filtertable = Table(left=efl, right=efr)
-    song.speedtable = Table(left=sleft, right=sright)
-
-    instruments = []
-    for i in range(num_instr):
-        instruments.append(
-            Instrument(
-                attack_decay=arrays["ad"][i],
-                sustain_release=arrays["sr"][i],
-                wave_ptr=arrays["waveptr"][i],
-                pulse_ptr=arrays["pulseptr"][i] if sol["pulse"] else 0,
-                filter_ptr=arrays["filtptr"][i] if sol["filt"] else 0,
-                vibrato_param=arrays["vibparam"][i] if sol["vib"] else 0,
-                vibrato_delay=arrays["vibdelay"][i] if sol["vib"] else 0,
-                gateoff_timer=arrays["gatetimer"][i] if sol["gate"] else 2,
-                first_wave=arrays["firstwave"][i] if sol["gate"] else 0x09,
-                name=f"INSTR{i + 1:02X}",
-            )
-        )
-    song.instruments = instruments
-
-    song.subtunes = [
-        Subtune(channels=orderlists[s * 3 : s * 3 + 3]) for s in range(songs)
+    subtunes = [
+        Subtune(channels=orderlists[s * 3 : s * 3 + 3])
+        for s in range(len(orderlists) // 3)
     ]
-    song.patterns = [Pattern(rows=rows) for rows in patterns]
-
+    typed = decode(mem, lay, build, header, subtunes, nowavedelay, simplepulse)
+    noeffects = not any(isinstance(r, WaveCommand) for r in typed.wavetable) and all(
+        isinstance(r.command, (DoNothing, type(None)))
+        for p in typed.patterns
+        for r in p
+    )
     info = PackedInfo(
         firstnote=firstnote,
         lastnote=firstnote + length - 1,
-        freq_table=_freq_table(mem, addr, firstnote, length),
+        freq_table=typed.freq,
+        note_read=_freq_table(mem, addr, firstnote, length),
         simplepulse=simplepulse,
+        live_vibrato=noeffects,
         nowavedelay=nowavedelay,
+        layout=lay,
+        build=build,
     )
-    return song, info
+    return typed.to_song(), info, typed
 
 
 def decompile_sid(src, subtune=0) -> DecompiledSid:
@@ -938,8 +913,8 @@ def _decompile_any_songs(image, header, dataend, anchor, subtune) -> DecompiledS
 def _decompile(
     image, header, dataend, anchor, subtune, songtbl, songs, patt_lo
 ) -> DecompiledSid:
-    addr, firstnote, length = anchor
     mem = image.mem
+    build = read_build(image)
     order_addrs = [
         mem[songtbl + i] | (mem[songtbl + 3 * songs + i] << 8) for i in range(3 * songs)
     ]
@@ -961,9 +936,10 @@ def _decompile(
     npat = _count_patterns(mem, patt_lo, order_end, order_start)
     if npat is None:
         raise SidParseError("could not locate pattern-pointer table")
-    patterns = []
+    patterns, patt_addrs = [], []
     pos = order_end
     for _ in range(npat):
+        patt_addrs.append(pos)
         rows, pos = decode_packed_pattern(mem, pos)
         patterns.append(rows)
     region_start = patt_lo + 2 * npat
@@ -975,24 +951,17 @@ def _decompile(
     # Exact-fit tiling first (established path); if no flag combination tiles the
     # region, read the table bases directly from the player's table-access code.
     try:
-        layout = _solve_layout(mem, region_start, region_end, num_instr, eps)
+        layout = _solve_layout(mem, region_start, region_end, num_instr, eps, build)
     except SidParseError:
         layout = _chain_layout(image, mem, region_start, num_instr, region_end, eps)
         if layout is None:
             raise
-    song, info = _build_song(
-        mem,
-        header,
-        layout,
-        addr,
-        firstnote,
-        length,
-        orderlists,
-        patterns,
-        num_instr,
-        songs,
+    where = (songtbl, patt_lo, patt_addrs)
+    song, info, typed = _build_song(
+        mem, header, layout, anchor, orderlists, order_addrs, where, build
     )
-    return DecompiledSid(song=song, info=info, header=header, subtune=subtune)
+    info.state = read_state(image, build)
+    return DecompiledSid(song, info, header, subtune, typed, image)
 
 
 def read_sid(src, subtune=0) -> Song:

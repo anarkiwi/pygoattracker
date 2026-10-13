@@ -81,6 +81,38 @@ detection is provided by the shared
 The writer validates format limits and references (patterns, instruments, table
 pointers) before emitting anything; callers describe content, not bytes.
 
+### Typed model
+
+`TypedSong` (`pygoattracker.typed`) states every byte as the operation
+GoatTracker 2.76's readme and `player.s` give it, all frozen dataclasses;
+`TypedSong.from_song(song).to_song() == song`, exhaustively over every column's
+byte space.
+
+| column | variants |
+| --- | --- |
+| note | `Note(pitch)`, `Rest`, `KeyOff`, `KeyOn` |
+| command (pattern 0XY-FXY, wavetable `$F0-$FE`) | `DoNothing(data)`, `PortamentoUp(speed)`, `PortamentoDown(speed)`, `TonePortamento(speed)`, `Vibrato(speed)`, `SetAD(value)`, `SetSR(value)`, `SetWave(wave)`, `SetWavePtr(row)`, `SetPulsePtr(row)`, `SetFilterPtr(row)`, `SetFilterCtrl(resonance, channels)`, `SetCutoff(cutoff)`, `SetMasterVolume(volume)`, `TimingMark(value)`, `FunkTempo(speed)`, `SetTempo(tempo, channel)` |
+| pattern row | `Row(note, instrument, command, length)`: `instrument`/`command` None keep the voice's, `length` the rows a rest spans |
+| wavetable | `WaveStep(wave: SetWave \| Delay \| None, note: WaveNote(value, relative) \| None)`, `WaveCommand(command)`, `Jump(row)`, `Stop` |
+| pulsetable | `PulseSet(width)`, `PulseMod(time, speed)`; SIMPLEPULSE builds `SimplePulseSet(value)`, `SimplePulseMod(time, step)`; `Jump`, `Stop` |
+| filtertable | `FilterSet(passband, resonance, channels)`, `FilterMod(time, speed)`, `CutoffSet(cutoff)`, `Jump`, `Stop` |
+| speedtable | `FixedSpeed(value)` (`rate`, `depth`), `CalculatedSpeed(rate, shift)`; `TypedSong.speed(ref)` resolves a command's or an instrument's row, row 0 to `speed0` |
+| instrument | `Instrument(…, gate_timer, hard_restart, legato, first_wave: SetWave \| GateOff \| GateOn \| None)` |
+
+`decompile_sid` reads the packed bytes into a `TypedSong` directly
+(`DecompiledSid.typed`), folding greloc's transforms into their meaning: the
+packed tempo (`t - 1` from 3), `vibdelay - 1`, the wave and filter column
+transforms, NOWAVEDELAY, SIMPLEPULSE, the speedtable's row 0, and the
+instrument classes (`FIRSTNOHRINSTR`, `FIRSTLEGATOINSTR`) or FIXEDPARAMS'
+immediates read from player code (`PackedInfo.build`, a `PlayerBuild`).
+`DecompiledSid.repack()` re-encodes the typed song with `packed.pack` and lists
+every byte that differs from the image: none, for every HVSC tune `decompile_sid`
+reads. `PackedInfo.freq_table` is the tuning greloc packed
+(`firstnote..lastnote`); `PackedInfo.note_read` is what the packed player reads
+for note indexes 0-127, which a `Player` takes as its `freq_table`.
+`PackedInfo.state` is the ghost image and the globals the first play call
+starts from.
+
 ### NinjaTracker 2
 
 [NinjaTracker 2](http://covertbitops.c64.org) songs (the C64 editor's `N2` work

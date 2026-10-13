@@ -31,6 +31,13 @@ from tests.conftest import add_test_instrument, basic_song, note
 C4_FREQ = constants.FREQ_TABLE[48]
 
 
+def started(song, **kwargs) -> Player:
+    """A player past its song-init call."""
+    player = Player(song, **kwargs)
+    player.play_frame()
+    return player
+
+
 def play(player: Player, frames: int):
     """Run ``frames`` frames; return each frame's writes."""
     return [player.play_frame() for _ in range(frames)]
@@ -38,7 +45,7 @@ def play(player: Player, frames: int):
 
 def reg_history(song, frames: int, reg: int, **kwargs):
     """Values of one register after each frame."""
-    player = Player(song, **kwargs)
+    player = started(song, **kwargs)
     history = []
     for _ in range(frames):
         player.play_frame()
@@ -48,7 +55,7 @@ def reg_history(song, frames: int, reg: int, **kwargs):
 
 def freq_history(song, frames: int, voice: int = 0, **kwargs):
     """16-bit voice frequency after each frame."""
-    player = Player(song, **kwargs)
+    player = started(song, **kwargs)
     history = []
     for _ in range(frames):
         player.play_frame()
@@ -71,8 +78,17 @@ def test_first_frame_writes_all_registers(song):
     assert (constants.MODE_VOL_REG, 0x0F) in frames[0]
 
 
+def test_first_call_only_inits_song(song):
+    player = Player(song)
+    writes = player.play_frame()
+    assert [value for reg, value in writes if reg != constants.MODE_VOL_REG] == [0] * (
+        constants.SID_REGISTERS - 1
+    )
+    assert [chan.tick for chan in player._channels] == [1] * constants.MAX_CHN
+
+
 def test_single_note_timeline(song):
-    frames = play(Player(song), 60)
+    frames = play(started(song), 60)
     # Note fetch two frames ahead: gate masked off and hard restart ADSR.
     assert (constants.AD_REG, 0x0F) in frames[4]
     # Row 0 init: instrument ADSR and first frame waveform $09 (test+gate).
@@ -97,14 +113,14 @@ def test_freq_table_override(song):
     frequencies (it lays the table out unpadded, so out-of-range notes read
     adjacent image bytes). Default (None) keeps the editor table."""
     # The default render emits C-4 at the standard table frequency.
-    base = play(Player(song), 60)
+    base = play(started(song), 60)
     assert (constants.FREQ_LO_REG, C4_FREQ & 0xFF) in base[7]
     assert (constants.FREQ_HI_REG, C4_FREQ >> 8) in base[7]
     # Override note 48 (C-4) to an arbitrary image-specific value; the render
     # now emits that frequency for the same note, nothing else changes.
     table = list(constants.FREQ_TABLE)
     table[48] = 0xBEEF
-    frames = play(Player(song, freq_table=table), 60)
+    frames = play(started(song, freq_table=table), 60)
     assert (constants.FREQ_LO_REG, 0xEF) in frames[7]
     assert (constants.FREQ_HI_REG, 0xBE) in frames[7]
 
@@ -112,7 +128,7 @@ def test_freq_table_override(song):
 def test_keyoff_keyon(song):
     song.patterns[0].rows[4] = Row(note=constants.KEYOFF)
     song.patterns[0].rows[5] = Row(note=constants.KEYON)
-    frames = play(Player(song), 36)
+    frames = play(started(song), 36)
     # Keyoff/keyon are applied at their fetch frames (5 + 6N).
     assert (constants.CONTROL_REG, 0x40) in frames[28]
     assert (constants.CONTROL_REG, 0x41) in frames[34]
@@ -137,13 +153,13 @@ def test_gateoff_timer_high_bit_disables_hard_restart(song):
 
     # With hard restart enabled (default), a note's fetch frame writes the
     # adparam ADSR and masks the gate off (the 8-row pattern loops at frame 51).
-    hr = play(Player(song), 56)
+    hr = play(started(song), 56)
     assert any(hr_adsr in frame for frame in hr)
     assert any(gate_off in frame for frame in hr)
 
     # Same instrument, same timer compare value (2), hard restart disabled.
     song.instruments[0].gateoff_timer = 0x80 | 2
-    nohr = play(Player(song), 56)
+    nohr = play(started(song), 56)
     # Gateoff still happens ...
     assert any(gate_off in frame for frame in nohr)
     # ... but the hard-restart ADSR is never written, on any frame. (AD_REG =
@@ -171,7 +187,7 @@ def test_per_channel_tempo():
     song.patterns.append(Pattern.empty(8))
     song.subtunes[0].channels[1].entries = [PlayPattern(1)]
     song.subtunes[0].channels[2].entries = [PlayPattern(1)]
-    player = Player(song)
+    player = started(song)
     play(player, 8)
     channels = player._channels
     assert channels[0].tempo == 3
@@ -196,7 +212,7 @@ def test_funktempo_recall():
     }
     song = basic_song(rows=rows)
     song.speedtable.add(9, 6)
-    player = Player(song)
+    player = started(song)
     play(player, 40)
     assert player.playing
 
@@ -390,7 +406,7 @@ def test_pulse_program(song):
     song.pulsetable.left = [0x88, 0x10, 0xFF]
     song.pulsetable.right = [0x00, 0x40, 0x00]
     song.instruments[0].pulse_ptr = 1
-    player = Player(song)
+    player = started(song)
     frames = play(player, 10)
     # Pulse $800 set on the first frame after note init.
     assert (constants.PULSE_HI_REG, 0x08) in frames[7]
@@ -411,7 +427,7 @@ def test_pulse_low_byte_unmasked(song):
     song.pulsetable.left = [0x88, 0xFF]
     song.pulsetable.right = [0x01, 0x00]
     song.instruments[0].pulse_ptr = 1
-    player = Player(song)
+    player = started(song)
     play(player, 10)
     assert player.regs[constants.PULSE_LO_REG] == 0x01
 
@@ -425,11 +441,11 @@ def test_simplepulse_set_writes_packed_byte_to_both_nibbles(song):
     song.pulsetable.left = [0x80, 0xFF]
     song.pulsetable.right = [0x88, 0x00]
     song.instruments[0].pulse_ptr = 1
-    editor = Player(song)
+    editor = started(song)
     play(editor, 10)
     assert (editor.regs[3] << 8) | editor.regs[2] == 0x088
 
-    packed = Player(song, simplepulse=True)
+    packed = started(song, simplepulse=True)
     play(packed, 10)
     assert (packed.regs[3] << 8) | packed.regs[2] == 0x888
 
@@ -441,7 +457,7 @@ def test_simplepulse_modulation_accumulates_one_byte(song):
     song.pulsetable.left = [0x80, 0x10, 0xFF]
     song.pulsetable.right = [0x08, 0x10, 0x00]
     song.instruments[0].pulse_ptr = 1
-    player = Player(song, simplepulse=True)
+    player = started(song, simplepulse=True)
     play(player, 10)
     history = []
     for _ in range(20):
@@ -474,7 +490,7 @@ def test_filter_program():
     song.filtertable.left = [0x90, 0x00, 0x7F, 0xFF]
     song.filtertable.right = [0xF1, 0x40, 0x01, 0x00]
     song.instruments[0].filter_ptr = 1
-    player = Player(song)
+    player = started(song)
     frames = play(player, 12)
     # Filter parameter and cutoff set steps execute on the same frame.
     assert (constants.FC_HI_REG, 0x40) in frames[7]
@@ -491,7 +507,7 @@ def test_filter_program():
 def test_filter_command(song):
     song.patterns[0].rows[1] = Row(command=0xB, data=0xF7)
     song.patterns[0].rows[2] = Row(command=0xC, data=0x80)
-    frames = play(Player(song), 25)
+    frames = play(started(song), 25)
     assert (constants.RES_FILT_REG, 0xF7) in frames[13]
     assert (constants.FC_HI_REG, 0x80) in frames[19]
 
@@ -500,7 +516,7 @@ def test_set_ad_sr_wave_commands(song):
     song.patterns[0].rows[1] = Row(command=0x5, data=0x33)
     song.patterns[0].rows[2] = Row(command=0x6, data=0x44)
     song.patterns[0].rows[3] = Row(command=0x7, data=0x21)
-    frames = play(Player(song), 30)
+    frames = play(started(song), 30)
     assert (constants.AD_REG, 0x33) in frames[12]
     assert (constants.SR_REG, 0x44) in frames[18]
     assert (constants.CONTROL_REG, 0x21) in frames[24]
@@ -511,7 +527,7 @@ def test_wavetable_pointer_command(song):
     ptr = song.wavetable.add(0x11, 0x00)
     song.wavetable.add(constants.TABLEJUMP, 0x00)
     song.patterns[0].rows[2] = Row(command=0x8, data=ptr)
-    frames = play(Player(song), 25)
+    frames = play(started(song), 25)
     # The new wavetable step executes on the command row's own tick 0.
     assert (constants.CONTROL_REG, 0x11) in frames[18]
 
@@ -519,7 +535,7 @@ def test_wavetable_pointer_command(song):
 def test_wavetable_command_execution(song):
     song.wavetable.left = [0x41, 0xF6, 0xFF]
     song.wavetable.right = [0x00, 0x2A, 0x00]
-    frames = play(Player(song), 10)
+    frames = play(started(song), 10)
     assert (constants.CONTROL_REG, 0x41) in frames[7]
     # Step 2 executes pattern command 6XY (set sustain/release).
     assert (constants.SR_REG, 0x2A) in frames[8]
@@ -552,7 +568,7 @@ def test_wavetable_absolute_note_and_delay(song):
 def test_illegal_wavetable_command_stops(song):
     song.wavetable.left = [0x41, 0xFE, 0xFF]
     song.wavetable.right = [0x00, 0x00, 0x00]
-    player = Player(song)
+    player = started(song)
     play(player, 10)
     assert not player.playing
     assert player.play_frame() == []
@@ -563,7 +579,7 @@ def test_gatetimer_legato_bits(song):
         song, gateoff_timer=0x42, first_wave=0, attack_decay=0x55
     )
     song.patterns[0].rows[4] = Row(note=note("E-4"), instrument=legato)
-    player = Player(song)
+    player = started(song)
     frames = play(player, 36)
     late = frames[19:]
     # No gateoff and no hard restart before the legato note...
@@ -578,7 +594,7 @@ def test_gatetimer_legato_bits(song):
 
 def test_hard_restart_disabled_bit(song):
     song.instruments[0].gateoff_timer = 0x82
-    frames = play(Player(song), 8)
+    frames = play(started(song), 8)
     # Gate still masked off at fetch, but no $0F00 ADSR write.
     assert (constants.AD_REG, 0x0F) not in frames[4]
     assert (constants.AD_REG, 0x09) in frames[6]
@@ -626,8 +642,8 @@ def test_subtunes():
 
 def test_until_loop(song):
     frames = list(iter_frames(song, until_loop=True))
-    # Loop detected at the orderlist wrap on frame 48.
-    assert len(frames) == 49
+    # Loop detected at the orderlist wrap on frame 49.
+    assert len(frames) == 50
 
 
 def test_max_frames(song):
@@ -648,7 +664,7 @@ def test_gatetimer_too_high_stops(song):
     song.instruments[0].gateoff_timer = 3
     song.patterns[0].rows[0].command = 0xF
     song.patterns[0].rows[0].data = 0x03
-    player = Player(song)
+    player = started(song)
     play(player, 12)
     assert not player.playing
 
@@ -664,7 +680,7 @@ def test_instrument63_default_tempo():
 
 
 def test_mute(song):
-    player = Player(song)
+    player = started(song)
     player.mute(0)
     play(player, 8)
     assert player.regs[constants.CONTROL_REG] == 0x08
@@ -680,7 +696,7 @@ def test_three_channels():
         Pattern(rows=[Row(note=note("E-4"), instrument=instrument2)] + [Row()] * 7)
     )
     song.subtunes[0].channels[1].entries = [PlayPattern(1)]
-    player = Player(song)
+    player = started(song)
     play(player, 9)
     assert player.regs[constants.CONTROL_REG] == 0x41
     assert player.regs[constants.CONTROL_REG + 7] == 0x21
@@ -719,7 +735,7 @@ def test_wavetable_toneporta_command(song):
 def test_wavetable_filter_and_volume_commands(song):
     song.wavetable.left = [0x41, 0xFB, 0xFC, 0xFD, 0xFB, 0xFF]
     song.wavetable.right = [0x00, 0xF1, 0x55, 0x07, 0x00, 0x00]
-    player = Player(song)
+    player = started(song)
     frames = play(player, 14)
     assert (constants.RES_FILT_REG, 0xF1) in frames[9]
     assert (constants.FC_HI_REG, 0x55) in frames[10]
@@ -735,7 +751,7 @@ def test_wavetable_ad_pulse_filter_pointer_commands(song):
     song.filtertable.right = [0x66, 0x00]
     song.wavetable.left = [0x41, 0xF5, 0xF9, 0xFA, 0xFF]
     song.wavetable.right = [0x00, 0x42, 0x01, 0x01, 0x00]
-    player = Player(song)
+    player = started(song)
     frames = play(player, 14)
     assert (constants.AD_REG, 0x42) in frames[8]
     # Pulse runs right after the wavetable in the same frame; the

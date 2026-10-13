@@ -9,10 +9,8 @@ the flow (resolve HVSC tune → render the oracle CSV → frame it → `aligned_
 is documented there.
 
 The `Player` is a `pysidtracker.MemPlayer`, so `render_grid(nframes)` is exactly
-the grid the oracle compares. The player has a few leading gate-off "settling"
-frames the oracle collapses into its baseline (its gap anchor discards
-write-free frames), so the render carries a small `_LEAD` margin and
-`aligned_match` slides over it.
+the grid the oracle compares: one frame per play-routine interrupt, starting
+with the call that only initialises the song, so the grids align exactly.
 
 ## Variations covered
 
@@ -42,7 +40,7 @@ dedicated CI job runs it.
 ## Whole-HVSC survey
 
 [`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
-(`pip install "pysidtracker[survey]>=0.11.1"`) compares every GoatTracker tune
+(`pip install "pysidtracker[survey]>=0.12.0"`) compares every GoatTracker tune
 in an HVSC tree against the oracle over each subtune's full HVSC song length.
 `scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
 `render`, which the oracle tests above share; its `info` is the decoded

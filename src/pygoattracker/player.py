@@ -151,7 +151,7 @@ class Player(MemPlayer):
         super().__init__(b"", 0, subtune)
 
     def _init(self, subtune: int) -> None:
-        """Build the playroutine data + state and run the editor reset."""
+        """Build the playroutine data + state; the first play call inits the song."""
         self._compile(self._song, subtune)
         self._channels = [_Channel() for _ in range(constants.MAX_CHN)]
         self._funktable = [8, 5]
@@ -162,15 +162,18 @@ class Player(MemPlayer):
         self._filtertime = 0
         self._filterptr = 0
         self._state = _INIT
-        self._init_routine()
 
     def _frame(self) -> None:
         """Advance one player tick, writing this frame's SID registers to memory.
 
         The song's stop request only takes effect one frame later (as in the
         original: ``PLAY_STOP`` becomes ``PLAY_STOPPED`` on the next call), so a
-        mid-frame stop still finishes the frame.
+        mid-frame stop still finishes the frame. The first call only inits the
+        song, as ``mt_play`` does while the song number is pending.
         """
+        if self._state == _INIT:
+            self._init_routine()
+            return
         if self._state == _STOPPED:
             return
         if self._state == _STOP:

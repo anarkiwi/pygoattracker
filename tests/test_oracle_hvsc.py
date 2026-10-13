@@ -53,9 +53,9 @@ TUNES = {
 def _render(data, nframes):
     result = sid.decompile_sid(data)
     player = Player(
-        result.song,
+        result.typed,
         subtune=result.subtune,
-        freq_table=result.info.freq_table,
+        freq_table=result.info.note_read,
         simplepulse=result.info.simplepulse,
         live_vibrato=result.info.live_vibrato,
     )

@@ -5,9 +5,15 @@ greloc's data layout) so no external .sid files are needed. An optional
 real-HVSC smoke test runs only when ``PYGOATTRACKER_SID`` points at a file.
 """
 
+import json
 import os
+import re
 import struct
+import sys
+from pathlib import Path
 
+import numpy as np
+import pysidtracker
 import pytest
 
 from pysidtracker import PlayroutineKind, SidError
@@ -15,6 +21,7 @@ from pysidtracker import PlayroutineKind, SidError
 from pygoattracker import constants
 from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
+from pygoattracker.player import Player
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
 
@@ -273,6 +280,7 @@ def test_error_base_is_sid_error():
     # The pygoattracker error hierarchy is re-parented onto pysidtracker's.
     assert issubclass(GoatTrackerError, SidError)
     assert issubclass(SidParseError, SidError)
+    assert issubclass(SidParseError, pysidtracker.SidParseError)
 
 
 def test_parser_detects_direct_load(packed):
@@ -496,3 +504,20 @@ def test_real_sid_roundtrips():
     song = sid.read_sid(REAL_SID)
     assert song.patterns
     parse_sng(build_sng(song))  # recovered song is a valid .SNG
+
+
+def test_survey_render(packed):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import oracle_hvsc  # pylint: disable=import-outside-toplevel
+
+    grid, info = oracle_hvsc.render(packed, 1, 60)
+    d = sid.decompile_sid(packed)
+    want = Player(
+        d.typed, freq_table=d.info.note_read, simplepulse=d.info.simplepulse
+    ).render_grid(60)
+    assert grid.shape == (60, 25) and (grid == np.asarray(want)).all()
+    assert json.loads(json.dumps(info))["simplepulse"] == d.info.simplepulse
+    assert {"adparam", "firstnohr", "pulseopt", "realtime", "state"} <= set(info)
+    with pytest.raises(pysidtracker.SidParseError):
+        oracle_hvsc.render(b"PSID" + b"\0" * 200, 1, 10)
+    assert re.search(oracle_hvsc.PLAYER, "GoatTracker_V2.x", re.I)

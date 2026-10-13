@@ -38,3 +38,22 @@ HVSC `.sid` files are copyright works: they are resolved from a local `$HVSC`
 tree or downloaded to `tests/.tunecache`, and the oracle CSVs cached in
 `.oracle-cache/csv` — never committed. The default suite excludes `-m oracle`; a
 dedicated CI job runs it.
+
+## Whole-HVSC survey
+
+[`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
+(`pip install "pysidtracker[survey]>=0.11"`) compares every GoatTracker tune
+in an HVSC tree against the oracle over each subtune's full HVSC song length.
+`scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
+`render`, which the oracle tests above share; its `info` is the decoded
+`PlayerBuild` plus SIMPLEPULSE / NOWAVEDELAY / live-vibrato, so `triage` shows
+the exact rate per decoded playroutine option.
+
+```bash
+python -m pysidtracker.survey find $HVSC --player 'goattracker|^\(gt' --out tunes.csv
+PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC tunes.csv --work .hvsc-survey --render oracle_hvsc:render
+python -m pysidtracker.survey triage .hvsc-survey
+PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC tunes.csv <md5>_<song> --work .hvsc-survey --render oracle_hvsc:render
+```
+
+`.hvsc-survey/` is gitignored; its CSVs derive from copyright tunes.

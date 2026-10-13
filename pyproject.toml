@@ -38,6 +38,7 @@ dev = [
     "pytest>=7",
     "pytest-cov>=4",
     "pytest-xdist>=3",
+    "tqdm>=4",
     # Decompress the sidtrace oracle's zstd CSV traces (oracle comparison tests).
     "zstandard>=0.21",
 ]

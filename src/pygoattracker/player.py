@@ -20,6 +20,7 @@ from pysidtracker import MemPlayer
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Song
+from pygoattracker.typed import TypedSong
 
 _PATT_END = -1
 _INIT, _RUNNING, _STOP, _STOPPED = range(4)
@@ -77,7 +78,7 @@ class _Channel:
 
 
 class Player(MemPlayer):
-    """Play a :class:`~pygoattracker.model.Song` one frame at a time.
+    """Play a :class:`~pygoattracker.model.Song` (or a ``TypedSong``) one frame at a time.
 
     A :class:`pysidtracker.MemPlayer`: :meth:`~pysidtracker.MemPlayer.play_frame`,
     :meth:`~pysidtracker.MemPlayer.render_grid` and
@@ -91,7 +92,7 @@ class Player(MemPlayer):
 
     def __init__(
         self,
-        song: Song,
+        song: Song | TypedSong,
         subtune: int = 0,
         adparam: int = constants.DEFAULT_ADPARAM,
         optimize_pulse: bool = True,
@@ -100,6 +101,9 @@ class Player(MemPlayer):
         simplepulse: bool = False,
         live_vibrato: bool = False,
     ):
+        if isinstance(song, TypedSong):
+            simplepulse = simplepulse or song.simplepulse
+            song = song.to_song()
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
         self._song = song

@@ -50,6 +50,7 @@ from pysidtracker.testing import resolve_tune
 from pygoattracker import sid
 from pygoattracker.errors import SidParseError
 from pygoattracker.reader import parse_sng
+from pygoattracker.typed import TypedSong
 from pygoattracker.writer import build_sng
 
 REPO = Path(__file__).resolve().parent.parent
@@ -199,3 +200,22 @@ def test_hvsc_representatives(rel, expect):
     reparsed = parse_sng(build_sng(song))
     assert len(reparsed.patterns) == len(song.patterns)
     assert len(reparsed.instruments) == len(song.instruments)
+
+
+def test_hvsc_corpus_round_trips_through_the_typed_model():
+    """Every sampled tune re-encodes from its typed song to its own packed bytes,
+    and to the same Song (so the same .sng, where a .sng can hold it)."""
+    present = _present()
+    if len(present) < 100:
+        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
+    checked = 0
+    for rel, path in present:
+        try:
+            result = sid.decompile_sid(path.read_bytes())
+        except SidParseError:
+            continue
+        assert result.repack() == [], rel
+        typed = TypedSong.from_song(result.song, result.info.simplepulse)
+        assert typed.to_song() == result.song, rel
+        checked += 1
+    assert checked >= _FULL_SAMPLE_MIN_PASS or len(present) < len(_sample())

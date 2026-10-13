@@ -53,8 +53,10 @@ from pygoattracker.reglog import (
     write_reglog,
 )
 from pygoattracker.writer import build_sng, validate_song, write_sng
+from pygoattracker.packed import PackedLayout, PlayerBuild, PlayerState
+from pygoattracker.typed import TypedSong
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "ConversionError",
@@ -70,9 +72,12 @@ __all__ = [
     "NinjaValidationError",
     "Orderlist",
     "PackedInfo",
+    "PackedLayout",
     "Pattern",
     "PlayPattern",
     "Player",
+    "PlayerBuild",
+    "PlayerState",
     "RegWrite",
     "Repeat",
     "Row",
@@ -84,6 +89,7 @@ __all__ = [
     "Subtune",
     "Table",
     "Transpose",
+    "TypedSong",
     "__version__",
     "build_nt2",
     "build_sng",

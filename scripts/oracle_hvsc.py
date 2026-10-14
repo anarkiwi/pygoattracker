@@ -23,6 +23,7 @@ def render(data, song, nframes):
         freq_table=d.info.note_read,
         simplepulse=d.info.simplepulse,
         live_vibrato=d.info.live_vibrato,
+        state=d.info.state,
     )
     info = asdict(d.info.build)
     info.update(

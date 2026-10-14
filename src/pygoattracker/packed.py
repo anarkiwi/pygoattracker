@@ -307,7 +307,7 @@ def _filter_typed(left, right):
 
 
 def _columns(lay):
-    names = ["ad", "sr", "wave"] + ["pulse"] * lay.pulse + ["filt"] * lay.filt
+    names = ["ad", "sr", "wave"] + ["filt"] * lay.filt + ["pulse"] * lay.pulse
     return names + ["vib", "vibdelay"] * lay.vib + ["gate", "first"] * lay.gate
 
 
@@ -351,9 +351,9 @@ def decode(mem, lay, build, header, orderlists, nowavedelay, simplepulse) -> Typ
     def table(start, length, f):
         return tuple(f(mem[start + k], mem[start + length + k]) for k in range(length))
 
-    ppos = lay.tstart + 2 * lay.wlen
-    fpos = ppos + 2 * lay.plen
-    spos = fpos + 2 * lay.flen + lay.zeros
+    fpos = lay.tstart + 2 * lay.wlen
+    ppos = fpos + 2 * lay.flen
+    spos = ppos + 2 * lay.plen + lay.zeros
     limit = C.MAX_STR - 1
     return TypedSong(
         name=header.name[:limit],
@@ -367,8 +367,8 @@ def decode(mem, lay, build, header, orderlists, nowavedelay, simplepulse) -> Typ
             lay.wlen,
             lambda a, b: wave_row(*_wave_editor(a, b, nowavedelay)),
         ),
-        pulsetable=table(ppos, lay.plen, lambda a, b: pulse_row(a, b, simplepulse)),
         filtertable=table(fpos, lay.flen, _filter_typed),
+        pulsetable=table(ppos, lay.plen, lambda a, b: pulse_row(a, b, simplepulse)),
         speedtable=tuple(
             speed_row(mem[spos + k], mem[spos + lay.slen + lay.zeros + k])
             for k in range(lay.slen)
@@ -445,13 +445,13 @@ def pack(song: TypedSong, info) -> list[tuple[int, bytes]]:
             lay.tstart,
             pairs(song.wavetable, lambda r: _wave_packed(*wave_bytes(r), nowavedelay)),
         ),
-        (lay.tstart + 2 * lay.wlen, pairs(song.pulsetable, pulse_bytes)),
+        (lay.tstart + 2 * lay.wlen, pairs(song.filtertable, _filter_packed)),
         (
-            lay.tstart + 2 * (lay.wlen + lay.plen),
-            pairs(song.filtertable, _filter_packed),
+            lay.tstart + 2 * (lay.wlen + lay.flen),
+            pairs(song.pulsetable, pulse_bytes),
         ),
         (
-            lay.tstart + 2 * (lay.wlen + lay.plen + lay.flen),
+            lay.tstart + 2 * (lay.wlen + lay.flen + lay.plen),
             bytes(a for a, _ in st) + bytes(b for _, b in st),
         ),
     ]

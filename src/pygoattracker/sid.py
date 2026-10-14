@@ -481,11 +481,11 @@ def _try_layout(
     for name in ("ad", "sr", "waveptr"):
         arrays[name] = mem[off : off + num_instr]
         off += num_instr
-    if pulse:
-        arrays["pulseptr"] = mem[off : off + num_instr]
-        off += num_instr
     if filt:
         arrays["filtptr"] = mem[off : off + num_instr]
+        off += num_instr
+    if pulse:
+        arrays["pulseptr"] = mem[off : off + num_instr]
         off += num_instr
     if vib:
         arrays["vibparam"] = mem[off : off + num_instr]
@@ -503,17 +503,17 @@ def _try_layout(
     wlen, ok = _executed_length(mem, tstart, set(arrays["waveptr"]) | wave_eps)
     if not ok or wlen == 0 or max(arrays["waveptr"], default=0) > wlen:
         return None
-    ppos = tstart + 2 * wlen
-    plen = 0
-    if pulse:
-        plen, ok = _executed_length(mem, ppos, set(arrays["pulseptr"]) | pulse_eps)
-        if not ok or max(arrays["pulseptr"], default=0) > plen:
-            return None
-    fpos = ppos + 2 * plen
+    fpos = tstart + 2 * wlen
     flen = 0
     if filt:
         flen, ok = _executed_length(mem, fpos, set(arrays["filtptr"]) | filt_eps)
         if not ok or max(arrays["filtptr"], default=0) > flen:
+            return None
+    ppos = fpos + 2 * flen
+    plen = 0
+    if pulse:
+        plen, ok = _executed_length(mem, ppos, set(arrays["pulseptr"]) | pulse_eps)
+        if not ok or max(arrays["pulseptr"], default=0) > plen:
             return None
     speed_refs = set(speed_eps)
     if vib:
@@ -550,12 +550,12 @@ def _try_layout(
 # ---------------------------------------------------------------------------
 # Code-scan layout: read the instrument/table geometry from the player code.
 #
-# The four wave/pulse/filter tables sit contiguously after the instrument
+# The four wave/filter/pulse tables sit contiguously after the instrument
 # arrays. Each is reached by ``player.s``'s "nextstep" idiom (:data:`_P_TABLEPAIR`)
 # whose two ``LDA table,Y`` operands give the left column and (right-1) column
 # bases. Because the three tables abut (``right = left + len``; next table's
 # ``left = this.left + 2*len``), the located pairs form a self-validating
-# *chain*: wave (always present), then pulse and/or filter. The instrument
+# *chain*: wave (always present), then filter and/or pulse. The instrument
 # region ``[insad, wavetbl)`` is then ``instruments * K`` bytes, and
 # ``K = 3 + pulse + filt + 2*vib + 2*gate`` pins the remaining flags (gate is
 # read from :data:`_P_GATE`; vib follows from K). This is the primary path for
@@ -569,7 +569,7 @@ def _chain_tables(image, insad, order_start):
     """Return ``(wavetbl, chain)`` located from the player's table-access code.
 
     ``chain`` is the list of ``(left, right)`` column bases for the jump-
-    terminated tables (wave, then pulse/filter) in memory order, or ``None`` if
+    terminated tables (wave, then filter/pulse) in memory order, or ``None`` if
     no wave table access is found in ``[insad, order_start)``.
     """
     pairs = sorted(
@@ -631,8 +631,8 @@ def _chain_layout(image, mem, insad, num_instr, order_start, eps):
     plen = flen = 0
     if extra >= 2:
         pulse, filt = 1, 1
-        plen = chain[1][1] - chain[1][0]
-        flen = chain[2][1] - chain[2][0]
+        flen = chain[1][1] - chain[1][0]
+        plen = chain[2][1] - chain[2][0]
     elif extra == 1:
         onelen = chain[1][1] - chain[1][0]
         pulse_present = any(
@@ -649,7 +649,7 @@ def _chain_layout(image, mem, insad, num_instr, order_start, eps):
     vib = rem // 2
     if vib not in (0, 1) or k != 3 + pulse + filt + 2 * vib + 2 * gate:
         return None
-    speedstart = wtbl + 2 * wlen + 2 * plen + 2 * flen
+    speedstart = wtbl + 2 * wlen + 2 * flen + 2 * plen
     remaining = order_start - speedstart
     if remaining < 0 or remaining % 2:
         return None
@@ -664,11 +664,11 @@ def _chain_layout(image, mem, insad, num_instr, order_start, eps):
     for name in ("ad", "sr", "waveptr"):
         arrays[name] = mem[off : off + num_instr]
         off += num_instr
-    if pulse:
-        arrays["pulseptr"] = mem[off : off + num_instr]
-        off += num_instr
     if filt:
         arrays["filtptr"] = mem[off : off + num_instr]
+        off += num_instr
+    if pulse:
+        arrays["pulseptr"] = mem[off : off + num_instr]
         off += num_instr
     if vib:
         arrays["vibparam"] = mem[off : off + num_instr]
@@ -707,17 +707,17 @@ def _chain_valid(mem, arrays, eps, wtbl, wlen, pulse, plen, filt, flen, vib, sle
     wl, ok = _executed_length(mem, wtbl, set(arrays["waveptr"]) | wave_eps)
     if not ok or wl != wlen or max(arrays["waveptr"], default=0) > wlen:
         return False
-    if pulse:
-        pl, ok = _executed_length(
-            mem, wtbl + 2 * wlen, set(arrays["pulseptr"]) | pulse_eps
-        )
-        if not ok or pl != plen or max(arrays["pulseptr"], default=0) > plen:
-            return False
     if filt:
         fl, ok = _executed_length(
-            mem, wtbl + 2 * wlen + 2 * plen, set(arrays["filtptr"]) | filt_eps
+            mem, wtbl + 2 * wlen, set(arrays["filtptr"]) | filt_eps
         )
         if not ok or fl != flen or max(arrays["filtptr"], default=0) > flen:
+            return False
+    if pulse:
+        pl, ok = _executed_length(
+            mem, wtbl + 2 * wlen + 2 * flen, set(arrays["pulseptr"]) | pulse_eps
+        )
+        if not ok or pl != plen or max(arrays["pulseptr"], default=0) > plen:
             return False
     speed_refs = set(speed_eps)
     if vib:
@@ -783,7 +783,7 @@ def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build)
         zeros=sol["zeros"],
         gate_flags=any(v & 0xC0 for v in sol["arrays"].get("gatetimer", ())),
     )
-    pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
+    pleft = list(mem[tstart + 2 * wlen + 2 * flen : tstart + 2 * wlen + 2 * flen + plen]) if plen else []
     nowavedelay = _detect_nowavedelay(mem[tstart : tstart + wlen])
     simplepulse = _detect_simplepulse(pleft)
     subtunes = [

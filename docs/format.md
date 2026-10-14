@@ -111,7 +111,14 @@ reads. `PackedInfo.freq_table` is the tuning greloc packed
 (`firstnote..lastnote`); `PackedInfo.note_read` is what the packed player reads
 for note indexes 0-127, which a `Player` takes as its `freq_table`.
 `PackedInfo.state` is the ghost image and the globals the first play call
-starts from.
+starts from, in a full-ghosting build (`GHOSTREGS`), whose `mt_play` copies the
+previous call's ghost to the SID before it runs: a `Player` given a `state`
+outputs each call one call late. `PackedInfo.init_regs` are the SID writes of
+the tune's own init routine, which the chip holds until the player overwrites
+them. In an image holding several players, `PlayerBuild` is read from the code
+between the decoded data's jump table and its frequency table (`player_span`).
+`PlayerBuild.deftempo` (greloc `DEFAULTTEMPO`) is the `Player`'s
+`default_tempo`.
 
 ### NinjaTracker 2
 

@@ -105,6 +105,33 @@ def test_a_define_at_two_sites_or_no_player_states_no_build():
     assert P.read_build(image(DESC, GATECOL)) == P.PlayerBuild()
 
 
+def test_a_zero_page_ghost_build_hard_restarts_into_the_ghost():
+    skiphr = 0x1000 + 0x40 * 1 + 15
+    zphr = "BD 12 20 C9 18 B0 08 A9 00 95 8C A9 0F 95 8B A9 FE 9D 22 20"
+    b = P.read_build(image(TEMPO, zphr, legato(2, 0x20, skiphr), GATECOL))
+    assert (b.adparam, b.srparam, b.firstnohr, b.firstlegato) == (0x0F, 0, 0x18, 0x20)
+
+
+def test_each_player_in_a_multi_player_image_states_its_own_build():
+    m = bytearray(0x10000)
+    for base, flush, tempo in ((0x1000, DESC, 0x05), (0x3000, ASC, 0x11)):
+        play = base + 0x10
+        m[base : base + 6] = bytes((0x4C, 0, base >> 8, 0x4C, play & 0xFF, play >> 8))
+        m[play : play + 13] = bytes.fromhex(flush)
+        m[base + 0x40 : base + 0x4D] = bytes.fromhex(TEMPO)
+        m[base + 0x41] = tempo
+    im = SidImage(m, 0, len(m), None, bytes(m), b"")
+    assert P.read_build(im) == P.PlayerBuild()
+    first = P.read_build(P.player_span(im, 0x1400))
+    second = P.read_build(P.player_span(im, 0x3400))
+    assert (first.alt, first.deftempo) == (False, 0x05)
+    assert (second.alt, second.deftempo) == (True, 0x11)
+    assert P.player_span(im, 0x1400) == P.PlayerCode(im, 0x1000, 0x1400)
+    assert P.player_span(im, 0x0F00) == P.PlayerCode(im)
+    m[0x1003] = 0xEA
+    assert P.player_span(im, 0x1400) == P.PlayerCode(im)
+
+
 def test_the_first_play_call_starts_from_the_image_and_the_immediates_init_keeps():
     filt = "A9 19 8D 16 20 A9 00 8D 17 20 A9 10 09 0F 8D 18 20"
     funk = "C9 02 B0 08 A8 49 01 9D 12 20 B9 50 20 E9 00"

@@ -24,6 +24,9 @@ byte-exact:
 | `Cruiser-X_79_preview` | editor pulse, multi-subtune song(order)-table (5 subtunes) |
 | `10_Orbyte`, `Cab_Hustle` | greloc SIMPLEPULSE one-byte pulse optimization |
 | `Halloween-Main_Title` | SIMPLEPULSE + NOWAVEDELAY combined |
+| `Joke`, `Beautiful_Day`, `H-Fusion`, `Menace47`, `Ann_Gong` | GoatTracker V1.53, V1.52, V1.51, V1.50b, V1.50 playroutines |
+| `Assatas_Song` | GoatTracker V1.52 4x multispeed (packer speed code) |
+| `Latex_Sensations` | GoatTracker V1.52 behind an HVSC init stub |
 
 ## Running
 
@@ -53,5 +56,8 @@ PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC tunes.csv --work .hvs
 python -m pysidtracker.survey triage .hvsc-survey
 PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC tunes.csv <md5>_<song> --work .hvsc-survey --render oracle_hvsc:render
 ```
+
+`scripts/gt1_versions.py $HVSC tunes.csv` tabulates the `GoatTracker_V1.x`
+tunes by embedded playroutine and can write a per-version sample `tunes.csv`.
 
 `.hvsc-survey/` is gitignored; its CSVs derive from copyright tunes.

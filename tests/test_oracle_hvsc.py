@@ -45,6 +45,16 @@ TUNES = {
     "cab_hustle": "GAMES/A-F/Cab_Hustle.sid",
     # SIMPLEPULSE + NOWAVEDELAY build combined.
     "halloween_main_title": "MUSICIANS/M/Mibri/Halloween-Main_Title.sid",
+    # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
+    "gt1_153_joke": "DEMOS/G-L/Joke.sid",
+    "gt1_152_beautiful_day": "DEMOS/A-F/Beautiful_Day.sid",
+    "gt1_151_h_fusion": "MUSICIANS/F/Finnr/H-Fusion.sid",
+    "gt1_150b_menace47": "MUSICIANS/D/Dexter/Menace47.sid",
+    "gt1_150_ann_gong": "MUSICIANS/B/Bayliss_Richard/Ann_Gong.sid",
+    # GT1 4x multispeed (packer speed code before the player).
+    "gt1_152_4x_assatas_song": "MUSICIANS/H/Hoffmann_Michal/Assatas_Song.sid",
+    # GT1 behind an HVSC init stub (decompiled after running init).
+    "gt1_152_stub_latex_sensations": "MUSICIANS/J/Jammer/Latex_Sensations.sid",
 }
 
 

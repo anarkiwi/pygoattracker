@@ -26,6 +26,12 @@ _NT2_D64_URL = (
 _NT2_D64_SHA256 = "440624b88db8361251bce0729b383bf3737161b9b87e406fcfef6191829a6002"
 CACHE_DIR = Path(__file__).parent / ".fixture_cache"
 
+_GT1_URL = "https://cadaver.github.io/tools"
+GT1_ARCHIVES = {
+    "goattrk.zip": "f12df334df5b1749fa0660575d63520a5e064ed254e4390cede6b03f9808ecef",
+    "goatold.zip": "ef4ab3287bbb60be5cf5f323518a630e392650516bc23510b6a821acd3702233",
+}
+
 EXAMPLE_SONGS = {
     "consultant.sng": (
         "8a4e114ee1fe9b132ae939dd6435a1fb980bec82ba20680721e33158d5f71fbe"
@@ -73,6 +79,11 @@ def _download(name: str, url: str, sha256: str) -> bytes:
 def example_song(name: str) -> bytes:
     """Bytes of a pinned GoatTracker example song (cached download)."""
     return _download(name, f"{_BASE_URL}/{name}", EXAMPLE_SONGS[name])
+
+
+def gt1_archive(name: str) -> bytes:
+    """Bytes of a pinned GoatTracker V1.x release archive (cached download)."""
+    return _download(name, f"{_GT1_URL}/{name}", GT1_ARCHIVES[name])
 
 
 def _sectors_per_track(track: int) -> int:

@@ -7,7 +7,7 @@ their packed addresses, and every 8-bit carry and wraparound follows the 6502 co
 
 from __future__ import annotations
 
-from pysidtracker import MemPlayer
+from pysidtracker import MemPlayer, ram_pattern
 from pysidtracker.registers import PW_HI_REGS
 
 from pygoattracker.errors import GoatTrackerError
@@ -33,12 +33,6 @@ _CMD_SETSUSTAIN = 6
 _FIRST_WAVE = 0x09
 _SEQ_GUARD = 0x10000
 _IO = range(0xD000, 0xE000)
-
-# libsidplayfp's RAM power-on pattern (``SystemRAMBank::reset``).
-_STRIPE = bytes((0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00))
-_EVEN = _STRIPE * 0x800
-_ODD = bytes(b ^ 0xFF for b in _STRIPE) * 0x800
-POWERUP_RAM = (_EVEN + _ODD) * 2
 
 # V1.5x channel variable offsets from ``mt_chnwave`` (three 7-byte blocks).
 WAVE, WAVEPTR, PACKREST, REPEAT, TRANS, SONGPTR, PATTPTR = range(7)
@@ -96,7 +90,7 @@ class Gt1Player(MemPlayer):
         mem, start = self._mem, self._load
         image = bytes(mem[start : start + self._image_len])
         io = bytes(mem[_IO.start : _IO.stop])
-        mem[:] = POWERUP_RAM
+        mem[:] = ram_pattern()  # shared libsidplayfp start-up image (pysidtracker)
         mem[_IO.start : _IO.stop] = io
         mem[start : start + len(image)] = image
         if not self._song.initialized:

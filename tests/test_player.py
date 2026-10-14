@@ -24,6 +24,7 @@ from pygoattracker.model import (
     Subtune,
     Transpose,
 )
+from pygoattracker.packed import PlayerState
 from pygoattracker.player import Player, iter_frames
 
 from tests.conftest import add_test_instrument, basic_song, note
@@ -769,3 +770,127 @@ def test_keyon_passes_wavetable_gate(song):
     assert history[9] == 0x40
     # Keyon sets the gate mask, but the wavetable wave stays $40.
     assert history[17] == 0x40
+
+
+def test_state_seeds_funktempo(song):
+    """Funktable is initialized from state.funk, not the default [8, 5]."""
+    state = PlayerState(
+        registers=(0,) * constants.SID_REGISTERS,
+        cutoff=0,
+        filttype=0,
+        volume=0x0F,
+        funk=(3, 4),
+    )
+    player = Player(song, state=state)
+    player.play_frame()
+    assert player._funktable == [3, 4]
+
+
+def test_state_seeds_filter_and_volume(song):
+    """Filter globals and master volume are initialized from state."""
+    state = PlayerState(
+        registers=(0,) * constants.SID_REGISTERS,
+        cutoff=0x7F,
+        filttype=0x10,
+        volume=0x0A,
+        funk=(8, 5),
+    )
+    player = Player(song, state=state)
+    player.play_frame()
+    assert player._filtercutoff == 0x7F
+    assert player._filtertype == 0x10
+    assert player._masterfader == 0x0A
+
+
+def test_state_seeds_voice_frequency(song):
+    """Voice frequency is seeded from state.registers on first frame."""
+    freq = 0x03E8  # arbitrary non-zero frequency for voice 0
+    regs = [0] * constants.SID_REGISTERS
+    regs[0] = freq & 0xFF
+    regs[1] = freq >> 8
+    state = PlayerState(
+        registers=tuple(regs),
+        cutoff=0,
+        filttype=0,
+        volume=0x0F,
+        funk=(8, 5),
+    )
+    player = Player(song, state=state)
+    player.play_frame()
+    # Frame 0: _init_routine ran but no notes were fetched yet,
+    # so frequency from ghost should be visible.
+    channel_freq = (player.regs[1] << 8) | player.regs[0]
+    assert channel_freq == freq
+
+
+def test_state_seeds_voice_pulse(song):
+    """Voice pulse width is seeded from state.registers on first frame."""
+    pulse = 0x0400
+    regs = [0] * constants.SID_REGISTERS
+    regs[2] = pulse & 0xFF
+    regs[3] = pulse >> 8
+    state = PlayerState(
+        registers=tuple(regs),
+        cutoff=0,
+        filttype=0,
+        volume=0x0F,
+        funk=(8, 5),
+    )
+    player = Player(song, state=state)
+    player.play_frame()
+    channel_pulse = (player.regs[3] << 8) | player.regs[2]
+    assert channel_pulse == pulse
+
+
+def test_state_seeds_filter_registers(song):
+    """Filter cutoff and mode registers are written from ghost image."""
+    regs = [0] * constants.SID_REGISTERS
+    regs[constants.FC_HI_REG] = 0x40
+    regs[constants.RES_FILT_REG] = 0xF1
+    # MODE_VOL_REG: filter mode 0, volume 0xF
+    regs[constants.MODE_VOL_REG] = 0x0F
+    state = PlayerState(
+        registers=tuple(regs),
+        cutoff=0x40,  # cutoff from state takes precedence for globals
+        filttype=0,
+        volume=0x0F,
+        funk=(8, 5),
+    )
+    player = Player(song, state=state)
+    player.play_frame()
+    assert player.regs[constants.FC_HI_REG] == 0x40
+    assert player.regs[constants.RES_FILT_REG] == 0xF1
+    assert player.regs[constants.MODE_VOL_REG] == 0x0F
+
+
+def test_state_seeds_waveform_and_gate(song):
+    """Waveform and gate state are derived from control register in ghost."""
+    regs = [0] * constants.SID_REGISTERS
+    # control = 0xC1 (gate on, waveform 1 = sawtooth)
+    regs[constants.CONTROL_REG] = 0xC1
+    state = PlayerState(
+        registers=tuple(regs),
+        cutoff=0,
+        filttype=0,
+        volume=0x0F,
+        funk=(8, 5),
+    )
+    player = Player(song, state=state)
+    player.play_frame()
+    assert player._channels[0].wave == 0x01
+    assert player._channels[0].gate == 0xFF
+
+    # Test gate-off waveform (control = 0x22: triangle, gate off)
+    regs2 = [0] * constants.SID_REGISTERS
+    regs2[constants.CONTROL_REG] = 0x22
+    state2 = PlayerState(
+        registers=tuple(regs2),
+        cutoff=0,
+        filttype=0,
+        volume=0x0F,
+        funk=(8, 5),
+    )
+    player2 = Player(song, state=state2)
+    player2.play_frame()
+    assert player2._channels[0].wave == 0x02
+    assert player2._channels[0].gate == 0xFE

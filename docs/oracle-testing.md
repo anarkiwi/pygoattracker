@@ -27,6 +27,7 @@ byte-exact:
 | `Joke`, `Beautiful_Day`, `H-Fusion`, `Menace47`, `Ann_Gong` | GoatTracker V1.53, V1.52, V1.51, V1.50b, V1.50 playroutines |
 | `Assatas_Song` | GoatTracker V1.52 4x multispeed (packer speed code) |
 | `Latex_Sensations` | GoatTracker V1.52 behind an HVSC init stub |
+| `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |
 
 ## Running
 

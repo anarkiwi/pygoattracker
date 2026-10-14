@@ -35,6 +35,8 @@ def render(data, song, nframes):
         simplepulse=d.info.simplepulse,
         live_vibrato=d.info.live_vibrato,
         state=d.info.state,
+        default_tempo=d.info.build.deftempo,
+        init_regs=d.info.init_regs,
     )
     info = asdict(d.info.build)
     info.update(

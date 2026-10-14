@@ -521,3 +521,12 @@ def test_survey_render(packed):
     with pytest.raises(pysidtracker.SidParseError):
         oracle_hvsc.render(b"PSID" + b"\0" * 200, 1, 10)
     assert re.search(oracle_hvsc.PLAYER, "GoatTracker_V2.x", re.I)
+
+
+def test_init_regs_are_the_init_routine_s_sid_writes():
+    data = _minimal_packed()[0x7E:]
+    stub = LOAD + len(data)
+    code = bytes.fromhex("A9 20 8D 12 D4 A9 FF 8D 0E D4 8D 0F D4 8D 20 D4 60")
+    d = sid.decompile_sid(_psid(data + code, init=stub, play=stub + len(code) - 1))
+    assert d.info.init_regs == ((0x0E, 0xFF), (0x0F, 0xFF), (0x12, 0x20))
+    assert sid.decompile_sid(_minimal_packed()).info.init_regs == ()

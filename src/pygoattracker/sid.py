@@ -35,6 +35,7 @@ from pysidtracker import (
     find_code_all,
     read_bytes,
     run_init,
+    trace_init,
 )
 from pysidtracker import parse_sid_header as _parse_sid_header
 
@@ -46,6 +47,7 @@ from pygoattracker.packed import (
     PlayerState,
     decode,
     pack,
+    player_span,
     read_build,
     read_state,
 )
@@ -123,6 +125,7 @@ class PackedInfo:
     layout: PackedLayout | None = None
     build: PlayerBuild = field(default_factory=PlayerBuild)
     state: PlayerState | None = None
+    init_regs: tuple = ()
 
 
 @dataclass
@@ -817,7 +820,8 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
     images are inverted statically; crunched or relocated images have their
     init routine run in a 6502 emulator first (requires :mod:`jennings`).
     """
-    image = _load_image(read_bytes(src))
+    raw = read_bytes(src)
+    image = _load_image(raw)
     header = image.header
     dataend = image.end
     anchor = _recognize(image)
@@ -827,7 +831,22 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
         anchor = _recognize(image)
     if anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
-    return _decompile_any_songs(image, header, dataend, anchor, subtune)
+    d = _decompile_any_songs(image, header, dataend, anchor, subtune)
+    d.info.init_regs = init_regs(_load_image(raw), subtune)
+    return d
+
+
+def init_regs(image, subtune=0) -> tuple:
+    """``(reg, value)``: the SID registers the tune's init routine leaves set."""
+    writes = trace_init(image, subtune=subtune).sid_writes
+    base = constants.SID_BASE
+    return tuple(
+        sorted(
+            (addr - base, value)
+            for addr, value in writes.items()
+            if base <= addr < base + constants.SID_REGISTERS
+        )
+    )
 
 
 def _candidate_song_counts(header):
@@ -914,7 +933,8 @@ def _decompile(
     image, header, dataend, anchor, subtune, songtbl, songs, patt_lo
 ) -> DecompiledSid:
     mem = image.mem
-    build = read_build(image)
+    code = player_span(image, anchor[0])
+    build = read_build(code)
     order_addrs = [
         mem[songtbl + i] | (mem[songtbl + 3 * songs + i] << 8) for i in range(3 * songs)
     ]
@@ -960,7 +980,7 @@ def _decompile(
     song, info, typed = _build_song(
         mem, header, layout, anchor, orderlists, order_addrs, where, build
     )
-    info.state = read_state(image, build)
+    info.state = read_state(code, build)
     return DecompiledSid(song, info, header, subtune, typed, image)
 
 

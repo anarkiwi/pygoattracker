@@ -65,9 +65,9 @@ def freq_history(song, frames: int, voice: int = 0, **kwargs):
     return history
 
 
-def init_frames(song, frames: int = 20):
+def init_frames(song, frames: int = 20, **kwargs):
     """Frames on which a note init wrote the $09 first frame waveform."""
-    history = reg_history(song, frames, constants.CONTROL_REG)
+    history = reg_history(song, frames, constants.CONTROL_REG, **kwargs)
     return [num for num, value in enumerate(history) if value == 0x09]
 
 
@@ -772,125 +772,85 @@ def test_keyon_passes_wavetable_gate(song):
     assert history[17] == 0x40
 
 
+def ghost_state(registers=None, volume=0x0F, **kwargs):
+    """A full-ghosting build's state: the ghost image and init's immediates."""
+    if registers is None:
+        registers = [0] * constants.SID_REGISTERS
+        registers[constants.MODE_VOL_REG] = 0x0F
+    fields = dict(cutoff=0, filttype=0, volume=volume, funk=(8, 5))
+    fields.update(kwargs)
+    return PlayerState(registers=tuple(registers), **fields)
+
+
+def test_ghost_build_outputs_each_call_one_call_late(song):
+    plain = Player(song).render_grid(40)
+    ghost = Player(song, state=ghost_state()).render_grid(41)
+    assert ghost[0] == plain[0]
+    assert ghost[1:] == plain
+
+
+def test_ghost_build_init_call_flushes_the_image_ghost(song):
+    # The image ghost holds $D418=0: the init call writes it, the next call
+    # flushes init's ghost (unchanged volume) and the call after the first tick's.
+    player = Player(song, state=ghost_state([0] * constants.SID_REGISTERS))
+    writes = play(player, 3)
+    assert (constants.MODE_VOL_REG, 0x00) in writes[0]
+    assert not writes[1]
+    assert writes[2] == [(constants.MODE_VOL_REG, 0x0F)]
+
+
+def test_ghost_build_init_zeroes_waveform_and_cutoff_low(song):
+    regs = [0] * constants.SID_REGISTERS
+    regs[constants.CONTROL_REG] = 0xC1
+    regs[constants.FC_LO_REG] = 0x07
+    player = Player(song, state=ghost_state(regs))
+    first, second = play(player, 2)
+    assert (constants.CONTROL_REG, 0xC1) in first
+    assert (constants.FC_LO_REG, 0x07) in first
+    assert (constants.CONTROL_REG, 0x00) in second
+    assert (constants.FC_LO_REG, 0x00) in second
+    assert player._channels[0].wave == 0
+
+
+def test_ghost_voice_bytes_are_the_channel_variables(song):
+    regs = [0] * constants.SID_REGISTERS
+    regs[0:4] = [0xE8, 0x03, 0x00, 0x04]
+    player = Player(song, state=ghost_state(regs))
+    play(player, 3)
+    assert (player.regs[1] << 8) | player.regs[0] == 0x03E8
+    assert (player.regs[3] << 8) | player.regs[2] == 0x0400
+    assert (player._channels[0].freq, player._channels[0].pulse) == (0x03E8, 0x0400)
+
+
 def test_state_seeds_funktempo(song):
-    """Funktable is initialized from state.funk, not the default [8, 5]."""
-    state = PlayerState(
-        registers=(0,) * constants.SID_REGISTERS,
-        cutoff=0,
-        filttype=0,
-        volume=0x0F,
-        funk=(3, 4),
-    )
-    player = Player(song, state=state)
+    player = Player(song, state=ghost_state(funk=(3, 4)))
     player.play_frame()
     assert player._funktable == [3, 4]
 
 
 def test_state_seeds_filter_and_volume(song):
-    """Filter globals and master volume are initialized from state."""
-    state = PlayerState(
-        registers=(0,) * constants.SID_REGISTERS,
-        cutoff=0x7F,
-        filttype=0x10,
-        volume=0x0A,
-        funk=(8, 5),
+    player = Player(song, state=ghost_state(cutoff=0x7F, filttype=0x10, volume=0x0A))
+    play(player, 3)
+    assert player.regs[constants.FC_HI_REG] == 0x7F
+    assert player.regs[constants.MODE_VOL_REG] == 0x1A
+
+
+def test_default_tempo_is_the_build_s():
+    song = basic_song(
+        rows={row: Row(note=note("C-4"), instrument=1) for row in range(4)}
     )
-    player = Player(song, state=state)
-    player.play_frame()
-    assert player._filtercutoff == 0x7F
-    assert player._filtertype == 0x10
-    assert player._masterfader == 0x0A
-
-
-def test_state_seeds_voice_frequency(song):
-    """Voice frequency is seeded from state.registers on first frame."""
-    freq = 0x03E8  # arbitrary non-zero frequency for voice 0
-    regs = [0] * constants.SID_REGISTERS
-    regs[0] = freq & 0xFF
-    regs[1] = freq >> 8
-    state = PlayerState(
-        registers=tuple(regs),
-        cutoff=0,
-        filttype=0,
-        volume=0x0F,
-        funk=(8, 5),
+    assert init_frames(song, default_tempo=3) == [4, 8, 12, 16]
+    while len(song.instruments) < 63:
+        song.instruments.append(Instrument())
+    song.instruments[62].attack_decay = 4
+    assert init_frames(song, default_tempo=5) == init_frames(
+        basic_song(rows={row: Row(note=note("C-4"), instrument=1) for row in range(4)})
     )
-    player = Player(song, state=state)
-    player.play_frame()
-    # Frame 0: _init_routine ran but no notes were fetched yet,
-    # so frequency from ghost should be visible.
-    channel_freq = (player.regs[1] << 8) | player.regs[0]
-    assert channel_freq == freq
 
 
-def test_state_seeds_voice_pulse(song):
-    """Voice pulse width is seeded from state.registers on first frame."""
-    pulse = 0x0400
-    regs = [0] * constants.SID_REGISTERS
-    regs[2] = pulse & 0xFF
-    regs[3] = pulse >> 8
-    state = PlayerState(
-        registers=tuple(regs),
-        cutoff=0,
-        filttype=0,
-        volume=0x0F,
-        funk=(8, 5),
-    )
-    player = Player(song, state=state)
-    player.play_frame()
-    channel_pulse = (player.regs[3] << 8) | player.regs[2]
-    assert channel_pulse == pulse
-
-
-def test_state_seeds_filter_registers(song):
-    """Filter cutoff and mode registers are written from ghost image."""
-    regs = [0] * constants.SID_REGISTERS
-    regs[constants.FC_HI_REG] = 0x40
-    regs[constants.RES_FILT_REG] = 0xF1
-    # MODE_VOL_REG: filter mode 0, volume 0xF
-    regs[constants.MODE_VOL_REG] = 0x0F
-    state = PlayerState(
-        registers=tuple(regs),
-        cutoff=0x40,  # cutoff from state takes precedence for globals
-        filttype=0,
-        volume=0x0F,
-        funk=(8, 5),
-    )
-    player = Player(song, state=state)
-    player.play_frame()
-    assert player.regs[constants.FC_HI_REG] == 0x40
-    assert player.regs[constants.RES_FILT_REG] == 0xF1
-    assert player.regs[constants.MODE_VOL_REG] == 0x0F
-
-
-def test_state_seeds_waveform_and_gate(song):
-    """Waveform and gate state are derived from control register in ghost."""
-    regs = [0] * constants.SID_REGISTERS
-    # control = 0xC1 (gate on, waveform 1 = sawtooth)
-    regs[constants.CONTROL_REG] = 0xC1
-    state = PlayerState(
-        registers=tuple(regs),
-        cutoff=0,
-        filttype=0,
-        volume=0x0F,
-        funk=(8, 5),
-    )
-    player = Player(song, state=state)
-    player.play_frame()
-    assert player._channels[0].wave == 0x01
-    assert player._channels[0].gate == 0xFF
-
-    # Test gate-off waveform (control = 0x22: triangle, gate off)
-    regs2 = [0] * constants.SID_REGISTERS
-    regs2[constants.CONTROL_REG] = 0x22
-    state2 = PlayerState(
-        registers=tuple(regs2),
-        cutoff=0,
-        filttype=0,
-        volume=0x0F,
-        funk=(8, 5),
-    )
-    player2 = Player(song, state=state2)
-    player2.play_frame()
-    assert player2._channels[0].wave == 0x02
-    assert player2._channels[0].gate == 0xFE
+def test_init_regs_hold_until_the_player_writes_them(song):
+    init = ((0x0E, 0xFF), (0x0F, 0xFF), (0x12, 0x20))
+    first, second = play(Player(song, init_regs=init), 2)
+    assert (0x0E, 0xFF) in first and (0x0F, 0xFF) in first
+    assert (0x12, 0x00) in first
+    assert (0x0E, 0x00) in second and (0x0F, 0x00) in second

@@ -3,7 +3,9 @@
 GoatTracker V1.x saved a tune by copying one of its playroutines, relocating it
 and appending the song tables (`relocator()` in the editor's `goattrk.c`). This
 library recognizes the playroutine, decompiles the tables into a `Gt1Song` and
-plays it with `Gt1Player`, a native transcription of that playroutine.
+plays it with `Gt1Player`, a native transcription of that playroutine. Two
+playroutine designs are supported: the V1.5x standard playroutine and the V1.25
+musicroutines 11.1–11.5.
 
 ## Recognition
 
@@ -21,7 +23,8 @@ pattern in which only what the packer or the running tune may change is a
 wildcard: relocated operands, the parameter slots, the author name, the
 operands the routine modifies itself and its zero-page temporaries. A hit is
 accepted only if every code operand moved by the same offset and every operand
-on the same virtual table page (`$40xx`..`$47xx`) names the same table base.
+on the same virtual table page (`$40xx`..`$47xx` for V1.5x, `$40xx`..`$90xx`
+for 11.x) names the same table base.
 
 | playroutine | source | differs from V1.53 by |
 | --- | --- | --- |
@@ -30,17 +33,25 @@ on the same virtual table page (`$40xx`..`$47xx`) names the same table base.
 | V1.51 | V1.53 edited | as V1.52, plus the pre-V1.52 frequency table (from V1.25) |
 | V1.50b | V1.53 edited | as V1.51, plus filter step 0 also loads a next step, funktempo read from a two-byte table in the player |
 | V1.50 | V1.53 edited | as V1.50b, plus the orderlist loop (`$FF`) is read after a pattern number and transposes are `value - $EF` |
-| 11.1–11.5 | `goatold.zip` `SRC/PLAYER1.S`..`PLAYER5.S` | recognized only (V1.25 musicroutines) |
 
 V1.51 and V1.52 have identical code and are told apart by the frequency table.
+
+| musicroutine | source | features |
+| --- | --- | --- |
+| 11.1 | `goatold.zip` `SRC/PLAYER1.S` | standard |
+| 11.2 | `SRC/PLAYER2.S` | sound effects |
+| 11.3 | `SRC/PLAYER3.S` | author info, timing marks |
+| 11.4 | `SRC/PLAYER4.S` | author info, timing marks, sound effects |
+| 11.5 | `SRC/PLAYER5.S` | author info, timing marks, multispeed hard-restart timer |
 
 ## Decompile
 
 `decompile_gt1(data, subtune)` reads the table bases from the matched operands
-and checks them against the packer's layout: instruments (8 bytes each), the
-wave and note columns, the song table (low then high bytes), the pattern table,
-the filter table, the orderlists and the packed patterns, each following the
-last. The `Gt1Song` keeps the player's state as saved in the image (operands it
+and checks that the tables tile the memory after the player: instruments (8
+bytes each), the wave and note columns, the song table (low then high bytes),
+the pattern table, the filter table (V1.5x only), the orderlists and the packed
+patterns. Packers placed the orderlists before or after the pattern table, so
+the order found is kept in `Gt1Song.segments`. The `Gt1Song` keeps the player's state as saved in the image (operands it
 modifies, zero-page operands, channel variables and frequency tables), so
 `Gt1Song.pack()` reproduces the image bytes exactly. A last pattern cut short
 by the end of the file keeps only the loaded bytes.
@@ -51,7 +62,8 @@ is decompiled from memory after init.
 
 ## Playback
 
-`Gt1Player` runs the V1.5x play routine over the packed memory image: channel
+`Gt1Player` picks the transcription of the song's playroutine and runs it over
+the packed memory image: channel
 variables and self-modified operands live at their packed addresses, and every
 carry, 8-bit wrap and out-of-table read follows the 6502 code. Memory outside
 the loaded data holds libsidplayfp's RAM power-on pattern, which a tune reading
@@ -60,25 +72,26 @@ multispeed timing comes from the tune's CIA programming
 (`pysidtracker.cadence.playroutine_cadence`), never from header flags.
 
 `tests/test_gt1.py` packs synthetic songs that use every command, table feature
-and orderlist command with each V1.5x playroutine and checks `Gt1Player` against
-the packed 6502 playroutine itself, frame for frame.
+and orderlist command with each playroutine (and a sound effect for 11.2/11.4)
+and checks `Gt1Player` against the packed 6502 playroutine itself, frame for
+frame.
 
 ## HVSC coverage
 
 `scripts/gt1_versions.py` classifies the HVSC `GoatTracker_V1.x` tunes:
 
-| playroutine | tunes | subtunes |
-| --- | ---: | ---: |
-| V1.52 | 294 | 301 |
-| V1.53 | 168 | 171 |
-| V1.51 | 59 | 60 |
-| V1.50 | 31 | 34 |
-| V1.50b | 10 | 10 |
-| 11.4 | 54 | 55 |
-| 11.3 | 42 | 43 |
-| 11.5 | 15 | 15 |
-| 11.1 | 12 | 12 |
-| none of the above | 702 | 843 |
+| playroutine | tunes | subtunes | decompiled |
+| --- | ---: | ---: | ---: |
+| V1.52 | 294 | 301 | 294 |
+| V1.53 | 168 | 171 | 168 |
+| V1.51 | 59 | 60 | 59 |
+| V1.50 | 31 | 34 | 31 |
+| V1.50b | 10 | 10 | 10 |
+| 11.4 | 54 | 55 | 54 |
+| 11.3 | 42 | 43 | 41 |
+| 11.5 | 15 | 15 | 15 |
+| 11.1 | 12 | 12 | 12 |
+| none of the above | 702 | 843 | 0 |
 
 The unmatched tunes embed playroutines with no archived source (V1.3–V1.4f and
 releases before V1.25) or hand-modified players.

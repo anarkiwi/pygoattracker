@@ -6,6 +6,7 @@
 """
 
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 from pysidtracker import find_code_all
 
@@ -104,8 +105,24 @@ class _Ambiguous(Exception):
     pass
 
 
+class PlayerCode(NamedTuple):
+    """The ``[start, end)`` span of ``image`` one player's code is in (None: open)."""
+
+    image: object
+    start: int | None = None
+    end: int | None = None
+
+
+def _code(image) -> PlayerCode:
+    return image if isinstance(image, PlayerCode) else PlayerCode(image)
+
+
+def _find(code, spec):
+    return find_code_all(code.image, spec, start=code.start, end=code.end)
+
+
 def _one(image, spec, **want):
-    at = [m for m in find_code_all(image, spec) if want.items() <= m.captures.items()]
+    at = [m for m in _find(image, spec) if want.items() <= m.captures.items()]
     if len(at) > 1:
         raise _Ambiguous(spec)
     return at[0] if at else None
@@ -117,13 +134,40 @@ def _branch(m, off):
 
 
 def _has(image, spec):
-    return bool(find_code_all(image, spec))
+    return bool(_find(image, spec))
+
+
+_TEMPO = "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D"
+
+
+def player_span(image, data):
+    """The :class:`PlayerCode` of the player whose song data starts at ``data``.
+
+    greloc emits the jump table (``jmp mt_init``, ``jmp mt_play``), the player
+    code and then the data, so an image holding several players keeps each one's
+    code between its jump table and its data. The instance is the last
+    ``mt_initchn`` below ``data`` and the last jump table before it whose
+    ``mt_play`` lies between the two; the whole image without such a jump table.
+    """
+    tempo = find_code_all(image, _TEMPO, end=data)
+    if not tempo:
+        return PlayerCode(image)
+    t = tempo[-1].addr
+    bases = [
+        m.addr
+        for m in find_code_all(image, "4C ?? ?? 4C {p:w}", end=t)
+        if m.addr < m.captures["p"] <= t
+    ]
+    return PlayerCode(image, bases[-1], data) if bases else PlayerCode(image)
 
 
 def read_build(image) -> PlayerBuild:
-    """Every define of :class:`PlayerBuild` the image's player code states."""
+    """Every define of :class:`PlayerBuild` the player code states.
+
+    ``image`` is a whole image or one player's :class:`PlayerCode`.
+    """
     try:
-        return _read_build(image)
+        return _read_build(_code(image))
     except _Ambiguous:
         return PlayerBuild()
 
@@ -131,30 +175,33 @@ def read_build(image) -> PlayerBuild:
 def _read_build(image) -> PlayerBuild:
     asc = _one(image, "A2 00 BD {g:w} 9D ?? ?? E8 E0 19 D0")
     flush = asc or _one(image, "A2 18 BD {g:w} 9D ?? ?? CA 10")
-    hr = _one(image, "A9 {x} 9D ?? ?? A9 {y} 9D ?? ?? A9 FE 9D")
+    # The hard restart stores ADPARAM/SRPARAM to the chip or ghost (``sta abs,x``)
+    # or, in a ZPGHOSTREGS build, to the zero-page ghost (``sta zp,x``).
+    for sta in ("9D ?? ??", "95 ??"):
+        hr = _one(image, f"A9 {{x}} {sta} A9 {{y}} {sta} A9 FE 9D")
+        if hr is not None:
+            break
     ad = sr = None
     if hr is None:
         cmp = _one(image, "BD ?? ?? C9 {n} B0 ?? A9 FE 9D")
         skiphr = cmp.addr + 7 if cmp else None
     else:
-        cmp = _one(
-            image, "BD ?? ?? C9 {n} B0 ?? A9 ?? 9D ?? ?? A9 ?? 9D ?? ?? A9 FE 9D"
-        )
+        cmp = _one(image, f"BD ?? ?? C9 {{n}} B0 ?? A9 ?? {sta} A9 ?? {sta} A9 FE 9D")
         x, y = hr.captures["x"], hr.captures["y"]
         ad, sr = (x, y) if asc else (y, x)
-        skiphr = hr.addr + 10
+        skiphr = hr.addr + 2 * (2 + len(sta.split()))
     legato = [
         m.captures["l"]
-        for m in find_code_all(image, "C9 {l} 90 ?? B0")
+        for m in _find(image, "C9 {l} 90 ?? B0")
         if _branch(m, 2) == skiphr
     ]
-    tempo = _one(image, "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D")
+    tempo = _one(image, _TEMPO)
     if tempo is None:  # no mt_initchn: not a player.s this reader knows
         return PlayerBuild()
     tick034 = _one(image, "9D ?? ?? BD ?? ?? 9D ?? ?? 60")
     insvib = any(
         m.captures["t"] == getattr(tick034, "addr", None)
-        for m in find_code_all(image, "B9 ?? ?? 4C {t:w}")
+        for m in _find(image, "B9 ?? ?? 4C {t:w}")
     ) or _has(image, "BC ?? ?? B9 ?? ?? A8")
     c = tempo.captures["c"] if tempo else None
     gatecol = (
@@ -163,7 +210,7 @@ def _read_build(image) -> PlayerBuild:
     fixed = None
     if gatecol is False:
         gate = _one(image, "BD {c:w} C9 {g} F0", c=c)
-        waves = {m.captures["w"] for m in find_code_all(image, "BD {w:w} 3D ?? ?? 9D")}
+        waves = {m.captures["w"] for m in _find(image, "BD {w:w} 3D ?? ?? 9D")}
         first = (
             _one(image, "A9 {f} 9D {w:w}", w=waves.pop()) if len(waves) == 1 else None
         )
@@ -193,7 +240,8 @@ def read_state(image, build: PlayerBuild) -> PlayerState | None:
     ``mt_filtdone`` loads cutoff, mode and volume and stores them to the ghost; a
     build without filter code stores no cutoff, which the image then holds.
     """
-    g, mem = build.ghost, image.mem
+    image = _code(image)
+    g, mem = build.ghost, image.image.mem
     if g is None:
         return None
     try:

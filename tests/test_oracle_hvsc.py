@@ -45,6 +45,15 @@ TUNES = {
     "cab_hustle": "GAMES/A-F/Cab_Hustle.sid",
     # SIMPLEPULSE + NOWAVEDELAY build combined.
     "halloween_main_title": "MUSICIANS/M/Mibri/Halloween-Main_Title.sid",
+    # full-ghosting build: mt_play flushes the previous call's ghost first, so
+    # the init call writes the image ghost ($D418=0) and output runs one call late.
+    "cheese_wings": "MUSICIANS/R/Radiantx/Cheese_Wings.sid",
+    # two players in one image: the build is read from the decoded data's own.
+    "puzzle_bobble": "MUSICIANS/N/NM156/Puzzle_Bobble.sid",
+    # 3x multispeed: every channel starts on DEFAULTTEMPO (multiplier * 6 - 1).
+    "metroid_brinstar": "MUSICIANS/N/Nordischsound/Metroid-Brinstar.sid",
+    # init stub writes voice 3 before the player, which holds until overwritten.
+    "dirty_cheater": "MUSICIANS/S/Spider_Jerusalem/Dirty_Cheater.sid",
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": "DEMOS/G-L/Joke.sid",
     "gt1_152_beautiful_day": "DEMOS/A-F/Beautiful_Day.sid",

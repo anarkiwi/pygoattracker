@@ -10,7 +10,8 @@ packed GoatTracker playroutine (as produced by `gt2reloc`) is detected and
 decompiled back to a `Song`, including crunched/relocated images whose init is
 run in a 6502 emulator — container headers are not trusted.
 
-GoatTracker V1.x packed tunes (the V1.50–V1.53 standard playroutine) are
+GoatTracker V1.x packed tunes (the V1.50–V1.53 standard playroutine and the
+V1.25 musicroutines 11.x) are
 recognized by their assembled playroutine, decompiled to a `Gt1Song` and played
 by a native `Gt1Player`; see [docs/gt1.md](docs/gt1.md).
 

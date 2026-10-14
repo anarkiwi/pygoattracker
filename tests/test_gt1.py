@@ -26,7 +26,8 @@ from pygoattracker.gt1player import POWERUP_RAM, Gt1Player
 from pygoattracker._gt1_refs import PLAYERS
 
 REPO = Path(__file__).resolve().parent.parent
-NATIVE = [name for name, entry in PLAYERS.items() if entry["native"]]
+V15_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "1.5"]
+M11_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "11"]
 FRAMES = 700
 
 
@@ -128,6 +129,76 @@ def make_song(player="1.53", address=0x1000, **fields) -> Gt1Song:
     return Gt1Song(player=player, address=address, **values)
 
 
+INSTRUMENTS_11 = INSTRUMENTS + [
+    Gt1Instrument(0x0A, 0xA9, 0x00, 0x11, 0x01, 0x0E, 0x21, 5),
+    Gt1Instrument(0x31, 0x59, 0x22, 0x12, 0x02, 0x0D, 0x00, 0),
+]
+PATTERNS_11 = [
+    _n(0x30, 1, 0, 0x37)
+    + _note(0x32)
+    + bytes((0xFD,))
+    + _n(0x34, 4, 0, 0xB7)
+    + _note(0x5E)
+    + _note(0x5F)
+    + _n(0x35, 1, 1, 0x10)
+    + _n(0x37, 0, 1, 0x90)
+    + _n(0x37, 0, 4, 0x46)
+    + _note(0x37)
+    + bytes((0xFF,)),
+    _n(0x30, 5)
+    + _n(0x3C, 0, 3, 0x08)
+    + _note(0x3C)
+    + _n(0x2B, 0, 3, 0x88)
+    + _n(0x2B, 0, 6, 0xF8)
+    + _n(0x2D, 0, 5, 0xF1)
+    + _n(0x2D, 0, 2, 0x02)
+    + _n(0x2D, 0, 7, 0x03)
+    + _n(0x5F, 0, 7, 0x81)
+    + _n(0x5F, 0, 7, 0xC5)
+    + _n(0x29, 6, 7, 0x04)
+    + bytes((0xFF,)),
+    _n(0x24, 3) + _n(0x26, 3) + bytes((0xF8,)) + _note(0x28) + bytes((0xFF,)),
+    _n(0x18, 4, 7, 0x06) + bytes((0xFA,)) + _n(0x1A, 4, 0, 0x47) + bytes((0xFF,)),
+    _n(0x30, 3) + _note(0x5F) + _n(0x31, 2) + _note(0x5E) + bytes((0xFF,)),
+    bytes((0x0A, 0x00, 0x88, 0x30, 0x41, 0x32, 0xFE, 0x34, 0x81, 0x35, 0x00, 0x00)),
+]
+ORDERLISTS_11 = [
+    [
+        bytes((0x00, 0x01, 0x02, 0xFF, 0x01)),
+        bytes((0x03, 0xFF, 0x00)),
+        bytes((0x04, 0x04, 0xFF, 0x01)),
+    ],
+    [
+        bytes((0x02, 0x01, 0xFF, 0x00)),
+        bytes((0x00, 0xFF, 0x00)),
+        bytes((0x03, 0xFF, 0x00)),
+    ],
+]
+
+
+def make_song11(player="11.3", address=0x1000, **fields) -> Gt1Song:
+    """A synthetic song exercising every musicroutine 11.x command."""
+    values = {
+        "instruments": list(INSTRUMENTS_11),
+        "wavetable": list(WAVETABLE),
+        "orderlists": [list(chans) for chans in ORDERLISTS_11],
+        "patterns": list(PATTERNS_11),
+    }
+    values.update(fields)
+    return Gt1Song(player=player, address=address, **values)
+
+
+def with_sfx(song: Gt1Song, x: int = 7) -> Gt1Song:
+    """``song`` with a sound effect started on channel ``x`` (as ``playsfx`` does)."""
+    ref = song.ref
+    sfx = song.layout()["patterns"] + sum(len(p) for p in song.patterns[:-1])
+    data = bytearray(song.data or ref.code[ref.code_end :])
+    note = ref.labels["mt_chnnote"] - ref.code_end + x
+    data[note : note + 3] = bytes((0x81, sfx & 0xFF, sfx >> 8))
+    song.data = bytes(data)
+    return song
+
+
 def emulated(song: Gt1Song, subtune: int, frames: int = FRAMES):
     """The register grid of the packed 6502 playroutine itself."""
     address, data = song.pack()
@@ -135,12 +206,52 @@ def emulated(song: Gt1Song, subtune: int, frames: int = FRAMES):
     return emu.render_grid(frames)
 
 
-@pytest.mark.parametrize("player", NATIVE)
+@pytest.mark.parametrize("player", V15_PLAYERS)
 @pytest.mark.parametrize("subtune", [0, 1])
 def test_native_player_matches_6502(player, subtune):
     song = make_song(player)
     grid = Gt1Player(song, subtune).render_grid(FRAMES)
     assert grid == emulated(song, subtune)
+
+
+@pytest.mark.parametrize("player", M11_PLAYERS)
+@pytest.mark.parametrize("subtune", [0, 1])
+def test_musicroutine11_matches_6502(player, subtune):
+    song = make_song11(player)
+    assert song.segments[-1] == "patterns" and "filtertable" not in song.segments
+    grid = Gt1Player(song, subtune).render_grid(FRAMES)
+    assert grid == emulated(song, subtune)
+
+
+@pytest.mark.parametrize("player", ["11.2", "11.4"])
+def test_musicroutine11_sound_effect(player):
+    song = with_sfx(make_song11(player))
+    assert Gt1Player(song).render_grid(300) == emulated(song, 0, 300)
+
+
+@pytest.mark.parametrize("player", M11_PLAYERS)
+def test_musicroutine11_round_trip(player):
+    song = make_song11(player, address=0x2000)
+    decoded = decompile_gt1(song.to_sid())
+    assert decoded.player == player
+    assert decoded.pack() == song.pack()
+    assert decoded.segments == song.segments
+
+
+def test_orderlists_before_patterntable():
+    segments = (
+        "instruments",
+        "wavetable",
+        "songtable",
+        "orderlists",
+        "patterntable",
+        "patterns",
+    )
+    song = make_song11("11.1", segments=segments)
+    decoded = decompile_gt1(song.to_sid())
+    assert decoded.segments == segments
+    assert decoded.pack() == song.pack()
+    assert Gt1Player(decoded).render_grid(200) == emulated(song, 0, 200)
 
 
 @pytest.mark.parametrize("params", [(4, 2, 0x0F, 0x00), (6, 4, 0x00, 0x00)])
@@ -149,12 +260,12 @@ def test_multispeed_gate_timer_params(params):
     assert Gt1Player(song).render_grid(300) == emulated(song, 0, 300)
 
 
-@pytest.mark.parametrize("player", NATIVE)
+@pytest.mark.parametrize("player", V15_PLAYERS)
 def test_sid_round_trip(player):
     song = make_song(player, address=0x3000)
     raw = song.to_sid("SONG", "AUTHOR", "2026")
     decoded = decompile_gt1(raw)
-    assert decoded.player in NATIVE
+    assert decoded.player == player
     assert decoded.pack() == song.pack()
     assert decoded.instruments == song.instruments
     assert decoded.wavetable == song.wavetable

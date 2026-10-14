@@ -55,6 +55,12 @@ TUNES = {
     "gt1_152_4x_assatas_song": "MUSICIANS/H/Hoffmann_Michal/Assatas_Song.sid",
     # GT1 behind an HVSC init stub (decompiled after running init).
     "gt1_152_stub_latex_sensations": "MUSICIANS/J/Jammer/Latex_Sensations.sid",
+    # GT1 V1.25 musicroutines 11.x; 11.1 and 11.5 with orderlists packed before
+    # the pattern table.
+    "gt1_111_easy_going": "MUSICIANS/J/Jammer/Easy_Going.sid",
+    "gt1_113_classical_example": "MUSICIANS/C/Cadaver/GoatTracker_Classical_Example.sid",
+    "gt1_114_fuggbot": "MUSICIANS/J/Josstintimberlake/Fuggbot.sid",
+    "gt1_115_swamped": "MUSICIANS/D/Dalezy/swamped.sid",
 }
 
 

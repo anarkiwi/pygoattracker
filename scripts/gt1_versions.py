@@ -34,10 +34,8 @@ def classify(path: str) -> tuple[str, str]:
     found = find_player(image.mem)
     if found is None:
         return "none", ""
-    if not found.ref.native:
-        return found.ref.name, "recognized"
     try:
-        decompile_image(image.mem, found)
+        decompile_image(image.mem, found, image.end)
     except SidParseError as exc:
         return found.ref.name, str(exc)
     return found.ref.name, "decompiled"

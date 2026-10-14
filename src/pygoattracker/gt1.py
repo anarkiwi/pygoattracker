@@ -19,6 +19,8 @@ from pygoattracker.errors import SidParseError
 from pygoattracker.sid import _load_image
 
 PLAYER_ORG = 0x1000
+V15 = "1.5"
+_AUTHOR = 32
 # Initial tick, gate timer and hard-restart AD/SR the packer writes by default.
 DEFAULT_PARAMS = (4, 2, 0x0F, 0x00)
 _STOP_OPS = (0x00, 0x01, 0x97)
@@ -56,6 +58,19 @@ _TAGS_11 = {
 # Playroutine variants that differ in behaviour from V1.53.
 FILTER_STEP0 = frozenset(("1.50", "1.50b"))
 ORDERLIST_LOOP_AFTER = frozenset(("1.50",))
+MUSICROUTINE11_SFX = frozenset(("11.2", "11.4"))
+MUSICROUTINE11_TIMING = frozenset(("11.3", "11.4", "11.5"))
+
+SEGMENTS_V15 = (
+    "instruments",
+    "wavetable",
+    "songtable",
+    "patterntable",
+    "filtertable",
+    "orderlists",
+    "patterns",
+)
+SEGMENTS_V11 = tuple(name for name in SEGMENTS_V15 if name != "filtertable")
 
 _SPEEDCODE = re.compile(rb"\xa2(.)\x8e\x04\xdc\xa2(.)\x8e\x05\xdc", re.S)
 _INSTR_FIELDS = 8
@@ -69,7 +84,7 @@ class Reference:
     """One assembled playroutine and what the packer changes in it."""
 
     name: str
-    native: bool
+    family: str
     code: bytes
     labels: dict
     code_end: int
@@ -78,6 +93,7 @@ class Reference:
     smc: tuple
     zeropage: tuple
     regex: re.Pattern
+    author_end: int = _AUTHOR
 
     @property
     def free(self) -> tuple:
@@ -137,13 +153,13 @@ def reference(name: str) -> Reference:
                 smc.add(target)
     wild.update(smc | zeropage)
     if author:
-        wild.update(range(32 if entry["native"] else author[0], author[1]))
+        wild.update(range(_AUTHOR, author[1]))
     pattern = b"".join(
         b"." if pos in wild else re.escape(code[pos : pos + 1]) for pos in range(end)
     )
     return Reference(
         name=name,
-        native=entry["native"],
+        family=entry["family"],
         code=code,
         labels=dict(entry["labels"]),
         code_end=end,
@@ -152,6 +168,7 @@ def reference(name: str) -> Reference:
         smc=tuple(sorted(smc)),
         zeropage=tuple(sorted(zeropage)),
         regex=re.compile(pattern, re.S),
+        author_end=author[1] if author else _AUTHOR,
     )
 
 
@@ -166,7 +183,7 @@ class Gt1Match:
 
 
 def _tags(ref: Reference) -> dict:
-    return _TAGS_15 if ref.native else _TAGS_11
+    return _TAGS_15 if ref.family == V15 else _TAGS_11
 
 
 def _match_at(mem, ref: Reference, address: int) -> Gt1Match | None:
@@ -259,7 +276,7 @@ class Gt1Song:
     player: str
     address: int
     params: tuple = DEFAULT_PARAMS
-    author: bytes = bytes(32)
+    author: bytes = b""
     state: dict = field(default_factory=dict)
     data: bytes = b""
     instruments: list = field(default_factory=list)
@@ -268,34 +285,50 @@ class Gt1Song:
     orderlists: list = field(default_factory=list)
     patterns: list = field(default_factory=list)
     initialized: bool = False
+    segments: tuple = ()
+
+    def __post_init__(self):
+        if not self.segments:
+            self.segments = SEGMENTS_V15 if self.ref.family == V15 else SEGMENTS_V11
 
     @property
     def ref(self) -> Reference:
         """The playroutine reference."""
         return reference(self.player)
 
-    def layout(self) -> dict:
-        """Absolute addresses of the packed tables, as ``relocator()`` lays them out."""
-        ref = self.ref
-        inst = self.address + len(ref.code)
-        wave = inst + _INSTR_FIELDS * len(self.instruments)
-        wavelen = len(self.wavetable)
-        songtbl = wave + 2 * wavelen
-        nsongs = len(self.orderlists)
-        patttbl = songtbl + 6 * nsongs
-        filt = patttbl + 2 * len(self.patterns)
-        songs = filt + len(self.filtertable)
+    def _sizes(self) -> dict:
+        orders = [o for chans in self.orderlists for o in chans]
         return {
-            "instad": inst - _INSTR_FIELDS,
+            "instruments": _INSTR_FIELDS * len(self.instruments),
+            "wavetable": 2 * len(self.wavetable),
+            "songtable": 2 * len(orders),
+            "patterntable": 2 * len(self.patterns),
+            "filtertable": len(self.filtertable),
+            "orderlists": sum(len(o) for o in orders),
+            "patterns": sum(len(p) for p in self.patterns),
+        }
+
+    def layout(self) -> dict:
+        """Absolute addresses of the packed tables, laid out in :attr:`segments` order."""
+        pos, starts = self.address + len(self.ref.code), {}
+        sizes = self._sizes()
+        for name in self.segments:
+            starts[name] = pos
+            pos += sizes[name]
+        wave, wavelen = starts["wavetable"], len(self.wavetable)
+        songtbl, nsongs = starts["songtable"], len(self.orderlists)
+        patttbl = starts["patterntable"]
+        return {
+            "instad": starts["instruments"] - _INSTR_FIELDS,
             "wavetbl": wave - 1,
             "notetbl": wave + wavelen - 1,
             "songtbllo": songtbl,
             "songtblhi": songtbl + 3 * nsongs,
             "patttbllo": patttbl,
             "patttblhi": patttbl + len(self.patterns),
-            "filttbl": filt,
-            "songs": songs,
-            "patterns": songs + sum(len(o) for chans in self.orderlists for o in chans),
+            "filttbl": starts.get("filtertable", 0),
+            "songs": starts["orderlists"],
+            "patterns": starts["patterns"],
         }
 
     def _player_code(self, tables: dict) -> bytearray:
@@ -314,7 +347,8 @@ class Gt1Song:
             ref.params, (0xA9, 0xC9, 0xA9, 0xA9), self.params
         ):
             code[pos : pos + 2] = bytes((opcode, value))
-        code[32:64] = self.author
+        if self.author:
+            code[_AUTHOR : _AUTHOR + len(self.author)] = self.author
         for pos, value in self.state.items():
             code[pos] = value
         if self.data:
@@ -324,23 +358,22 @@ class Gt1Song:
     def pack(self) -> tuple[int, bytes]:
         """``(address, bytes)`` of the playroutine and song data, as the packer saves them."""
         lay = self.layout()
+        orders = [o for chans in self.orderlists for o in chans]
+        order_addrs = _offsets(lay["songs"], orders)
+        patt_addrs = _offsets(lay["patterns"], self.patterns)
+        blocks = {
+            "instruments": b"".join(ins.to_bytes() for ins in self.instruments),
+            "wavetable": bytes(w for w, _ in self.wavetable)
+            + bytes(n for _, n in self.wavetable),
+            "songtable": _split_words(order_addrs),
+            "patterntable": _split_words(patt_addrs),
+            "filtertable": self.filtertable,
+            "orderlists": b"".join(orders),
+            "patterns": b"".join(self.patterns),
+        }
         out = self._player_code(lay)
-        out += b"".join(ins.to_bytes() for ins in self.instruments)
-        out += bytes(w for w, _ in self.wavetable) + bytes(n for _, n in self.wavetable)
-        addrs, pos = [], lay["songs"]
-        for chans in self.orderlists:
-            for order in chans:
-                addrs.append(pos)
-                pos += len(order)
-        out += bytes(a & 0xFF for a in addrs) + bytes(a >> 8 for a in addrs)
-        patt_addrs, pos = [], lay["patterns"]
-        for patt in self.patterns:
-            patt_addrs.append(pos)
-            pos += len(patt)
-        out += bytes(a & 0xFF for a in patt_addrs) + bytes(a >> 8 for a in patt_addrs)
-        out += self.filtertable
-        out += b"".join(o for chans in self.orderlists for o in chans)
-        out += b"".join(self.patterns)
+        for name in self.segments:
+            out += blocks[name]
         return self.address, bytes(out)
 
     def to_sid(self, name: str = "", author: str = "", released: str = "") -> bytes:
@@ -355,6 +388,18 @@ class Gt1Song:
         for offset, text in ((0x16, name), (0x36, author), (0x56, released)):
             head[offset : offset + 32] = text.encode("latin-1")[:32].ljust(32, b"\0")
         return bytes(head) + address.to_bytes(2, "little") + data
+
+
+def _offsets(start: int, blocks) -> list:
+    out = []
+    for block in blocks:
+        out.append(start)
+        start += len(block)
+    return out
+
+
+def _split_words(words) -> bytes:
+    return bytes(w & 0xFF for w in words) + bytes(w >> 8 for w in words)
 
 
 def _word(mem, lo: int, hi: int) -> int:
@@ -388,69 +433,92 @@ def _need(cond: bool, what: str) -> None:
 
 
 def decompile_image(mem, found: Gt1Match, end: int = 0x10000) -> Gt1Song:
-    """Decompile the packed tables that follow a matched V1.5x playroutine.
+    """Decompile the packed tables that follow a matched V1.x playroutine.
 
-    ``end`` is where the loaded data stops: a last pattern cut short by it keeps
-    only the loaded bytes.
+    The tables must tile the memory after the player in some order; ``end`` is
+    where the loaded data stops, cutting a last pattern short.
     """
     ref, tab = found.ref, found.tables
-    _need(ref.native, f"no native player for musicroutine {ref.name}")
-    _need(set(tab) == set(_TAGS_15.values()), "missing table references")
+    _need(set(tab) == set(_tags(ref).values()), "missing table references")
     inst = (tab["instad"] + _INSTR_FIELDS) & 0xFFFF
     wave = (tab["wavetbl"] + 1) & 0xFFFF
     wavelen = (tab["notetbl"] + 1 - wave) & 0xFFFF
     nsongs3 = (tab["songtblhi"] - tab["songtbllo"]) & 0xFFFF
     npatt = (tab["patttblhi"] - tab["patttbllo"]) & 0xFFFF
     _need(inst == found.address + len(ref.code), "instruments do not follow the player")
-    _need((wave - inst) % _INSTR_FIELDS == 0 and wave > inst, "instrument table size")
-    _need(tab["songtbllo"] == wave + 2 * wavelen, "songtable does not follow wavetable")
-    _need(nsongs3 % 3 == 0 and nsongs3, "songtable size")
-    _need(tab["patttbllo"] == tab["songtbllo"] + 2 * nsongs3, "patterntable position")
-    _need(
-        tab["filttbl"] == tab["patttbllo"] + 2 * npatt and npatt, "filtertable position"
-    )
+    _need(nsongs3 % 3 == 0 and nsongs3 and npatt, "song or pattern table size")
     order_addrs = [
         _word(mem, tab["songtbllo"] + i, tab["songtblhi"] + i) for i in range(nsongs3)
     ]
-    filtsize = order_addrs[0] - tab["filttbl"]
-    _need(filtsize > 0 and filtsize % 4 == 0, "filtertable size")
-    orders = []
-    pos = order_addrs[0]
-    for addr in order_addrs:
-        _need(addr == pos, "orderlists are not contiguous")
-        size = _orderlist_len(mem, addr)
-        orders.append(bytes(mem[addr : addr + size]))
-        pos += size
     patt_addrs = [
         _word(mem, tab["patttbllo"] + i, tab["patttblhi"] + i) for i in range(npatt)
     ]
-    patterns = []
-    for num, addr in enumerate(patt_addrs):
-        _need(addr == pos, "patterns are not contiguous")
-        if num + 1 < npatt:
-            size = patt_addrs[num + 1] - addr
-            _need(0 < size <= 0x100, "pattern size")
-        else:
-            size = pattern_len(mem, addr, end)
-        patterns.append(bytes(mem[addr : addr + size]))
-        pos += size
+    starts = {
+        "instruments": inst,
+        "wavetable": wave,
+        "songtable": tab["songtbllo"],
+        "patterntable": tab["patttbllo"],
+        "orderlists": order_addrs[0],
+        "patterns": patt_addrs[0],
+    }
+    if "filttbl" in tab:
+        starts["filtertable"] = tab["filttbl"]
+    segments = tuple(sorted(starts, key=starts.get))
+    _need(len(set(starts.values())) == len(starts), "overlapping tables")
+    _need(segments[-1] == "patterns", "patterns are not the last table")
+    nxt = dict(zip(segments, segments[1:]))
+    orders = _contiguous(mem, order_addrs, starts[nxt["orderlists"]], _orderlist_len)
+    patterns = _patterns(mem, patt_addrs, end)
+    sizes = {name: starts[nxt[name]] - starts[name] for name in segments[:-1]}
+    _need(sizes["instruments"] % _INSTR_FIELDS == 0, "instrument table size")
+    _need(sizes["wavetable"] == 2 * wavelen, "wavetable size")
+    _need(sizes["songtable"] == 2 * nsongs3, "songtable size")
+    _need(sizes["patterntable"] == 2 * npatt, "patterntable size")
+    if "filtertable" in sizes:
+        _need(sizes["filtertable"] and sizes["filtertable"] % 4 == 0, "filtertable")
+    filt = starts.get("filtertable", 0)
     base = found.address
     rows = [mem[i : i + _INSTR_FIELDS] for i in range(inst, wave, _INSTR_FIELDS)]
     return Gt1Song(
         player=ref.name,
         address=base,
         params=found.params,
-        author=bytes(mem[base + 32 : base + 64]),
+        author=bytes(mem[base + _AUTHOR : base + ref.author_end]),
         state={pos: mem[base + pos] for pos in ref.free},
         data=bytes(mem[base + ref.code_end : base + len(ref.code)]),
         instruments=[Gt1Instrument(*row) for row in rows],
         wavetable=list(
             zip(mem[wave : wave + wavelen], mem[wave + wavelen : wave + 2 * wavelen])
         ),
-        filtertable=bytes(mem[tab["filttbl"] : order_addrs[0]]),
+        filtertable=bytes(mem[filt : filt + sizes.get("filtertable", 0)]),
         orderlists=[orders[i : i + 3] for i in range(0, nsongs3, 3)],
         patterns=patterns,
+        segments=segments,
     )
+
+
+def _contiguous(mem, addrs, stop: int, length) -> list:
+    """The blocks at ``addrs``, each ending where the next starts, through ``stop``."""
+    blocks, pos = [], addrs[0]
+    for addr in addrs:
+        _need(addr == pos, "blocks are not contiguous")
+        size = length(mem, addr)
+        blocks.append(bytes(mem[addr : addr + size]))
+        pos += size
+    _need(pos == stop, "blocks do not fill their table")
+    return blocks
+
+
+def _patterns(mem, addrs, end: int) -> list:
+    patterns = []
+    for num, addr in enumerate(addrs):
+        if num + 1 < len(addrs):
+            size = addrs[num + 1] - addr
+            _need(0 < size <= 0x100, "pattern size")
+        else:
+            size = pattern_len(mem, addr, end)
+        patterns.append(bytes(mem[addr : addr + size]))
+    return patterns
 
 
 def speedcode_timer(mem, init: int) -> int | None:

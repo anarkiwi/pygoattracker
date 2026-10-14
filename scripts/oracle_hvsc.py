@@ -8,14 +8,25 @@ from dataclasses import asdict
 
 import numpy as np
 
+from pygoattracker.gt1 import decompile_gt1, find_player
+from pygoattracker.gt1player import Gt1Player
 from pygoattracker.player import Player
-from pygoattracker.sid import decompile_sid
+from pygoattracker.sid import _load_image, decompile_sid
 
 PLAYER = "goattracker|^\\(gt"
 
 
+def render_gt1(data, song, nframes):
+    """Render 1-based ``song`` of a GoatTracker V1.x ``.sid``."""
+    gt1 = decompile_gt1(data, subtune=song - 1)
+    grid = Gt1Player(gt1, subtune=song - 1).render_grid(nframes)
+    return np.asarray(grid, np.int16), {"gt1": gt1.player}
+
+
 def render(data, song, nframes):
     """Render 1-based ``song`` of a ``.sid`` and the playroutine build it decoded."""
+    if find_player(_load_image(data).mem) is not None:
+        return render_gt1(data, song, nframes)
     d = decompile_sid(data, subtune=song - 1)
     player = Player(
         d.typed,

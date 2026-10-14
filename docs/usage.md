@@ -23,6 +23,19 @@ print(song.subtunes[0].channels[0].entries)
 
 `read_sng` accepts a path, bytes, or a binary file object.
 
+## GoatTracker V1.x packed tunes
+
+```python
+from pygoattracker import Gt1Player, decompile_gt1
+
+gt1 = decompile_gt1(open("tune.sid", "rb").read(), subtune=0)
+print(gt1.player, len(gt1.patterns), gt1.orderlists[0])
+grid = Gt1Player(gt1, subtune=0).render_grid(500)   # 25 SID registers per frame
+address, data = gt1.pack()                          # the packed bytes again
+```
+
+See [gt1.md](gt1.md) for the supported playroutines.
+
 ## Build a song from scratch
 
 ```python

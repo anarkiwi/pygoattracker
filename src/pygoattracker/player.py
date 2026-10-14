@@ -20,6 +20,7 @@ from pysidtracker import MemPlayer
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Song
+from pygoattracker.packed import PlayerState
 from pygoattracker.typed import TypedSong
 
 _PATT_END = -1
@@ -100,6 +101,7 @@ class Player(MemPlayer):
         freq_table=None,
         simplepulse: bool = False,
         live_vibrato: bool = False,
+        state: PlayerState | None = None,
     ):
         if isinstance(song, TypedSong):
             simplepulse = simplepulse or song.simplepulse
@@ -143,6 +145,7 @@ class Player(MemPlayer):
         self.adparam = adparam & 0xFFFF
         self.optimize_pulse = optimize_pulse
         self.optimize_realtime = optimize_realtime
+        self._init_state = state
         self.loops = [0] * constants.MAX_CHN
         # MemPlayer has no code image to mount (this is a model-driven, not a
         # 6502-driven, transcription); it seeds ``$D418`` to max volume, runs
@@ -154,14 +157,65 @@ class Player(MemPlayer):
         """Build the playroutine data + state; the first play call inits the song."""
         self._compile(self._song, subtune)
         self._channels = [_Channel() for _ in range(constants.MAX_CHN)]
-        self._funktable = [8, 5]
-        self._masterfader = 0x0F
+        state = self._init_state
+        if state is not None:
+            self._init_channel_state = state.registers
+            self._funktable = list(state.funk)
+            self._masterfader = state.volume & 0x0F
+            self._filtercutoff = state.cutoff
+            self._filtertype = state.filttype
+        else:
+            self._init_channel_state = None
+            self._funktable = [8, 5]
+            self._masterfader = 0x0F
+            self._filtercutoff = 0
+            self._filtertype = 0
         self._filterctrl = 0
-        self._filtertype = 0
-        self._filtercutoff = 0
         self._filtertime = 0
         self._filterptr = 0
         self._state = _INIT
+
+        # Remember which globals were overridden by state so _apply_state_regs
+        # can restore them after _init_routine clobbers them.
+        self._save_funktable = list(self._funktable)
+        self._save_masterfader = self._masterfader
+        self._save_filtercutoff = self._filtercutoff
+        self._save_filtertype = self._filtertype
+
+    def _apply_state_regs(self) -> None:
+        """Seed voice state + filter registers from the ghost image (state.registers).
+
+        ``_init_routine`` runs ``mt_init`` which clears per-voice waveform, resets
+        pointers, but keeps frequency/pulse set by the song's init code.  The ghost
+        image captured after init is flushed to the SID on the first play call, so
+        we must restore it after ``_init_routine`` so that the first frame outputs
+        the correct frequencies, waveforms, pulse widths, and ADSR values.
+        """
+        regs = self._init_channel_state  # saved in _init
+        for ch in range(constants.MAX_CHN):
+            base = ch * constants.VOICE_REG_SIZE
+            chan = self._channels[ch]
+            chan.freq = (regs[base + 1] << 8) | regs[base]
+            chan.pulse = (regs[base + 3] << 8) | regs[base + 2]
+            ctrl = regs[base + 4]
+            chan.wave = ctrl & 0x0F
+            chan.gate = 0xFF if ctrl & 0x80 else 0xFE
+            self._write_voice_regs(ch, chan)
+        # Restore globals that _init_routine clobbers. The saved values come from
+        # PlayerState's explicit fields (which take precedence over registers).
+        self._funktable = list(self._save_funktable)
+        self._filtercutoff = self._save_filtercutoff
+        self._filtertype = self._save_filtertype
+        self._masterfader = self._save_masterfader
+        # Filter registers from the ghost image.
+        self.regs[constants.FC_LO_REG] = 0x00
+        self.regs[constants.FC_HI_REG] = self._save_filtercutoff
+        self.regs[constants.RES_FILT_REG] = regs[constants.RES_FILT_REG]
+        self.regs[constants.MODE_VOL_REG] = self._filtertype | self._masterfader
+        self._filterctrl = regs[constants.RES_FILT_REG]
+        # Flush to _mem so play_frame()'s snapshot() sees the correct values.
+        base = self.SID_BASE
+        self._mem[base : base + constants.SID_REGISTERS] = self.regs
 
     def _frame(self) -> None:
         """Advance one player tick, writing this frame's SID registers to memory.
@@ -173,6 +227,9 @@ class Player(MemPlayer):
         """
         if self._state == _INIT:
             self._init_routine()
+            if self._init_channel_state is not None:
+                self._apply_state_regs()
+                self._init_channel_state = None
             return
         if self._state == _STOPPED:
             return

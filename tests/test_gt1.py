@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pysidtracker import ram_pattern
 from pysidtracker.oracle import EmuPlayer
 
 from pygoattracker import SidParseError
@@ -22,7 +23,7 @@ from pygoattracker.gt1 import (
     reference,
     speedcode_timer,
 )
-from pygoattracker.gt1player import POWERUP_RAM, Gt1Player
+from pygoattracker.gt1player import Gt1Player
 from pygoattracker._gt1_refs import PLAYERS
 
 REPO = Path(__file__).resolve().parent.parent
@@ -379,9 +380,10 @@ def test_truncated_last_pattern():
 
 
 def test_uninitialised_ram_is_sidplayfp_pattern():
-    assert len(POWERUP_RAM) == 0x10000
-    assert POWERUP_RAM[0x1D2B] == 0xFF and POWERUP_RAM[0x1D28] == 0x00
-    assert POWERUP_RAM[0x4002] == 0x00 and POWERUP_RAM[0x4000] == 0xFF
+    ram = ram_pattern()
+    assert len(ram) == 0x10000
+    assert ram[0x1D2B] == 0xFF and ram[0x1D28] == 0x00
+    assert ram[0x4002] == 0x00 and ram[0x4000] == 0xFF
 
 
 def test_effect_index_outside_jump_table():

@@ -4,7 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from pygoattracker import audio, convert, ninja, reglog
+from pysidtracker import run_cli, seconds_to_frames
+
+from pygoattracker import audio, constants, convert, ninja, reglog
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.reader import read_sng
 
@@ -37,7 +39,9 @@ def _info(args) -> None:
 
 def _reglog(args) -> None:
     song = read_sng(args.song)
-    frames = round(args.seconds * 50)
+    frames = seconds_to_frames(
+        args.seconds, constants.PAL_CYCLES_PER_FRAME, constants.PAL_CLOCK_HZ
+    )
     writes = reglog.iter_register_writes(song, subtune=args.subtune, max_frames=frames)
     reglog.write_reglog(writes, args.output, header=reglog.REGLOG_HEADER)
     print(f"wrote {args.output}")
@@ -129,13 +133,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     """CLI entry point; returns a process exit code."""
-    args = _parser().parse_args(argv)
-    try:
-        args.func(args)
-    except (GoatTrackerError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    return 0
+    return run_cli(_parser, GoatTrackerError, argv)
 
 
 if __name__ == "__main__":

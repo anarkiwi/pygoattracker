@@ -20,12 +20,12 @@ by a native `Gt1Player`; see [docs/gt1.md](docs/gt1.md).
 ## Install
 
 ```bash
-pip install pygoattracker          # read/write/play/register logs, .sid decompile
-pip install pygoattracker[audio]   # + WAV rendering via pyresidfp
+pip install pygoattracker
 ```
 
-Decompiling `.sid` files (including crunched/relocated images, run in a 6502
-emulator via jennings) works out of the box; only WAV rendering needs the extra.
+Reading, writing, playing, register logs, `.sid` decompiling (crunched/relocated
+images run in a 6502 emulator) and WAV rendering (pyresidfp) all come with the
+core install via [`pysidtracker`](https://github.com/anarkiwi/pysidtracker).
 
 ## Usage
 

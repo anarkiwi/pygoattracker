@@ -27,7 +27,7 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pysidtracker import ByteCursor, check, decode_cstr
+from pysidtracker import ByteCursor, check, decode_cstr, read_bytes
 
 from pygoattracker.errors import NinjaParseError, NinjaValidationError
 from pygoattracker.model import Orderlist, PlayPattern, Subtune, Table, Transpose
@@ -508,13 +508,7 @@ def build_nt2(song: NinjaSong) -> bytes:
 
 def read_nt2(src) -> NinjaSong:
     """Read an NT2 song from a path, bytes, or binary file-like object."""
-    if isinstance(src, bytes):
-        return parse_nt2(src)
-    if isinstance(src, (str, Path)):
-        return parse_nt2(Path(src).read_bytes())
-    if isinstance(src, io.IOBase) or hasattr(src, "read"):
-        return parse_nt2(src.read())
-    raise TypeError(f"cannot read a song from {type(src).__name__}")
+    return parse_nt2(read_bytes(src))
 
 
 def write_nt2(song: NinjaSong, dst) -> None:

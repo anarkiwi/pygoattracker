@@ -119,7 +119,7 @@ def test_header_fields(packed):
 
 
 def test_not_a_sid():
-    with pytest.raises(SidParseError, match="PSID/RSID"):
+    with pytest.raises(SidParseError, match="not a SID file"):
         sid.parse_sid_header(b"NOPE" + b"\0" * 120)
 
 
@@ -228,27 +228,27 @@ def test_decode_orderlist_repeat_and_transpose():
     assert olist.entries[2].num == 5
 
 
-def test_load_sid_explicit_load_address():
+def test_load_image_explicit_load_address():
     header = bytearray(0x7C)
     header[0:4] = b"PSID"
     struct.pack_into(">H", header, 0x04, 2)
     struct.pack_into(">H", header, 0x06, 0x7C)
     struct.pack_into(">H", header, 0x08, 0x2000)  # explicit load address
     struct.pack_into(">H", header, 0x0E, 1)
-    mem, _, load, end = sid.load_sid(bytes(header) + b"\x01\x02\x03")
-    assert load == 0x2000
-    assert mem[0x2000] == 0x01
-    assert end == 0x2003
+    image = sid._load_image(bytes(header) + b"\x01\x02\x03")
+    assert image.load == 0x2000
+    assert image.mem[0x2000] == 0x01
+    assert image.end == 0x2003
 
 
-def test_load_sid_overrun():
+def test_load_image_overrun():
     header = bytearray(0x7C)
     header[0:4] = b"PSID"
     struct.pack_into(">H", header, 0x04, 2)
     struct.pack_into(">H", header, 0x06, 0x7C)
     struct.pack_into(">H", header, 0x08, 0xFFFF)
     with pytest.raises(SidParseError, match="overruns"):
-        sid.load_sid(bytes(header) + b"\x00" * 8)
+        sid._load_image(bytes(header) + b"\x00" * 8)
 
 
 def test_read_sid_from_path_and_file(tmp_path, packed):

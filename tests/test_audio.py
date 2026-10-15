@@ -1,6 +1,5 @@
-"""Audio rendering against a fake and (when available) a real SID."""
+"""Audio rendering against a fake and a real SID."""
 
-import sys
 import wave
 
 import pytest
@@ -67,14 +66,7 @@ def test_bad_model(song):
         audio.render_samples(song, model="6582")
 
 
-def test_missing_pyresidfp(song, monkeypatch):
-    monkeypatch.setitem(sys.modules, "pyresidfp", None)
-    with pytest.raises(GoatTrackerError, match="pyresidfp"):
-        audio.render_samples(song, seconds=0.1)
-
-
 def test_render_with_pyresidfp(song):
-    pytest.importorskip("pyresidfp")
     samples, rate = audio.render_samples(song, seconds=1.0, model="8580")
     assert rate > 8000
     assert len(samples) == pytest.approx(rate, rel=0.05)
@@ -83,7 +75,6 @@ def test_render_with_pyresidfp(song):
 
 
 def test_render_with_pyresidfp_6581_and_rate(song):
-    pytest.importorskip("pyresidfp")
     samples, rate = audio.render_samples(
         song, seconds=0.2, model="6581", sampling_frequency=22050
     )

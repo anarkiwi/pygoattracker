@@ -24,12 +24,9 @@ running the init routine in a 6502 emulator (:mod:`jennings`).
 from dataclasses import dataclass, field
 
 from pysidtracker import (
-    PSID_MAGIC,
-    RSID_MAGIC,
     BaseSidParser,
     CodePattern,
     SidError,
-    SidFormatError,
     SidHeader,
     SidImage,
     find_code_all,
@@ -151,37 +148,21 @@ class DecompiledSid:
         return out
 
 
-def parse_sid_header(raw: bytes) -> SidHeader:
-    """Parse a PSID/RSID header from ``raw`` file bytes."""
-    data = bytes(raw)
-    magic = data[:4]
-    if magic not in (PSID_MAGIC, RSID_MAGIC):
-        raise SidParseError(f"not a PSID/RSID file (identifier {magic!r})")
+def _as_sid_parse_error(parse, raw: bytes):
     try:
-        return _parse_sid_header(data)
-    except SidFormatError as exc:
-        raise SidParseError(str(exc)) from exc
-
-
-def _load_image(raw: bytes) -> SidImage:
-    """Load ``raw`` ``.sid`` bytes into a :class:`~pysidtracker.SidImage`."""
-    data = bytes(raw)
-    parse_sid_header(data)  # validate magic, raising pygoattracker SidParseError
-    try:
-        return SidImage.from_sid(data)
+        return parse(bytes(raw))
     except SidError as exc:
         raise SidParseError(str(exc)) from exc
 
 
-def load_sid(raw: bytes):
-    """Load a ``.sid`` into a 64 KiB image.
+def parse_sid_header(raw: bytes) -> SidHeader:
+    """Parse a PSID/RSID header from ``raw`` file bytes."""
+    return _as_sid_parse_error(_parse_sid_header, raw)
 
-    Returns ``(mem, header, load_address, end_address)`` where ``mem`` is a
-    ``bytearray`` of length ``0x10000`` with the C64 data placed at its load
-    address.
-    """
-    image = _load_image(raw)
-    return image.mem, image.header, image.load, image.end
+
+def _load_image(raw: bytes) -> SidImage:
+    """Load ``raw`` ``.sid`` bytes into a :class:`~pysidtracker.SidImage`."""
+    return _as_sid_parse_error(SidImage.from_sid, raw)
 
 
 _FREQ_MIN_LEN = 8

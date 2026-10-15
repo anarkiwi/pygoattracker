@@ -854,3 +854,9 @@ def test_init_regs_hold_until_the_player_writes_them(song):
     assert (0x0E, 0xFF) in first and (0x0F, 0xFF) in first
     assert (0x12, 0x00) in first
     assert (0x0E, 0x00) in second and (0x0F, 0x00) in second
+
+
+def test_a_wave_pointer_wrapping_past_the_last_entry_reads_a_cleared_step(song):
+    song.patterns[0].rows[1] = Row(command=constants.CMD_SETWAVEPTR, data=0xFF)
+    history = reg_history(song, 20, constants.CONTROL_REG)
+    assert history[-1] == history[-2]

@@ -90,6 +90,15 @@ for _ in range(50 * 60):                  # one minute at 50 Hz
 grid = Player(read_sng("tune.sng")).render_grid(250)   # 250 x 25 register grid
 ```
 
+A decompiled `.sid` plays as its own player build (hard-restart ADSR, default
+tempo, init state, frequency table, pulse code):
+
+```python
+from pygoattracker import decompile_sid
+
+grid = decompile_sid("tune.sid", subtune=0).player().render_grid(250)
+```
+
 The render is validated byte-exactly against a `sidplayfp` oracle — see
 [oracle-testing.md](oracle-testing.md).
 

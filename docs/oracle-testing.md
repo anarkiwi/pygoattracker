@@ -1,12 +1,12 @@
 # Oracle testing
 
-`tests/test_oracle_hvsc.py` renders each tune with `Player.render_grid` and
-asserts the per-frame SID register grid matches
-[`sidtrace`](https://github.com/anarkiwi/sidtrace) — a patched `sidplayfp` run in
-Docker — frame for frame, byte for byte. It reuses `pysidtracker`'s
-[`make_oracle_fixtures`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/oracle-testing.md);
-the flow (resolve HVSC tune → render the oracle CSV → frame it → `aligned_match`)
-is documented there.
+`tests/test_oracle_hvsc.py` renders each tune's subtune with the survey renderer
+(`scripts/oracle_hvsc.py`, i.e. `DecompiledSid.player()`) and asserts its per-frame
+SID register grid matches [`sidtrace`](https://github.com/anarkiwi/sidtrace) — a
+patched `sidplayfp` run in Docker — frame for frame, byte for byte, over the
+subtune's whole HVSC `Songlengths.md5` duration (pinned per tune in the test). The
+oracle trace, framing and comparison are `pysidtracker.survey`'s, so a test
+passes exactly when the whole-HVSC survey calls that subtune `exact`.
 
 The `Player` is a `pysidtracker.MemPlayer`, so `render_grid(nframes)` is exactly
 the grid the oracle compares: one frame per play-routine interrupt, starting
@@ -15,13 +15,13 @@ with the call that only initialises the song, so the grids align exactly.
 ## Variations covered
 
 Each tune is a distinct GoatTracker play-routine / packed-decode variation, all
-byte-exact:
+byte-exact over the whole song:
 
 | tune | variation |
 | --- | --- |
 | `Hammurabi` | stock frequency table, editor (full-mod) pulse |
 | `A_Crack_in_the_Facade` | finetuned frequency table (high-column anchor), NOWAVEDELAY |
-| `Cruiser-X_79_preview` | editor pulse, multi-subtune song(order)-table (5 subtunes) |
+| `Cruiser-X_79_preview` | editor pulse, multi-subtune song(order)-table, all 3 subtunes |
 | `10_Orbyte`, `Cab_Hustle` | greloc SIMPLEPULSE one-byte pulse optimization |
 | `Halloween-Main_Title` | SIMPLEPULSE + NOWAVEDELAY combined |
 | `Joke`, `Beautiful_Day`, `H-Fusion`, `Menace47`, `Ann_Gong` | GoatTracker V1.53, V1.52, V1.51, V1.50b, V1.50 playroutines |
@@ -31,6 +31,8 @@ byte-exact:
 | `Puzzle_Bobble` | two players in one image; the build is read from the decoded data's own player |
 | `Metroid-Brinstar` | 3x multispeed: channels start on `DEFAULTTEMPO` |
 | `Dirty_Cheater` | init stub writes voice 3 before the player |
+| `Loader_Music`, `Ryan_Went_Sling`, `Galaga_Start_Theme`, `Heavy_Industrial_Machinery`, `Contra_Jungle_Theme` | hard-restart ADSR `$FF00` (AD stored first), `$FF00` (altplayer, ghost), `$1000`, `$FF0F`, `$0F0F` |
+| `Miner_Prophet_preview` | a define found at two sites leaves the rest of the build read |
 | `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |
 
 ## Running
@@ -42,7 +44,7 @@ pytest -m oracle -n auto
 
 HVSC `.sid` files are copyright works: they are resolved from a local `$HVSC`
 tree or downloaded to `tests/.tunecache`, and the oracle CSVs cached in
-`.oracle-cache/csv` — never committed. The default suite excludes `-m oracle`; a
+`.oracle-cache/oracle` — never committed. The default suite excludes `-m oracle`; a
 dedicated CI job runs it.
 
 ## Whole-HVSC survey
@@ -51,7 +53,7 @@ dedicated CI job runs it.
 (`pip install "pysidtracker[survey]>=0.12.0"`) compares every GoatTracker tune
 in an HVSC tree against the oracle over each subtune's full HVSC song length.
 `scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
-`render`, which the oracle tests above share; its `info` is the decoded
+`render` (`DecompiledSid.player()`), which the oracle tests above share; its `info` is the decoded
 `PlayerBuild` plus SIMPLEPULSE / NOWAVEDELAY / live-vibrato, so `triage` shows
 the exact rate per decoded playroutine option.
 
@@ -61,6 +63,9 @@ PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC tunes.csv --work .hvs
 python -m pysidtracker.survey triage .hvsc-survey
 PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC tunes.csv <md5>_<song> --work .hvsc-survey --render oracle_hvsc:render
 ```
+
+`scripts/build_census.py $HVSC tunes.csv` tallies which `PlayerBuild` defines
+the reader states (or leaves unknown) across the GoatTracker 2 tunes.
 
 `scripts/gt1_versions.py $HVSC tunes.csv` tabulates the `GoatTracker_V1.x`
 tunes by embedded playroutine and can write a per-version sample `tunes.csv`.

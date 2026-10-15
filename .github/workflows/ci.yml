@@ -69,8 +69,8 @@ jobs:
       - name: Cache oracle CSVs
         uses: actions/cache@v6
         with:
-          path: .oracle-cache/csv
-          key: oracle-csv-${{ steps.image.outputs.digest }}-${{ hashFiles('tests/test_oracle_hvsc.py') }}
+          path: .oracle-cache/oracle
+          key: oracle-trace-${{ steps.image.outputs.digest }}-${{ hashFiles('tests/test_oracle_hvsc.py') }}
       - name: Oracle comparison (never skipped)
         run: pytest -m oracle -n auto
 

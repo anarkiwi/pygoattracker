@@ -5,10 +5,8 @@ matches ``gsong.c``: header, orderlists per subtune/channel, instruments,
 the four tables, then patterns.
 """
 
-import io
-from pathlib import Path
-
-from pysidtracker import decode_cstr
+from pysidtracker import ByteCursor, decode_cstr, read_bytes
+from pysidtracker import SidParseError as BaseSidParseError
 
 from pygoattracker import constants
 from pygoattracker.errors import SngParseError
@@ -24,25 +22,16 @@ from pygoattracker.model import (
 )
 
 
-class _Cursor:
-    """Byte cursor with offset-aware errors."""
+class _Cursor(ByteCursor):
+    """:class:`~pysidtracker.ByteCursor` raising :class:`SngParseError`."""
 
-    def __init__(self, data: bytes):
-        self.data = data
-        self.pos = 0
+    __slots__ = ()
 
-    def take(self, size: int, what: str) -> bytes:
-        if self.pos + size > len(self.data):
-            raise SngParseError(
-                f"truncated file: needed {size} bytes for {what} "
-                f"at offset {self.pos}, have {len(self.data) - self.pos}"
-            )
-        chunk = self.data[self.pos : self.pos + size]
-        self.pos += size
-        return chunk
-
-    def u8(self, what: str) -> int:
-        return self.take(1, what)[0]
+    def take(self, n: int, what: str) -> bytes:
+        try:
+            return super().take(n, what)
+        except BaseSidParseError as exc:
+            raise SngParseError(str(exc)) from exc
 
 
 def _parse_orderlist(cur: _Cursor, subtune: int, channel: int) -> Orderlist:
@@ -184,10 +173,4 @@ def parse_sng(data: bytes, finevibrato: bool = True) -> Song:
 
 def read_sng(src, finevibrato: bool = True) -> Song:
     """Read a .SNG from a path, bytes, or binary file-like object."""
-    if isinstance(src, bytes):
-        return parse_sng(src, finevibrato=finevibrato)
-    if isinstance(src, (str, Path)):
-        return parse_sng(Path(src).read_bytes(), finevibrato=finevibrato)
-    if isinstance(src, io.IOBase) or hasattr(src, "read"):
-        return parse_sng(src.read(), finevibrato=finevibrato)
-    raise TypeError(f"cannot read a song from {type(src).__name__}")
+    return parse_sng(read_bytes(src), finevibrato=finevibrato)

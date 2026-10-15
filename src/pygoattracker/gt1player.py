@@ -7,7 +7,7 @@ their packed addresses, and every 8-bit carry and wraparound follows the 6502 co
 
 from __future__ import annotations
 
-from pysidtracker import MemPlayer, ram_pattern
+from pysidtracker import MemPlayer
 from pysidtracker.registers import PW_HI_REGS
 
 from pygoattracker.errors import GoatTrackerError
@@ -32,7 +32,6 @@ _CMD_TONEPORTA = 3
 _CMD_SETSUSTAIN = 6
 _FIRST_WAVE = 0x09
 _SEQ_GUARD = 0x10000
-_IO = range(0xD000, 0xE000)
 
 # V1.5x channel variable offsets from ``mt_chnwave`` (three 7-byte blocks).
 WAVE, WAVEPTR, PACKREST, REPEAT, TRANS, SONGPTR, PATTPTR = range(7)
@@ -55,7 +54,6 @@ class Gt1Player(MemPlayer):
     def __init__(self, song: Gt1Song, subtune: int = 0):
         address, image = song.pack()
         self._song = song
-        self._image_len = len(image)
         self._lab = {name: address + off for name, off in song.ref.labels.items()}
         tables = song.layout()
         self._freqlo = self._lab["mt_freqtbllo"]
@@ -87,12 +85,6 @@ class Gt1Player(MemPlayer):
         self._mem[_SID + reg] = value & 0xFF
 
     def _init(self, subtune: int) -> None:
-        mem, start = self._mem, self._load
-        image = bytes(mem[start : start + self._image_len])
-        io = bytes(mem[_IO.start : _IO.stop])
-        mem[:] = ram_pattern()  # shared libsidplayfp start-up image (pysidtracker)
-        mem[_IO.start : _IO.stop] = io
-        mem[start : start + len(image)] = image
         if not self._song.initialized:
             self._song_init(subtune & 0xFF)
 

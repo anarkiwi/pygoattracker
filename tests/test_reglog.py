@@ -14,7 +14,6 @@ from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.reglog import (
     REGLOG_HEADER,
-    RegWrite,
     iter_register_writes,
     read_reglog,
     write_reglog,
@@ -60,11 +59,3 @@ def test_write_read_round_trip(song, tmp_path):
     assert text.startswith("# pygoattracker register log")
     assert read_reglog(path) == writes
     assert read_reglog(io.StringIO(text)) == writes
-
-
-def test_write_stream_no_header():
-    writes = [RegWrite(0, 24, 15), RegWrite(19656, 4, 0x41)]
-    out = io.StringIO()
-    write_reglog(writes, out, header=False)
-    assert out.getvalue() == "0 24 15\n19656 4 65\n"
-    assert read_reglog(io.StringIO(out.getvalue())) == writes

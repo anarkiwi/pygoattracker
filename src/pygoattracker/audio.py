@@ -8,7 +8,7 @@ into a per-frame ``(reg, val)`` write stream (via
 ``(samples, sampling_frequency)``.
 
 By default the emulated SID is `pyresidfp
-<https://pypi.org/project/pyresidfp/>`_ (install the ``audio`` extra).
+<https://pypi.org/project/pyresidfp/>`_ (a pysidtracker dependency).
 Any object with ``write_register(reg, value)``, ``clock(timedelta) ->
 samples`` and a ``sampling_frequency`` attribute can be passed as
 ``device`` instead, e.g. for tests or a different emulator.
@@ -20,7 +20,12 @@ the register log uses, so renders line up with
 
 from pathlib import Path
 
-from pysidtracker.audio import CHIP_MODELS, write_wav
+from pysidtracker.audio import (
+    CHIP_MODELS,
+    resolve_device,
+    seconds_to_frames,
+    write_wav,
+)
 from pysidtracker.audio import render_samples as _render_samples
 
 from pygoattracker import constants
@@ -29,23 +34,6 @@ from pygoattracker.model import Song
 from pygoattracker.player import iter_frames
 
 __all__ = ["CHIP_MODELS", "render_samples", "render_wav", "write_wav"]
-
-
-def _default_device(model: str, sampling_frequency: float | None):
-    try:
-        from pyresidfp import SoundInterfaceDevice
-        from pyresidfp.sound_interface_device import ChipModel
-    except ImportError as exc:
-        raise GoatTrackerError(
-            "pyresidfp is required to render audio; "
-            "install with: pip install pygoattracker[audio]"
-        ) from exc
-    chip = {"6581": ChipModel.MOS6581, "8580": ChipModel.MOS8580}[model]
-    if sampling_frequency:
-        return SoundInterfaceDevice(
-            model=chip, sampling_frequency=float(sampling_frequency)
-        )
-    return SoundInterfaceDevice(model=chip)
 
 
 def render_samples(
@@ -66,16 +54,14 @@ def render_samples(
     16-bit mono. Rendering stops at ``seconds`` (or earlier when the
     song stops, or at the song loop with ``until_loop``).
     """
-    if model not in CHIP_MODELS:
-        raise GoatTrackerError(f"chip model must be one of {CHIP_MODELS}")
-    if device is None:
-        device = _default_device(model, sampling_frequency)
-    frame_seconds = cycles_per_frame / clock_frequency
-    max_frames = max(1, round(seconds / frame_seconds))
+    try:
+        device = resolve_device(device, model, sampling_frequency)
+    except ValueError as exc:
+        raise GoatTrackerError(str(exc)) from exc
     frames = iter_frames(
         song,
         subtune=subtune,
-        max_frames=max_frames,
+        max_frames=seconds_to_frames(seconds, cycles_per_frame, clock_frequency),
         until_loop=until_loop,
         **player_options,
     )

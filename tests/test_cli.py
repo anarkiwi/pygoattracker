@@ -46,12 +46,23 @@ def test_reglog(tmp_path, capsys):
     assert writes[0] == reglog.RegWrite(0, 0, 0)
 
 
-def fake_device(_model, _rate):
-    return FakeDevice()
+def test_reglog_frames_match_wav(tmp_path, monkeypatch):
+    requested = []
+
+    def capture(_song, max_frames=None, **_options):
+        requested.append(max_frames)
+        return iter(())
+
+    monkeypatch.setattr(reglog, "iter_register_writes", capture)
+    monkeypatch.setattr(audio, "iter_frames", capture)
+    out = tmp_path / "song.reglog"
+    assert cli.main(["reglog", song_path(tmp_path), str(out), "--seconds", "10"]) == 0
+    audio.render_samples(basic_song(), seconds=10, device=FakeDevice())
+    assert requested == [501, 501]
 
 
 def test_wav(tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr(audio, "_default_device", fake_device)
+    monkeypatch.setattr(audio, "resolve_device", lambda *_: FakeDevice())
     out = tmp_path / "song.wav"
     code = cli.main(["wav", song_path(tmp_path), str(out), "--seconds", "0.2"])
     assert code == 0

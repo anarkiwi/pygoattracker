@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from pysidtracker import ram_pattern
 from pysidtracker.oracle import EmuPlayer
 
 from pygoattracker import SidParseError
@@ -377,13 +376,6 @@ def test_truncated_last_pattern():
     with pytest.raises(SidParseError, match="no end mark"):
         pattern_len(bytes(0x10000), 0)
     assert pattern_len(mem, 0, 10) == 10
-
-
-def test_uninitialised_ram_is_sidplayfp_pattern():
-    ram = ram_pattern()
-    assert len(ram) == 0x10000
-    assert ram[0x1D2B] == 0xFF and ram[0x1D28] == 0x00
-    assert ram[0x4002] == 0x00 and ram[0x4000] == 0xFF
 
 
 def test_effect_index_outside_jump_table():

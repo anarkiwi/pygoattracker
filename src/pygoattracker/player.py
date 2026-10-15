@@ -258,7 +258,7 @@ class Player(MemPlayer):
         self._ltable = []
         self._rtable = []
         for table in song.tables():
-            pad = constants.MAX_TABLELEN - len(table.left)
+            pad = 0x100 - len(table.left)
             self._ltable.append([v & 0xFF for v in table.left] + [0] * pad)
             self._rtable.append([v & 0xFF for v in table.right] + [0] * pad)
         self._patterns = []

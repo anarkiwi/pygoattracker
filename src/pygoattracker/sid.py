@@ -48,6 +48,7 @@ from pygoattracker.packed import (
     read_build,
     read_state,
 )
+from pygoattracker.player import Player
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.model import (
     Orderlist,
@@ -135,6 +136,27 @@ class DecompiledSid:
     subtune: int = 0
     typed: TypedSong | None = None
     image: SidImage | None = field(default=None, repr=False)
+
+    def player(self) -> Player:
+        """A :class:`Player` of this subtune configured as the image's own player.
+
+        The build's hard-restart ADSR replaces the editor's when the code states it.
+        """
+        info, build = self.info, self.info.build
+        adparam = constants.DEFAULT_ADPARAM
+        if build.adparam is not None:
+            adparam = build.adparam << 8 | build.srparam
+        return Player(
+            self.typed,
+            subtune=self.subtune,
+            adparam=adparam,
+            freq_table=info.note_read,
+            simplepulse=info.simplepulse,
+            live_vibrato=info.live_vibrato,
+            state=info.state,
+            default_tempo=build.deftempo,
+            init_regs=info.init_regs,
+        )
 
     def repack(self) -> list[tuple[int, bytes, bytes]]:
         """``(address, packed, image)`` for each piece :func:`pack` writes that the image

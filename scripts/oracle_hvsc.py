@@ -10,7 +10,6 @@ import numpy as np
 
 from pygoattracker.gt1 import decompile_gt1, find_player
 from pygoattracker.gt1player import Gt1Player
-from pygoattracker.player import Player
 from pygoattracker.sid import _load_image, decompile_sid
 
 PLAYER = "goattracker|^\\(gt"
@@ -28,16 +27,7 @@ def render(data, song, nframes):
     if find_player(_load_image(data).mem) is not None:
         return render_gt1(data, song, nframes)
     d = decompile_sid(data, subtune=song - 1)
-    player = Player(
-        d.typed,
-        subtune=d.subtune,
-        freq_table=d.info.note_read,
-        simplepulse=d.info.simplepulse,
-        live_vibrato=d.info.live_vibrato,
-        state=d.info.state,
-        default_tempo=d.info.build.deftempo,
-        init_regs=d.info.init_regs,
-    )
+    player = d.player()
     info = asdict(d.info.build)
     info.update(
         simplepulse=d.info.simplepulse,

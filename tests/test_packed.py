@@ -33,12 +33,21 @@ def image(*frags):
     return SidImage(m, 0, len(m), None, bytes(m), b"")
 
 
-def hr(x, y, n=0x18):
-    """``lda chninstr,x; cmp #n; bcs``, the hard restart's two loads, the gate-off."""
-    return "BD 12 20 C9 %02X B0 0A A9 %02X 9D 20 20 A9 %02X 9D 21 20 A9 FE 9D 22 20" % (
-        n,
-        x,
-        y,
+def hr(x, y, n=0x18, ad_first=False):
+    """``lda chninstr,x; cmp #n; bcs``, the hard restart's two stores, the gate-off.
+
+    ``x`` goes to SR (``$2021``) then ``y`` to AD (``$2020``), or AD first.
+    """
+    p, q = (0x20, 0x21) if ad_first else (0x21, 0x20)
+    return (
+        "BD 12 20 C9 %02X B0 0A A9 %02X 9D %02X 20 A9 %02X 9D %02X 20 A9 FE 9D 22 20"
+        % (
+            n,
+            x,
+            p,
+            y,
+            q,
+        )
     )
 
 
@@ -69,7 +78,7 @@ def test_player_s_reads_sr_first_and_its_classes_from_where_they_branch():
 
 
 def test_altplayer_loads_ad_first_and_flushes_ascending():
-    b = P.read_build(image(ASC, TEMPO, hr(0xFF, 0x00, n=0x0E), GATECOL))
+    b = P.read_build(image(ASC, TEMPO, hr(0xFF, 0x00, n=0x0E, ad_first=True), GATECOL))
     assert (b.alt, b.adparam, b.srparam, b.firstnohr, b.firstlegato) == (
         True,
         0xFF,
@@ -78,6 +87,13 @@ def test_altplayer_loads_ad_first_and_flushes_ascending():
         P.NONE,
     )
     assert not b.insvib
+
+
+def test_the_store_targets_not_their_order_tell_ad_from_sr():
+    b = P.read_build(image(TEMPO, hr(0xFF, 0x00, ad_first=True), GATECOL))
+    assert (b.alt, b.adparam, b.srparam) == (None, 0xFF, 0)
+    b = P.read_build(image(DESC, TEMPO, hr(0x00, 0xFF), GATECOL))
+    assert (b.alt, b.adparam, b.srparam) == (False, 0xFF, 0)
 
 
 def test_a_build_without_hard_restart_code_and_without_a_flush():
@@ -103,6 +119,20 @@ def test_the_optimizations_and_fixedparams_are_read_from_their_sites():
 def test_a_define_at_two_sites_or_no_player_states_no_build():
     assert P.read_build(image(DESC, TEMPO, TEMPO)) == P.PlayerBuild()
     assert P.read_build(image(DESC, GATECOL)) == P.PlayerBuild()
+
+
+def test_a_define_at_two_sites_voids_only_that_define():
+    b = P.read_build(image(TEMPO, hr(0, 0x0F), hr(0, 0x0F), TICK034, TICK034, GATECOL))
+    assert (b.deftempo, b.gatecol, b.adparam, b.firstnohr, b.firstlegato, b.insvib) == (
+        5,
+        True,
+        None,
+        None,
+        None,
+        None,
+    )
+    b = P.read_build(image(TEMPO, hr(0, 0x0F), GATECOL, GATECOL))
+    assert (b.adparam, b.firstnohr, b.gatecol) == (0x0F, 0x18, None)
 
 
 def test_a_zero_page_ghost_build_hard_restarts_into_the_ghost():

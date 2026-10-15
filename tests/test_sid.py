@@ -5,6 +5,7 @@ greloc's data layout) so no external .sid files are needed. An optional
 real-HVSC smoke test runs only when ``PYGOATTRACKER_SID`` points at a file.
 """
 
+import dataclasses
 import json
 import os
 import re
@@ -530,3 +531,13 @@ def test_init_regs_are_the_init_routine_s_sid_writes():
     d = sid.decompile_sid(_psid(data + code, init=stub, play=stub + len(code) - 1))
     assert d.info.init_regs == ((0x0E, 0xFF), (0x0F, 0xFF), (0x12, 0x20))
     assert sid.decompile_sid(_minimal_packed()).info.init_regs == ()
+
+
+def test_player_uses_the_build_s_hard_restart_adsr():
+    d = sid.decompile_sid(_minimal_packed())
+    stock = d.player()
+    assert stock.adparam == constants.DEFAULT_ADPARAM
+    d.info.build = dataclasses.replace(d.info.build, adparam=0xFF, srparam=0x01)
+    player = d.player()
+    assert player.adparam == 0xFF01
+    assert player.render_grid(60) != stock.render_grid(60)

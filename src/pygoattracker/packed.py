@@ -105,6 +105,9 @@ class _Ambiguous(Exception):
     pass
 
 
+_AMBIGUOUS = object()
+
+
 class PlayerCode(NamedTuple):
     """The ``[start, end)`` span of ``image`` one player's code is in (None: open)."""
 
@@ -172,65 +175,95 @@ def read_build(image) -> PlayerBuild:
         return PlayerBuild()
 
 
+def _maybe(image, spec, **want):
+    """:func:`_one`, or ``_AMBIGUOUS`` where the fragment is at more than one site."""
+    try:
+        return _one(image, spec, **want)
+    except _Ambiguous:
+        return _AMBIGUOUS
+
+
+def _found(m):
+    """True/False for a site found or not, None for an ambiguous one."""
+    return None if m is _AMBIGUOUS else m is not None
+
+
 def _read_build(image) -> PlayerBuild:
     asc = _one(image, "A2 00 BD {g:w} 9D ?? ?? E8 E0 19 D0")
     flush = asc or _one(image, "A2 18 BD {g:w} 9D ?? ?? CA 10")
-    # The hard restart stores ADPARAM/SRPARAM to the chip or ghost (``sta abs,x``)
-    # or, in a ZPGHOSTREGS build, to the zero-page ghost (``sta zp,x``).
-    for sta in ("9D ?? ??", "95 ??"):
-        hr = _one(image, f"A9 {{x}} {sta} A9 {{y}} {sta} A9 FE 9D")
+    tempo = _one(image, _TEMPO)
+    if tempo is None:  # no mt_initchn: not a player.s this reader knows
+        return PlayerBuild()
+    # Hard restart: ADPARAM/SRPARAM in either order to targets with SR at AD + 1.
+    for sta, cap in (("9D", "w"), ("95", "b")):
+        hr = _maybe(
+            image, f"A9 {{x}} {sta} {{p:{cap}}} A9 {{y}} {sta} {{q:{cap}}} A9 FE 9D"
+        )
         if hr is not None:
             break
-    ad = sr = None
+    ad = sr = skiphr = None
     if hr is None:
-        cmp = _one(image, "BD ?? ?? C9 {n} B0 ?? A9 FE 9D")
-        skiphr = cmp.addr + 7 if cmp else None
+        cmp = _maybe(image, "BD ?? ?? C9 {n} B0 ?? A9 FE 9D")
+        firstnohr = 1
+        if cmp is not None and cmp is not _AMBIGUOUS:
+            skiphr = cmp.addr + 7
+    elif hr is _AMBIGUOUS:
+        cmp, firstnohr = _AMBIGUOUS, None
     else:
-        cmp = _one(image, f"BD ?? ?? C9 {{n}} B0 ?? A9 ?? {sta} A9 ?? {sta} A9 FE 9D")
-        x, y = hr.captures["x"], hr.captures["y"]
-        ad, sr = (x, y) if asc else (y, x)
-        skiphr = hr.addr + 2 * (2 + len(sta.split()))
+        ops = " ??" * (1 + (cap == "w"))
+        cmp = _maybe(
+            image, f"BD ?? ?? C9 {{n}} B0 ?? A9 ?? {sta}{ops} A9 ?? {sta}{ops} A9 FE 9D"
+        )
+        firstnohr = NONE
+        c = hr.captures
+        ad, sr = (c["x"], c["y"]) if c["p"] < c["q"] else (c["y"], c["x"])
+        skiphr = hr.addr + 8 + 2 * (cap == "w")
+    if cmp is _AMBIGUOUS:
+        firstnohr = None
+    elif cmp is not None:
+        firstnohr = cmp.captures["n"]
     legato = [
         m.captures["l"]
         for m in _find(image, "C9 {l} 90 ?? B0")
         if _branch(m, 2) == skiphr
     ]
-    tempo = _one(image, _TEMPO)
-    if tempo is None:  # no mt_initchn: not a player.s this reader knows
-        return PlayerBuild()
-    tick034 = _one(image, "9D ?? ?? BD ?? ?? 9D ?? ?? 60")
-    insvib = any(
-        m.captures["t"] == getattr(tick034, "addr", None)
-        for m in _find(image, "B9 ?? ?? 4C {t:w}")
-    ) or _has(image, "BC ?? ?? B9 ?? ?? A8")
-    c = tempo.captures["c"] if tempo else None
-    gatecol = (
-        None if c is None else _one(image, "BD {c:w} DD ?? ?? F0", c=c) is not None
+    tick034 = _maybe(image, "9D ?? ?? BD ?? ?? 9D ?? ?? 60")
+    insvib = _has(image, "BC ?? ?? B9 ?? ?? A8") or (
+        None
+        if tick034 is _AMBIGUOUS
+        else any(
+            m.captures["t"] == getattr(tick034, "addr", None)
+            for m in _find(image, "B9 ?? ?? 4C {t:w}")
+        )
     )
+    c = tempo.captures["c"]
+    gatecol = _found(_maybe(image, "BD {c:w} DD ?? ?? F0", c=c))
     fixed = None
     if gatecol is False:
-        gate = _one(image, "BD {c:w} C9 {g} F0", c=c)
+        gate = _maybe(image, "BD {c:w} C9 {g} F0", c=c)
         waves = {m.captures["w"] for m in _find(image, "BD {w:w} 3D ?? ?? 9D")}
         first = (
-            _one(image, "A9 {f} 9D {w:w}", w=waves.pop()) if len(waves) == 1 else None
+            _maybe(image, "A9 {f} 9D {w:w}", w=waves.pop()) if len(waves) == 1 else None
         )
-        if gate and first:
+        if _found(gate) and _found(first):
             fixed = gate.captures["g"], first.captures["f"]
     return PlayerBuild(
         ghost=flush.captures["g"] if flush else None,
         alt=None if flush is None else asc is not None,
         adparam=ad,
         srparam=sr,
-        firstnohr=cmp.captures["n"] if cmp else (NONE if hr else 1),
-        firstlegato=legato[0] if len(legato) == 1 else NONE,
+        firstnohr=firstnohr,
+        firstlegato=(
+            None
+            if skiphr is None and firstnohr is None
+            else legato[0] if len(legato) == 1 else NONE
+        ),
         deftempo=tempo.captures["t"],
         insvib=insvib,
         gatecol=gatecol,
         fixed=fixed,
         pulseopt=_has(image, "BC ?? ?? F0 ?? 1D ?? ?? F0"),
-        realtime=(
-            None if c is None else _one(image, "BD {c:w} F0 ?? BC", c=c) is not None
-        ),
+        realtime=_found(_maybe(image, "BD {c:w} F0 ?? BC", c=c)),
     )
 
 

@@ -247,7 +247,8 @@ class Player(MemPlayer):
                     wave_ptr=ins.wave_ptr & 0xFF,
                     pulse_ptr=ins.pulse_ptr & 0xFF,
                     filter_ptr=ins.filter_ptr & 0xFF,
-                    speed_ptr=ins.vibrato_param & 0xFF,
+                    # delay 0 = no instrument vibrato (editor gplay.c, packer greloc)
+                    speed_ptr=(ins.vibrato_param & 0xFF) if ins.vibrato_delay else 0,
                     vibdelay=ins.vibrato_delay & 0xFF,
                     gatetimer=ins.gateoff_timer & 0xFF,
                     firstwave=ins.first_wave & 0xFF,

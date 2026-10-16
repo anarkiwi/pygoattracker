@@ -256,6 +256,22 @@ def test_instrument_vibrato(song):
     assert min(wobble) < C4_FREQ
 
 
+def test_instrument_vibrato_delay_zero_is_disabled(song):
+    """vibrato_delay 0 = no instrument vibrato, even with a live param set.
+
+    The editor's gplay.c skips when ``!vibdelay`` and the packer's greloc packs
+    a speedtable speed of 0, so a raw .sng instrument with a ``vibrato_param``
+    and delay 0 plays at a constant frequency. Regression test for issue #46.
+    """
+    idx = song.speedtable.add(3, 0x40)
+    song.instruments[0].vibrato_param = idx
+    song.instruments[0].vibrato_delay = 0
+    # Note-on (frame 7) sets C-4 and the frequency then stays constant.
+    assert all(f == C4_FREQ for f in freq_history(song, 40)[7:])
+    # Likewise for the live param read (the packed vibrato-only build).
+    assert all(f == C4_FREQ for f in freq_history(song, 40, live_vibrato=True)[7:])
+
+
 def test_instrument_vibrato_runs_during_gateoff_intro(song):
     """Instrument 1's speed-table vibrato is audible from the gate-off intro.
 
@@ -288,14 +304,13 @@ def test_instrument_vibrato_runs_during_gateoff_intro(song):
 
 
 def _two_instr_gateoff_song():
-    """Two notes on the same voice using two different instruments, so the
-    second note's fetch flips the channel instrument during the gate-off window
-    before that note inits. Instrument 1 carries NO vibrato; instrument 2 a
-    strong, delay-0 speed-table vibrato. The freq held from note 1 is therefore
-    modulated by instrument 2's param ONLY when the param is read live."""
+    """Two notes on two instruments so the second fetch flips the channel
+    instrument during the gate-off window before that note inits: instrument 1
+    has no vibrato, instrument 2 a speed-table vibrato (delay 1; delay 0 means
+    no vibrato). The held note-1 freq wobbles only when the param is read live."""
     song = basic_song(length=16)
     idx = song.speedtable.add(8, 0x60)  # large cmpvalue so vibtime keeps wobbling
-    add_test_instrument(song, vibrato_param=idx, vibrato_delay=0)
+    add_test_instrument(song, vibrato_param=idx, vibrato_delay=1)
     song.patterns[0].rows[0] = Row(note=note("C-4"), instrument=1)
     song.patterns[0].rows[2] = Row(note=note("E-4"), instrument=2)
     return song

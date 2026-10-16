@@ -30,6 +30,7 @@ from pysidtracker import (
     SidHeader,
     SidImage,
     find_code_all,
+    init_effects,
     read_bytes,
     run_init,
     trace_init,
@@ -816,6 +817,46 @@ def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build)
     return typed.to_song(), info, typed
 
 
+def _initsongnum_cell(image):
+    """The cell a song's own ``mt_init`` stores the selected song to.
+
+    The player's jump table (``jmp mt_init``, ``jmp mt_play``) sits before its
+    data; ``mt_init`` opens by storing its incoming ``A`` to the cell, the
+    operand of its first store. ``None`` when it tracks no such cell.
+    """
+    anchor = _recognize(image)
+    if anchor is None:
+        return None
+    base = player_span(image, anchor[0]).start
+    if base is None:
+        return None
+    mem = image.mem
+    init_addr = mem[base + 1] | (mem[base + 2] << 8)
+    if mem[init_addr] in (0x85, 0x8D):  # STA abs / STA abs,X (X is 0 on entry)
+        return mem[init_addr + 1] | (mem[init_addr + 2] << 8)
+    return None
+
+
+def _select_subtune(image, subtune, decoded, crunched):
+    """Header song ``subtune`` mapped to the player's own song selection.
+
+    Runs init with ``A = subtune`` and reads the song cell so a wrapper that
+    remaps songs selects the subtune the player plays. A crunched image keeps
+    the literal song; an out-of-range selection raises :class:`SidParseError`.
+    """
+    if not crunched:
+        cell = _initsongnum_cell(image)
+        if cell is not None:
+            effects = init_effects(image, subtune, watch=[cell])
+            subtune = effects.writes[cell].value if cell in effects.writes else subtune
+    if not 0 <= subtune < decoded:
+        raise SidParseError(
+            f"no such subtune: the song selects subtune {subtune}, "
+            f"but the player decodes {decoded} subtune(s)"
+        )
+    return subtune
+
+
 def decompile_sid(src, subtune=0) -> DecompiledSid:
     """Decompile a packed GoatTracker ``.sid`` into a :class:`DecompiledSid`.
 
@@ -828,13 +869,15 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
     header = image.header
     dataend = image.end
     anchor = _recognize(image)
-    if anchor is None:
+    crunched = anchor is None
+    if crunched:
         run_init(image, subtune=subtune)
         dataend = 0x10000
         anchor = _recognize(image)
     if anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
     d = _decompile_any_songs(image, header, dataend, anchor, subtune)
+    d.subtune = _select_subtune(image, subtune, len(d.song.subtunes), crunched)
     d.info.init_regs = init_regs(_load_image(raw), subtune)
     return d
 

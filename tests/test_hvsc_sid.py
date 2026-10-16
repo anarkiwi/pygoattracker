@@ -48,7 +48,7 @@ from pysidtracker import PlayroutineKind
 from pysidtracker.testing import resolve_tune
 
 from pygoattracker import sid
-from pygoattracker.errors import SidParseError
+from pygoattracker.errors import GoatTrackerError, SidParseError
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
 from pygoattracker.writer import build_sng
@@ -219,3 +219,43 @@ def test_hvsc_corpus_round_trips_through_the_typed_model():
         assert typed.to_song() == result.song, rel
         checked += 1
     assert checked >= _FULL_SAMPLE_MIN_PASS or len(present) < len(_sample())
+
+
+def test_hvsc_corpus_resolves_overclaimed_songs():
+    """A PSID ``songs`` count taller than the decoded subtune count.
+
+    Each song is resolved through the player's own init, so a song the player
+    remaps to a real subtune decodes and plays rather than erroring, and one
+    that selects nothing decomposes as not_decompiled (``SidParseError``) rather
+    than the ``GoatTrackerError`` that used to surface as a ``library_error``.
+    """
+    present = _present()
+    if len(present) < 100:
+        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
+    overclaimed = 0
+    resolved_to_music = 0
+    for rel, path in present:
+        raw = path.read_bytes()
+        try:
+            base = sid.decompile_sid(raw)
+        except SidParseError:
+            continue
+        decoded = len(base.song.subtunes)
+        if base.header.songs <= decoded:
+            continue
+        overclaimed += 1
+        for s in range(base.header.songs):
+            try:
+                result = sid.decompile_sid(raw, subtune=s)
+                result.player()
+            except SidParseError:
+                continue  # this song selects a subtune the player has no song for
+            except GoatTrackerError as exc:
+                pytest.fail(f"{rel} song {s + 1}: {exc!r}; expected SidParseError")
+            if s >= decoded:
+                resolved_to_music += 1  # an over-claimed song the player now plays
+    assert overclaimed >= 1, "no over-claiming corpus tune to exercise song resolution"
+    assert resolved_to_music >= 1, (
+        "no over-claimed song resolved to a decodable subtune; "
+        "song selection is not following the player's own init"
+    )

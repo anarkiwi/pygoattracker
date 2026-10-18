@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate ``src/pygoattracker/_gt1_refs.py`` from the GoatTracker 1.x sources.
 
-Assembles each playroutine with ``dasm`` from the fixture-cached V1.53 and V1.25
-(musicroutine 11.x) archives; V1.50..V1.52 are V1.53 with the :data:`VARIANTS`
-edits. ``--check`` exits 1 when the module is stale.
+Assembles each playroutine with the jennings assembler (``pysidtracker.asm6502``)
+from the fixture-cached V1.53 and V1.25 (musicroutine 11.x) archives; V1.50..V1.52
+are V1.53 with the :data:`VARIANTS` edits. ``--check`` exits 1 when the module is
+stale.
 """
 
 from __future__ import annotations
@@ -11,13 +12,12 @@ from __future__ import annotations
 import argparse
 import io
 import re
-import subprocess
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
 import black
+from pysidtracker import asm6502
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -175,24 +175,119 @@ def _patched(src: str, edits) -> str:
     return src
 
 
-def assemble(src: str) -> tuple[bytes, dict]:
-    """Assemble ``src`` with dasm; return the code and its symbol addresses."""
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        (tmpdir / "p.s").write_text(src, encoding="latin-1")
-        subprocess.run(
-            ["dasm", "p.s", "-op.bin", "-f3", "-sp.sym"],
-            cwd=tmpdir,
-            check=True,
-            capture_output=True,
+_CONST = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*(\$[0-9a-fA-F]+|\d+)\s*(;.*)?$")
+_DEC = re.compile(r"(?<![\w$%.+\-])(\d+)")
+_ASSERT = re.compile(
+    r"^\(\s*(\w+)\s*&\s*\$([0-9a-fA-F]+)\s*\)\s*!=\s*\(\s*(\w+)\s*&\s*\$([0-9a-fA-F]+)\s*\)$"
+)
+
+
+def _adapt_dasm(src: str) -> tuple[str, list, int]:
+    """dasm source to plain asm6502 statements, plus its ``if``/``err`` asserts."""
+    org, constants, asserts, out, in_if = 0, {}, [], [], False
+    for raw in src.splitlines():
+        code, _, comment = raw.partition(";")
+        strip = code.strip()
+        if not strip:
+            continue
+        if in_if and re.match(r"^endif\b", strip):
+            in_if = False
+            continue
+        if in_if and re.match(r"^err\b", strip):
+            continue
+        if re.match(r"^if\b", strip):
+            if in_if:
+                raise SystemExit(f"nested if-block: {strip!r}")
+            in_if = True
+            asserts.append(strip[2:].strip())
+            continue
+        if _CONST.match(raw):
+            match = _CONST.match(raw)
+            value = match.group(2)
+            hexnum = value.startswith("$")
+            constants[match.group(1)] = int(
+                value[1:] if hexnum else value, 16 if hexnum else 10
+            )
+            continue
+        if re.match(r"^processor\s*6502\b", strip):
+            continue
+        if re.match(r"^org\s*\$([0-9a-fA-F]+)", strip):
+            org = int(re.match(r"^org\s*\$([0-9a-fA-F]+)", strip).group(1), 16)
+            continue
+        code = re.sub(r"\bdc\.b\b", ".byte", code, flags=re.I)
+        code = re.sub(r"\bdc\.w\b", ".word", code, flags=re.I)
+        body = re.sub(r"^(?:[A-Za-z_][\w.]*\s*:)+\s*", "", code.strip())
+        storage = re.match(
+            r"^ds\.[bw]\s*(\d+)(?:[ \t]*,[ \t]*(\S+))?[ \t]*$", body, re.I
         )
-        code = (tmpdir / "p.bin").read_bytes()
-        symbols = {}
-        for line in (tmpdir / "p.sym").read_text(encoding="latin-1").splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and re.fullmatch(r"[0-9a-fA-F]{4}", parts[1]):
-                symbols[parts[0]] = int(parts[1], 16)
-    return code, symbols
+        if storage:
+            label = code.strip()[: len(code.strip()) - len(body)].strip()
+            directive = ".byte" if body.startswith("ds.b") else ".word"
+            fill = ",".join([storage.group(2) or "0"] * int(storage.group(1)))
+            code = (f"{label}: " if label else "") + f"{directive} {fill}"
+        for name in sorted(constants, key=len, reverse=True):
+            low, high = constants[name] & 0xFF, constants[name] >> 8
+            code = re.sub(rf"(?<![A-Za-z0-9_])<\s*{name}\b", f"${low:02x}", code)
+            code = re.sub(rf"(?<![A-Za-z0-9_])>\s*{name}\b", f"${high:02x}", code)
+            code = re.sub(
+                rf"(?<![A-Za-z0-9_<>]){name}\b", f"${constants[name]:04x}", code
+            )
+        code = _DEC.sub(lambda m: f"${int(m.group(1)):02x}", code)
+        out.append(code + (f";{comment}" if comment else ""))
+    if in_if:
+        raise SystemExit("unterminated if-block")
+    return "\n".join(out), asserts, org
+
+
+_ADJ = re.compile(
+    r"(?<![\w$<>])(\$[0-9a-fA-F]+|[<>]?[A-Za-z_]\w*)[ \t]*([+-])[ \t]*(\d+)\b"
+)
+
+
+def _adj_value(prefix: str, base: str, sign: str, amount: int, labels: dict) -> str:
+    if base.startswith("$"):
+        value = int(base[1:], 16)
+    else:
+        name = base[1:] if base[:1] in "<>" else base
+        if name not in labels:
+            raise SystemExit(f"undefined label {name!r}")
+        value = labels[name]
+    value = (value + (amount if sign == "+" else -amount)) & 0xFFFF
+    if prefix == ">":
+        return f"${value >> 8 & 0xFF:02x}"
+    if prefix == "<":
+        return f"${value & 0xFF:02x}"
+    return f"${value:04x}"
+
+
+def assemble(src: str) -> tuple[bytes, dict]:
+    """Assemble ``src`` with the jennings assembler; return code and labels."""
+    text, asserts, org = _adapt_dasm(src)
+    text = re.sub(r";.*", "", text)
+    phase1 = _ADJ.sub(lambda m: m.group(1), text)
+    _, labels = asm6502.assemble(phase1, org)
+    phase2 = _ADJ.sub(
+        lambda m: _adj_value(
+            m.group(1)[:1] if m.group(1)[:1] in "<>" else "",
+            m.group(1)[1:] if m.group(1)[:1] in "<>" else m.group(1),
+            m.group(2),
+            int(m.group(3)),
+            labels,
+        ),
+        text,
+    )
+    code, labels = asm6502.assemble(phase2, org)
+    for cond in asserts:
+        match = _ASSERT.match(cond)
+        if match is None:
+            raise SystemExit(f"cannot evaluate dasm assert: {cond!r}")
+        side = [
+            (labels[match.group(1)] & int(match.group(2), 16)),
+            (labels[match.group(3)] & int(match.group(4), 16)),
+        ]
+        if side[0] != side[1]:
+            raise SystemExit(f"assembly assert failed: {cond}")
+    return code, labels
 
 
 def build() -> str:

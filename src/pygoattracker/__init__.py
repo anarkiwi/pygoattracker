@@ -13,6 +13,7 @@ from pygoattracker.errors import (
 )
 from pygoattracker.gt1 import Gt1Instrument, Gt1Song, decompile_gt1
 from pygoattracker.gt1player import Gt1Player
+from pygoattracker.gt1sng import Gt1Sng, parse_gts1, relocate, write_gts1
 from pygoattracker.ninja import (
     NinjaCommand,
     NinjaPattern,
@@ -67,6 +68,7 @@ __all__ = [
     "GoatTrackerSidParser",
     "Gt1Instrument",
     "Gt1Player",
+    "Gt1Sng",
     "Gt1Song",
     "Instrument",
     "NinjaCommand",
@@ -104,6 +106,7 @@ __all__ = [
     "gt_to_nt2",
     "iter_frames",
     "iter_register_writes",
+    "parse_gts1",
     "parse_nt2",
     "parse_sid_header",
     "parse_sng",
@@ -111,12 +114,14 @@ __all__ = [
     "read_reglog",
     "read_sid",
     "read_sng",
+    "relocate",
     "render_samples",
     "render_wav",
     "validate_nt2",
     "validate_song",
     "write_nt2",
     "write_reglog",
+    "write_gts1",
     "write_sng",
     "write_wav",
 ]

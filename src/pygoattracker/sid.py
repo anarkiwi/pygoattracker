@@ -142,7 +142,8 @@ class DecompiledSid:
     def player(self) -> Player:
         """A :class:`Player` of this subtune configured as the image's own player.
 
-        The build's hard-restart ADSR replaces the editor's when the code states it.
+        The build's hard-restart ADSR and its pulse/realtime skip optimizations
+        replace the editor's when the code states them.
         """
         info, build = self.info, self.info.build
         adparam = constants.DEFAULT_ADPARAM
@@ -155,6 +156,8 @@ class DecompiledSid:
             freq_table=info.note_read,
             simplepulse=info.simplepulse,
             live_vibrato=info.live_vibrato,
+            optimize_pulse=True if build.pulseopt is None else build.pulseopt,
+            optimize_realtime=True if build.realtime is None else build.realtime,
             state=info.state,
             default_tempo=build.deftempo,
             init_regs=info.init_regs,

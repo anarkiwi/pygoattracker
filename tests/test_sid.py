@@ -55,16 +55,12 @@ def _psid(
     return bytes(header) + struct.pack("<H", LOAD) + data
 
 
-def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1) -> bytes:
+def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1, declared=1) -> bytes:
     """One subtune, one instrument, a 2-row wavetable, two 1-row patterns.
 
-    ``trailer`` appends bytes after the pattern block (as greloc does with
-    author info); the pattern count must come from the pattern-pointer table,
-    not the data end, so these must be ignored. ``freq_lo`` overrides the
-    frequency-table low column (to model a finetuned table whose high column is
-    stock but whose low column has been retuned). ``songs`` sets the PSID header
-    subtune count without changing the single-subtune data (to model a header
-    that mis-advertises the count).
+    ``trailer`` appends bytes the pattern-count scan must ignore; ``freq_lo``
+    retunes the low column; ``songs`` sets the PSID header count; ``declared``
+    sizes the song table past the single valid song, zero-padded.
     """
     note_c4 = constants.note_value("C-4")
     mem = bytearray(0x100)
@@ -81,8 +77,8 @@ def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1) -> bytes:
     lo_col = constants.FREQ_LO[:freqlen] if freq_lo is None else freq_lo[:freqlen]
     emit(lo_col)
     emit(constants.FREQ_HI[:freqlen])
-    songtbllo = emit([0, 0, 0])
-    songtblhi = emit([0, 0, 0])
+    songtbllo = emit([0] * 3 * declared)
+    songtblhi = emit([0] * 3 * declared)
     patttbllo = emit([0, 0])
     patttblhi = emit([0, 0])
     emit([0x09])  # mt_insad
@@ -370,6 +366,34 @@ def test_subtune_count_derived_when_header_wrong():
     assert len(song.patterns) == 2
 
 
+def test_overdeclared_songtable_decodes_filled_songs():
+    # A player may declare more songs than it fills (trailing pointers zero).
+    song = sid.decompile_sid(_minimal_packed(songs=2, declared=2)).song
+    assert len(song.subtunes) == 1
+    assert len(song.patterns) == 2
+
+
+def test_layout_candidates_ignores_foreign_player_idiom():
+    # A sequencer idiom outside the anchor's span is another player's table.
+    a_lo, a_hi = 0x3000, 0x3006  # 2 songs
+    b_lo, b_hi = 0x4000, 0x4009  # 3 songs, a later player's code
+    idiom = (
+        b"\xb9" + _le(a_lo) + b"\x85\x00"
+        b"\xb9" + _le(a_hi) + b"\x85\x00"
+        b"\xbc\x00\x00\xb1\x00\xc9\xff"
+    )
+    foreign = (
+        b"\xb9" + _le(b_lo) + b"\x85\x00"
+        b"\xb9" + _le(b_hi) + b"\x85\x00"
+        b"\xbc\x00\x00\xb1\x00\xc9\xff"
+    )
+    image = _img_from_data(idiom + b"\x00" * 8 + foreign)
+    anchor = (LOAD + len(idiom) + 4, 0, 1)
+    cands = sid._layout_candidates(image, image.header, anchor)
+    assert (a_lo, 2, a_lo + 12) in cands
+    assert all(c[0] != b_lo for c in cands)
+
+
 # --- code-scan layout: song/pattern tables and instrument/table region are ----
 # --- located from the player's own table-access instructions ------------------
 
@@ -395,10 +419,11 @@ def test_layout_candidates_reads_song_table_from_code():
         b"\xbc\x00\x00\xb1\x00\xc9\xff"
     )
     image = _img_from_data(idiom)
-    cands = sid._layout_candidates(image, image.header, (LOAD, 0, 1))
+    anchor = (LOAD + len(idiom), 0, 1)  # the song data follows the player code
+    cands = sid._layout_candidates(image, image.header, anchor)
     assert (slo, 3, slo + 6 * 3) in cands
     # the stock "right after the frequency table" hypothesis is still tried first
-    assert cands[0][0] == LOAD + 2 * 1
+    assert cands[0][0] == anchor[0] + 2 * 1
 
 
 def test_layout_candidates_ignores_implausible_song_idiom():
@@ -411,7 +436,8 @@ def test_layout_candidates_ignores_implausible_song_idiom():
         b"\xbc\x00\x00\xb1\x00\xc9\xff"
     )
     image = _img_from_data(idiom)
-    cands = sid._layout_candidates(image, image.header, (LOAD, 0, 1))
+    anchor = (LOAD + len(idiom), 0, 1)  # the song data follows the player code
+    cands = sid._layout_candidates(image, image.header, anchor)
     assert all(c[0] != slo for c in cands)
 
 

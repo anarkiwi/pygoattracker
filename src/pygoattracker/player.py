@@ -104,6 +104,7 @@ class Player(MemPlayer):
         state: PlayerState | None = None,
         default_tempo: int | None = None,
         init_regs=(),
+        wrapper_flush: bool = False,
     ):
         if isinstance(song, TypedSong):
             simplepulse = simplepulse or song.simplepulse
@@ -148,6 +149,8 @@ class Player(MemPlayer):
         self.optimize_pulse = optimize_pulse
         self.optimize_realtime = optimize_realtime
         self._init_state = state
+        # A play-wrapper flush build starts from its all-zero ghost: first frame muted.
+        self._wrapper_flush = wrapper_flush
         # ``default_tempo`` is the packed player's ``DEFAULTTEMPO`` (greloc: the
         # instrument-63 tempo, else ``multiplier * 6 - 1``), the countdown every
         # channel starts with. None: the editor's instrument-63 rule over tempo 5.
@@ -195,19 +198,25 @@ class Player(MemPlayer):
         self._filterctrl = 0
         self._filtertime = 0
         self._filterptr = 0
+        self._wrapper_first = self._wrapper_flush
         self._state = _INIT
 
     def _frame(self) -> None:
         """Advance one play call, writing what it outputs to the SID memory.
 
         A full-ghosting build outputs the ghost the previous call left, then
-        updates it.
+        updates it; a play-wrapper flush build starts from its all-zero ghost,
+        so its first frame carries a muted $D418.
         """
         out = self.regs
         if self._ghost is not None:
             out = list(self._ghost)
             self.regs = self._ghost
         self._play_call()
+        if self._wrapper_first:
+            out = list(out)
+            out[constants.MODE_VOL_REG] &= 0xF0
+            self._wrapper_first = False
         base = self.SID_BASE
         self._mem[base : base + constants.SID_REGISTERS] = bytes(v & 0xFF for v in out)
 

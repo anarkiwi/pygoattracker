@@ -12,7 +12,10 @@ documentation and `gplay.c`.
 on load exactly as GoatTracker 2.76 imports them — including GT1's inline
 instrument wavetables, synthesized pulse programs, filtertable conversion and
 0XY-arpeggio extraction — so they play and write back as GTS5. The writer always
-emits GTS5; GTS5 read → write round trips are byte-identical.
+emits GTS5; GTS5 read → write round trips are byte-identical. The one layout it
+cannot import — the V1.25 editor body with no filtertable, which uses the
+musicroutine command set — is native: `parse_gts1` round-trips it and
+`relocate` packs it for `Gt1Player`; see [gt1.md](gt1.md#v125-editor-songs).
 
 ## Container and detection notes
 

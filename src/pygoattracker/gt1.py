@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from pysidtracker import run_init
 from pysidtracker.mos6502 import disasm_len
@@ -17,6 +18,9 @@ from pysidtracker.mos6502 import disasm_len
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SidParseError
 from pygoattracker.sid import _load_image
+
+if TYPE_CHECKING:
+    from pygoattracker.model import Song
 
 PLAYER_ORG = 0x1000
 V15 = "1.5"
@@ -307,6 +311,12 @@ class Gt1Song:
         from pygoattracker import gt1sng
 
         return gt1sng.relocate(self)
+
+    def to_gt2(self) -> "Song":
+        """GoatTracker 2 import of this editor song (lossy, semantic)."""
+        from pygoattracker import gt1sng, legacy
+
+        return legacy.parse_gts1(gt1sng.write_gts1(self))
 
     def _sizes(self) -> dict:
         orders = [o for chans in self.orderlists for o in chans]

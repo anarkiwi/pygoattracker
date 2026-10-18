@@ -77,27 +77,46 @@ and orderlist command with each playroutine (and a sound effect for 11.2/11.4)
 and checks `Gt1Player` against the packed 6502 playroutine itself, frame for
 frame.
 
-## V1.25 editor songs
+## V1.x editor songs
 
-GoatTracker V1.25 (the pre-V1.4 editor using the musicroutines) saved `GTS!`
-editor songs with the V1.5x header but a different body: there is no 256-byte
-filtertable (an instrument's +6 byte is a direct filter freq/type value), the
-inline wavetables are `(wave, note)` pairs, and orderlists end in the `$FF`
-restart endmark (or, in the oldest saves, the `$FE` endmark the editor
-rewrites).
+Both V1.x editors saved `GTS!` songs: the V1.25 editor (musicroutines 11.x) and
+the V1.4b–V1.53 editors (standard playroutine). They share the body —
+name/author/copyright, orderlists, 31 instruments with inline `(wave, note)`
+wavetables, and patterns in editor rows — and differ in one place: the later
+editors append a 256-byte filtertable, 64 four-byte steps the playroutine glides
+through (step 0 starts the glide, each later step's fourth byte its duration).
+The layout is detected by that tail.
 
-`parse_gts1(data, player="11.3")` parses such a song into a `Gt1Song` whose
-`sng` field carries the raw 3×32 header, `write_gts1(song)` reproduces the
-file byte for byte, and `relocate(song)` ports the editor's F9 relocator:
-referenced patterns are packed into the musicroutine row form (sticky
-instruments, tempo data−1, timing marks cleared for 11.1/11.2, vibrato nybbles
-swapped, row and rest compression), instruments and wavetables are trimmed to
-what plays, and the player's author block (11.3–11.5) is stamped. `pack()`,
-`Gt1Player` and `to_sid` all operate on that packed form, byte-identical to
-what the editor itself wrote — `tests/test_gt1sng.py` checks all six
-`goatold.zip` example songs against that rule and against the 6502
-playroutine itself, with the GoatClassical example matched byte for byte to
-the GVSC release.
+`parse_gts1(data, player=None)` parses either layout into a `Gt1Song` whose
+`sng` field carries the raw 3×32 header (`player` pinned by the layout's
+default `11.3` / `1.53`), `write_gts1(song)` reproduces the file byte for
+byte, and `relocate(song)` ports the editor's F9 relocator
+(`relocator()` in the respective `goattrk.c`):
+
+* V1.25: referenced patterns are packed into the musicroutine row form
+  (sticky instruments, tempo data−1, timing marks cleared for 11.1/11.2,
+  vibrato nybbles swapped, row and rest compression), instruments and
+  wavetables are trimmed to what plays, and the player's author block
+  (11.3–11.5) is stamped. An instrument's +6 byte stays a direct filter
+  freq/type value, and the oldest saves' `$FE` endmark normalizes to the
+  `$FF` restart endmark.
+* V1.4b–V1.53: patterns gain the standard row form (tempo data−1 for
+  data ≥ 3, vibrato nybbles swapped, set-filter data × 4, arpeggio high bit
+  toggled), instruments the standard field form (pulse nibble split, pulse
+  bounds shifted down a nibble, filter × 4), and the filtertable is trimmed
+  to the highest referenced step plus one, its later steps' fourth byte × 4
+  and step 0 decremented one with wrap. Orderlist entries at `$D0` and above
+  are the playroutine's commands and pass through unreferenced; a subtune
+  with a dead channel — and, if all are dead, the whole file — is discarded,
+  and the deduped wavetable may not exceed 512 bytes.
+
+`pack()`, `Gt1Player` and `to_sid` all operate on that packed form,
+byte-identical to what the editor itself wrote: `tests/test_gt1sng.py` checks
+all six `goatold.zip` V1.25 songs and all six `goattrk.zip` V1.4b–V1.53 songs
+against that rule and the 6502 playroutine itself, with the GoatClassical and
+Dojo examples matched byte for byte to their GVSC releases.
+`Gt1Song.to_gt2()` (and `read_sng(..., convert=True)`) keeps GoatTracker 2.76's
+lossy GT2 import of the V1.4b–V1.53 layout; the V1.25 body is native only.
 
 ## HVSC coverage
 

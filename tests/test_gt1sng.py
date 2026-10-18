@@ -12,22 +12,29 @@ import pytest
 from pysidtracker.oracle import EmuPlayer
 
 from pygoattracker.errors import SngParseError, SngValidationError
-from pygoattracker.gt1 import Gt1Song, decompile_gt1
+from pygoattracker.gt1 import DEFAULT_PARAMS, Gt1Song, decompile_gt1
 from pygoattracker.gt1player import Gt1Player
 from pygoattracker.gt1sng import Gt1Sng, parse_gts1, relocate, write_gts1
-from tests._fixture_cache import GOATOLD_SONGS, goatold_song, goattrk_song
+from tests._fixture_cache import (
+    GOATTRK_SONGS,
+    GOATOLD_SONGS,
+    goatold_song,
+    goattrk_song,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 ORACLE_SID = "MUSICIANS/C/Cadaver/GoatTracker_Classical_Example.sid"
+DOJO_SID = "MUSICIANS/C/Cadaver/Dojo.sid"
 SONGS = sorted(GOATOLD_SONGS)
+V153_SONGS = sorted(GOATTRK_SONGS)
 
 
-def _oracle_sid() -> Path:
+def _oracle_sid(relpath: str = ORACLE_SID) -> Path:
     sys.path.insert(0, str(REPO / "scripts"))
     import fetch_tunes
     from pysidtracker.testing import resolve_tune
 
-    path = resolve_tune(ORACLE_SID, cache_dir=fetch_tunes.CACHE)
+    path = resolve_tune(relpath, cache_dir=fetch_tunes.CACHE)
     if path is None:
         pytest.skip("oracle sid unavailable (no local HVSC tree, mirror offline)")
     return Path(path)
@@ -46,6 +53,7 @@ def _sng(
     author=b"AUTHOR",
     copyright_text=b"CC",
     magic=b"GTS!",
+    filtertable=None,
 ):
     out = bytearray(magic)
     for text in (name, author, copyright_text):
@@ -68,6 +76,8 @@ def _sng(
     for body in patterns:
         out.append(len(body))
         out += bytes(body)
+    if filtertable is not None:
+        out += bytes(filtertable)[:256].ljust(256, b"\x00")
     return bytes(out)
 
 
@@ -213,8 +223,13 @@ def test_parse_rejects_bad_input():
         parse_gts1(_sng(patterns=[b"\x00\x00\x00\x00"]))
     with pytest.raises(SngParseError, match="trailing bytes"):
         parse_gts1(base + b"\x00" * 255)
-    with pytest.raises(SngParseError, match="filtertable"):
-        parse_gts1(base + b"\x00" * 256)
+    v153 = base + b"\x00" * 256
+    song = parse_gts1(v153)
+    assert song.player == "1.53" and len(song.filtertable) == 256
+    with pytest.raises(SngParseError, match="V1.5x"):
+        parse_gts1(v153, "11.3")
+    with pytest.raises(SngParseError, match="11.x"):
+        parse_gts1(base, "1.50")
 
 
 def test_parse_rejects_bad_limits():
@@ -233,21 +248,23 @@ def test_parse_rejects_bad_limits():
         parse_gts1(truncated)
 
 
-def test_legacy_reader_directs_to_native_parser():
+def test_reader_reads_gts1_natively():
     from pygoattracker.reader import parse_sng
 
-    with pytest.raises(SngParseError, match="parse_gts1"):
-        parse_sng(goatold_song("GOATCLAS.SNG"))
+    assert isinstance(parse_sng(goatold_song("GOATCLAS.SNG")), Gt1Song)
+    assert isinstance(parse_sng(goattrk_song("examples/dojo.sng")), Gt1Song)
 
 
-def test_v153_layout_still_imports_through_gt2_path():
+def test_v153_layout_reads_natively_and_gt2_import_remains():
     v153 = goattrk_song("examples/dojo.sng")
     assert v153[:4] == b"GTS!"
-    with pytest.raises(SngParseError, match="filtertable"):
-        parse_gts1(v153)
+    song = parse_gts1(v153)
+    assert song.player == "1.53" and len(song.filtertable) == 256
+    assert write_gts1(song) == v153
     from pygoattracker.reader import parse_sng
 
-    assert parse_sng(v153).name  # the GT2 import path accepts the layout
+    assert isinstance(parse_sng(v153), Gt1Song)
+    assert parse_sng(v153, convert=True).name  # the GT2 import path still accepts it
 
 
 def test_header_fields_are_raw_bytes():
@@ -271,3 +288,261 @@ def test_author_block_per_playroutine():
 def test_playback_matches_6502_for_each_playroutine(player):
     song = parse_gts1(goatold_song("GOATCLAS.SNG"), player)
     assert Gt1Player(song).render_grid(120) == emulated(song, 120)
+
+
+def _v153(**kw):
+    """A V1.4b-V1.53-layout editor song with the shared ``_sng`` defaults."""
+    kw.setdefault("filtertable", bytes(256))
+    return parse_gts1(_sng(name=b"V153", **kw))
+
+
+_FILLER = (bytes(7), len(_EMPTY_WAVE), bytes(16), _EMPTY_WAVE)
+
+
+@pytest.mark.parametrize("name", V153_SONGS)
+def test_v153_parse_and_round_trip(name):
+    data = goattrk_song(name)
+    song = parse_gts1(data)
+    assert song.player == "1.53"
+    assert len(song.instruments) == 31
+    assert len(song.filtertable) == 256
+    assert write_gts1(song) == data
+
+
+@pytest.mark.parametrize("name", V153_SONGS)
+def test_v153_playback_matches_6502_playroutine(name):
+    song = parse_gts1(goattrk_song(name))
+    assert Gt1Player(song).render_grid(300) == emulated(song, 300)
+
+
+def test_dojo_matches_hvsc_sid():
+    """The relocator must reproduce the editor's packed tune byte for byte."""
+    sid = _oracle_sid(DOJO_SID).read_bytes()
+    image = sid[0x7E:]
+    song = parse_gts1(goattrk_song("examples/dojo.sng"))
+    assert relocate(song).pack() == (0x1000, image)
+    decoded = decompile_gt1(sid)
+    assert decoded.player == "1.53"
+    assert Gt1Player(song).render_grid(300) == Gt1Player(decoded).render_grid(300)
+
+
+@pytest.mark.parametrize("player", ("1.50", "1.50b", "1.51", "1.52"))
+def test_v153_playback_matches_6502_for_each_player(player):
+    song = parse_gts1(goattrk_song("examples/dojo.sng"), player)
+    assert Gt1Player(song).render_grid(120) == emulated(song, 120)
+
+
+def test_v153_instrument_conversion_and_dedup():
+    i1 = (
+        b"\x09\x08\x80\x20\x40\xc0\x01",
+        4,
+        b"BASS" + b"\x00" * 12,
+        b"\x41\x00\xff\x00",
+    )
+    i2 = (
+        b"\x22\x33\x41\x00\x10\x0f\x03",
+        4,
+        b"KOTO" + b"\x00" * 12,
+        b"\x21\x00\xff\x00",
+    )
+    song = _v153(
+        instruments=[i1, i2] + [_FILLER] * 29,
+        patterns=[bytes((0x30, 0x08, 0x00, 0x31, 0x10, 0x00)) + _END_ROW],
+    )
+    packed = relocate(song)
+
+    def fields(ins):
+        return (
+            ins.attack_decay,
+            ins.sustain_release,
+            ins.pulse,
+            ins.pulse_speed,
+            ins.pulse_low,
+            ins.pulse_high,
+            ins.filter,
+            ins.wave_ptr,
+        )
+
+    assert fields(packed.instruments[0]) == (
+        0x09,
+        0x08,
+        0x08,
+        0x20,
+        0x04,
+        0x0C,
+        0x04,
+        1,
+    )
+    assert fields(packed.instruments[1]) == (
+        0x22,
+        0x33,
+        0x04,
+        0x01,
+        0x01,
+        0x00,
+        0x0C,
+        3,
+    )
+    assert packed.wavetable == [(0x41, 0), (0xFF, 0), (0x21, 0), (0xFF, 0)]
+
+
+def test_v153_pattern_commands():
+    rows = bytes(
+        (
+            0x30,
+            0x07,
+            0x9E,  # settempo: decrement, keep funktempo bit
+            0x31,
+            0x07,
+            0xF0,  # timing mark: above 0xEF, untouched
+            0x32,
+            0x07,
+            0x02,  # funktempo below 3: untouched
+            0x33,
+            0x34,
+            0x71,  # vibrato: nybble swap
+            0x34,
+            0x15,
+            0x21,  # setfilter: x4
+            0x35,
+            0x30,
+            0x05,  # arpeggio: toggle high bit
+            0x36,
+            0x30,
+            0x00,  # arpeggio zero: untouched
+        )
+    )
+    song = _v153(patterns=[rows + _END_ROW])
+    assert relocate(song).patterns[0] == bytes(
+        (0x30, 0x07, 0x9D, 0x31, 0x07, 0xF0, 0x32, 0x07, 0x02)
+        + (0x33, 0x34, 0x17, 0x34, 0x15, 0x84, 0x35, 0x30, 0x85, 0x36, 0x30, 0x00, 0xFF)
+    )
+
+
+def test_v153_tempo_dedup_and_packed_rests():
+    rows = bytes((0x30, 0x07, 0x05, 0x31, 0x07, 0x05))
+    song = _v153(patterns=[rows + _END_ROW])
+    assert relocate(song).patterns[0] == b"\x30\x07\x04\x91\xff"
+    rests = _REST_ROW * 4 + _END_ROW
+    song = _v153(patterns=[rests])
+    assert relocate(song).patterns[0] == b"\x5f\x00\x00\xfe\xbf\xff"
+
+
+def test_v153_filter_amount_from_instrument_and_filtertable():
+    table = bytearray(256)
+    table[0:4] = bytes((0xF7, 0x04, 0x00, 0x00))  # step 0: both wraps, amount 0
+    table[8:12] = bytes((0x11, 0x22, 0x33, 0x1A))  # step 2: x4, amount 26
+    i1 = (bytes(6) + b"\x06", 4, bytes(16), b"\x21\x00\xff\x00")  # filter amount 6
+    rows = bytes((0x30, 0x15, 0x03, 0x31, 0x00, 0x00))  # setfilter amount 3
+    song = _v153(
+        instruments=[i1] + [_FILLER] * 30,
+        patterns=[rows + _END_ROW],
+        filtertable=bytes(table),
+    )
+    filtered = relocate(song).filtertable
+    assert len(filtered) == 4 * (0x1A + 1)
+    assert filtered[0:4] == bytes((0xF7, 0x04, 0xFF, 0xFF))
+    assert filtered[8:12] == bytes((0x11, 0x22, 0x33, 0x68))
+
+
+def test_v153_filter_amount_overflow_rejected():
+    i1 = (bytes(6) + b"\x40", 4, bytes(16), b"\x21\x00\xff\x00")
+    song = _v153(instruments=[i1] + [_FILLER] * 30)
+    with pytest.raises(SngValidationError, match="256"):
+        relocate(song)
+
+
+def test_v153_skips_empty_songs_and_channels():
+    song = _v153(
+        orderlists=[
+            [b"\xff\x00"] * 3,  # empty subtune: discarded
+            [b"\x00\xff\x00"] * 3,  # kept
+            [b"\x00\xff\x00", b"\xff\x00", b"\xff\x00"],  # a dead channel: discarded
+        ]
+    )
+    assert relocate(song).orderlists == [[b"\x00\xff\x00"] * 3]
+    dead = _v153(orderlists=[[b"\xff\x00"] * 3, [b"\xff\x00"] * 3])
+    with pytest.raises(SngValidationError, match="discard"):
+        relocate(dead)
+
+
+def test_v153_orderlist_commands_pass_through():
+    body = _REST_ROW + _END_ROW
+    song = _v153(
+        orderlists=[[b"\x00\xe2\x01\xff\x89"] * 3],
+        patterns=[body] * 2,
+    )
+    packed = relocate(song)
+    assert packed.orderlists == [[b"\x00\xe2\x01\xff\x89"] * 3]
+    assert len(packed.patterns) == 2
+    song = _v153(orderlists=[[b"\x00\xff\x00"] * 3])
+    song.orderlists[0][0] = b"\x02\xff\x00"
+    with pytest.raises(SngValidationError, match="reference pattern"):
+        relocate(song)
+
+
+def test_v153_wavetable_limit():
+    waves = []
+    for num in range(31):
+        wave = (
+            bytes(w for i in range(17) for w in ((num + i + 1) & 0x7F, 0)) + b"\xff\x00"
+        )
+        waves.append((bytes(7), len(wave), bytes(16), wave))
+    song = _v153(instruments=waves, patterns=[bytes((0x30, 0xF8, 0)) + _END_ROW])
+    with pytest.raises(SngValidationError, match="512"):
+        relocate(song)
+
+
+def test_v153_old_endmark_normalizes():
+    song = _v153(orderlists=[[b"\x00\xfe"] * 3])
+    assert relocate(song).orderlists == [[b"\x00\xff\x00"] * 3]
+
+
+def test_v153_writer_requires_full_filtertable():
+    song = _v153()
+    song.filtertable = bytes(128)
+    with pytest.raises(SngValidationError, match="256"):
+        write_gts1(song)
+
+
+def test_v153_relocate_is_idempotent_and_inert_for_packed_songs():
+    song = _v153()
+    once = relocate(song)
+    assert once.sng is None
+    assert relocate(once) is once
+    assert once.address == 0x1000 and once.pack()[0] == 0x1000
+
+
+def test_v153_author_and_default_params():
+    song = _v153(author=b"Cadaver")
+    packed = relocate(song)
+    assert packed.params == DEFAULT_PARAMS
+    assert packed.author == b"Cadaver" + b" " * 25
+    assert packed.player == "1.53"
+
+
+def test_v153_state_and_data_come_from_the_playroutine_reference():
+    from pygoattracker.gt1 import reference
+
+    song = _v153()
+    packed = relocate(song)
+    ref = reference("1.53")
+    assert packed.state == {pos: ref.code[pos] for pos in ref.free}
+    assert packed.data == ref.code[ref.code_end :]
+
+
+def test_to_gt2_matches_legacy_import():
+    from pygoattracker.reader import parse_sng
+
+    data = goattrk_song("examples/dojo.sng")
+    assert parse_gts1(data).to_gt2().name == parse_sng(data, convert=True).name
+    assert parse_sng(data).to_gt2().name == "Dojo"
+
+
+def test_to_gt2_requires_an_editor_song():
+    song = parse_gts1(goattrk_song("examples/dojo.sng"))
+    with pytest.raises(SngValidationError):
+        relocate(song).to_gt2()
+    v125 = parse_gts1(goatold_song("GOATCLAS.SNG"))
+    with pytest.raises(SngParseError):
+        v125.to_gt2()

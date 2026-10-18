@@ -1,9 +1,4 @@
-"""Read GoatTracker 2 .SNG files into :class:`~pygoattracker.model.Song`.
-
-The byte layout follows GoatTracker 2.76 ``readme.txt`` section 6.1 and
-matches ``gsong.c``: header, orderlists per subtune/channel, instruments,
-the four tables, then patterns.
-"""
+"""Read GoatTracker .SNG files into playable songs (GT2 ``Song`` or native ``Gt1Song``)."""
 
 from pysidtracker import ByteCursor, decode_cstr, read_bytes
 from pysidtracker import SidParseError as BaseSidParseError
@@ -95,15 +90,14 @@ def _parse_pattern(cur: _Cursor, num: int) -> Pattern:
     return Pattern(rows=rows)
 
 
-def parse_sng(data: bytes, finevibrato: bool = True) -> Song:
-    """Parse .SNG bytes into a :class:`~pygoattracker.model.Song`.
+def parse_sng(data: bytes, finevibrato: bool = True, convert: bool = False):
+    """Parse .SNG bytes into a playable song.
 
-    All GoatTracker song generations are accepted: GTS5/GTS4/GTS3,
-    GTS2 (early 3-table GoatTracker 2) and GTS! (GoatTracker 1.x).
-    Pre-GTS5 songs are converted on load exactly as GoatTracker 2.76
-    imports them, so they only round-trip semantically, not
-    byte-identically. ``finevibrato`` selects how old GTS2 vibrato
-    parameters convert (the editor's default is on).
+    GTS5/GTS4/GTS3 and GTS2 yield a GT2 :class:`~pygoattracker.model.Song`
+    (converted on load as GoatTracker 2.76 imports them). GTS! (GoatTracker
+    1.x, both editor layouts) parses natively to a :class:`Gt1Song`; pass
+    ``convert=True`` to get the lossy GT2 import instead. ``finevibrato``
+    selects how old GTS2 vibrato parameters convert (the editor's default).
     """
     magic = bytes(data[:4])
     if magic not in constants.SNG_COMPATIBLE_MAGICS:
@@ -114,7 +108,11 @@ def parse_sng(data: bytes, finevibrato: bool = True) -> Song:
         from pygoattracker import legacy
 
         if magic == b"GTS!":
-            return legacy.parse_gts1(data)
+            if convert:
+                return legacy.parse_gts1(data)
+            from pygoattracker import gt1sng
+
+            return gt1sng.parse_gts1(data)
         return legacy.parse_gts2(data, finevibrato=finevibrato)
     cur = _Cursor(data)
     cur.take(4, "identifier")
@@ -171,6 +169,6 @@ def parse_sng(data: bytes, finevibrato: bool = True) -> Song:
     return song
 
 
-def read_sng(src, finevibrato: bool = True) -> Song:
+def read_sng(src, finevibrato: bool = True, convert: bool = False):
     """Read a .SNG from a path, bytes, or binary file-like object."""
-    return parse_sng(read_bytes(src), finevibrato=finevibrato)
+    return parse_sng(read_bytes(src), finevibrato=finevibrato, convert=convert)

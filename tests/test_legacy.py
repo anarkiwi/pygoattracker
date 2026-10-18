@@ -102,7 +102,7 @@ def build_gts1() -> bytes:
 
 @pytest.fixture(name="gts1")
 def gts1_fixture():
-    return parse_sng(build_gts1())
+    return parse_sng(build_gts1(), convert=True)
 
 
 def test_gts1_header(gts1):
@@ -138,7 +138,7 @@ def test_gts1_pulse_dedup(gts1):
     base = len(header(b"GTS!") + orderlists())
     size = 8 + 16 + 4  # params + name + two wavetable rows
     data[base + size + 2 : base + size + 6] = data[base + 2 : base + 6]
-    song = parse_sng(bytes(data))
+    song = parse_sng(bytes(data), convert=True)
     assert song.pulsetable == gts1.pulsetable
 
 

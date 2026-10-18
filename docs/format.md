@@ -7,15 +7,19 @@ Lasse Öörni (Cadaver). pygoattracker implements the GTS5 song format and the
 playroutine from first principles, following the GoatTracker 2.76 format
 documentation and `gplay.c`.
 
-`read_sng` reads every GoatTracker song generation: GTS5/GTS4/GTS3, GTS2 (early
-3-table GoatTracker 2.xx) and GTS! (GoatTracker 1.x). Old formats are converted
-on load exactly as GoatTracker 2.76 imports them — including GT1's inline
-instrument wavetables, synthesized pulse programs, filtertable conversion and
-0XY-arpeggio extraction — so they play and write back as GTS5. The writer always
-emits GTS5; GTS5 read → write round trips are byte-identical. The one layout it
-cannot import — the V1.25 editor body with no filtertable, which uses the
-musicroutine command set — is native: `parse_gts1` round-trips it and
-`relocate` packs it for `Gt1Player`; see [gt1.md](gt1.md#v125-editor-songs).
+`read_sng` reads every GoatTracker song generation: GTS5/GTS4/GTS3 and GTS2
+(early 3-table GoatTracker 2.xx) as the GT2 model, converted on load exactly
+as GoatTracker 2.76 imports them, and GTS! (GoatTracker 1.x) natively as a
+`Gt1Song`. The GTS2/GTS3 bodies keep the GT2 import path (inline instrument
+wavetables, synthesized pulse programs, 0XY-arpeggio extraction) so they play
+and write back as GTS5. Both `GTS!` layouts — the V1.25 musicroutine body and
+the V1.4b–V1.53 body with its 256-byte filtertable — round-trip byte for byte
+with `parse_gts1`/`write_gts1`, and `relocate` packs them for `Gt1Player`
+exactly as the editor's F9 relocator does;
+see [gt1.md](gt1.md#v1x-editor-songs). `read_sng(data, convert=True)` keeps
+GoatTracker 2.76's lossy GT2 import of the V1.4b–V1.53 layout as a `Song`; the
+V1.25 body is native only. The writer always emits GTS5; GTS5 read → write
+round trips are byte-identical.
 
 ## Container and detection notes
 

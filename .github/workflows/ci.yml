@@ -33,8 +33,6 @@ jobs:
         with:
           path: tests/.tunecache
           key: hvsc-tunes-${{ hashFiles('tests/data/hvsc_goattracker_sample.txt', 'scripts/fetch_tunes.py') }}
-      - name: Install dasm (assembles the GoatTracker V1.x playroutines)
-        run: sudo apt-get update && sudo apt-get install -y dasm
       - name: pytest + coverage (> 85%)
         run: pytest --cov=pygoattracker --cov-report=term-missing --cov-fail-under=85
 

@@ -104,3 +104,67 @@ def test_nt2_convert_lenient(tmp_path, capsys):
     captured = capsys.readouterr().out
     assert "dropped: DXY master volume command" in captured
     assert out.exists()
+
+
+def gt1_song_path(tmp_path):
+    from tests._fixture_cache import goattrk_song
+
+    path = tmp_path / "dojo.sng"
+    path.write_bytes(goattrk_song("examples/dojo.sng"))
+    return str(path)
+
+
+def test_info_gt1(tmp_path, capsys):
+    assert cli.main(["info", gt1_song_path(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "GoatTracker V1.x editor song" in out
+    assert "player:      1.53" in out
+    assert "name:        Dojo" in out
+    assert "subtunes:    4" in out
+    assert "instruments: 31" in out
+    assert "01: Bass" in out
+
+
+def test_reglog_gt1(tmp_path, capsys):
+    out = tmp_path / "dojo.reglog"
+    code = cli.main(["reglog", gt1_song_path(tmp_path), str(out), "--seconds", "1"])
+    assert code == 0
+    assert str(out) in capsys.readouterr().out
+    writes = reglog.read_reglog(out)
+    assert len(writes) > 25
+    assert writes[0] == reglog.RegWrite(0, 0, 0)
+
+
+def test_wav_gt1(tmp_path, capsys, monkeypatch):
+    import pysidtracker.audio as ptaudio
+
+    monkeypatch.setattr(ptaudio, "resolve_device", lambda *_: FakeDevice())
+    out = tmp_path / "dojo.wav"
+    code = cli.main(["wav", gt1_song_path(tmp_path), str(out), "--seconds", "0.2"])
+    assert code == 0
+    assert str(out) in capsys.readouterr().out
+    with wave.open(str(out), "rb") as handle:
+        assert handle.getnframes() > 0
+
+
+def test_wav_gt1_bad_model(tmp_path, capsys, monkeypatch):
+    import pysidtracker.audio as ptaudio
+
+    def boom(*_):
+        raise ValueError("chip model must be one of a test value")
+
+    monkeypatch.setattr(ptaudio, "resolve_device", boom)
+    out = tmp_path / "dojo.wav"
+    assert cli.main(["wav", gt1_song_path(tmp_path), str(out)]) == 1
+    assert "chip model" in capsys.readouterr().err
+
+
+def test_nt2_convert_gt1(tmp_path, capsys):
+    out = tmp_path / "dojo.nt2"
+    path = gt1_song_path(tmp_path)
+    assert cli.main(["nt2", path, str(out)]) == 1
+    assert "free-running 1XY/2XY portamento" in capsys.readouterr().err
+    assert cli.main(["nt2", path, str(out), "--lenient"]) == 0
+    captured = capsys.readouterr().out
+    assert "dropped: free-running 1XY/2XY portamento" in captured
+    assert out.exists()

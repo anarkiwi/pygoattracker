@@ -44,9 +44,26 @@ GOATOLD_SONGS = {
     "TIMETEST.SNG": "31d4cd23c0c8732995dda81c6bd7e0eaea8defc2f71b6b67aa7e64982e58de0f",
 }
 
-# GoatTracker V1.53 editor example song (256-byte filtertable layout).
+# GoatTracker V1.53 editor example songs (256-byte filtertable layout).
 GOATTRK_SONGS = {
-    "examples/dojo.sng": "cee3451227d8cda831033af98d8c2dd4b73900a7c937c59bf3ee17571fc586bd",
+    "examples/2x_speed.sng": (
+        "6f0b53890d34af40feb582c1965077e0aa62626105a28b19bae7c33b4a42f501"
+    ),
+    "examples/dojo.sng": (
+        "cee3451227d8cda831033af98d8c2dd4b73900a7c937c59bf3ee17571fc586bd"
+    ),
+    "examples/funktest.sng": (
+        "76424e6ac976530e50327a87fda685c0c7573fe1089794a8e179b8e4280624bc"
+    ),
+    "examples/loader.sng": (
+        "30d62f3c3752ddbaa658c33c68b4f424029b5b5656ae029bb7ce36eba8cc0757"
+    ),
+    "examples/mwremix.sng": (
+        "1f84d1673cbc7b4cb7e4b1e05f071120904bb282a057cc43f64a958e9790c56a"
+    ),
+    "examples/nintendo.sng": (
+        "e652f7b206a74087500e4097f327b9d7d254389c3a0d15845e1dab7f21bb1302"
+    ),
 }
 
 EXAMPLE_SONGS = {

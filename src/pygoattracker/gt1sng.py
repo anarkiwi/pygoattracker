@@ -1,8 +1,7 @@
-"""GoatTracker V1.25 editor songs (``GTS!`` for musicroutines 11.1-11.5).
-
-Parses to a native :class:`Gt1Song`, round-trips byte-faithfully through
-``write_gts1``, and ``relocate`` ports the editor's F9 relocator so the
-packed tune matches the editor's output byte for byte.
+"""GoatTracker V1.x editor songs (``GTS!``): the V1.25 layout (11.1-11.5)
+and the V1.4b-V1.53 layout (the same plus a trailing 256-byte filtertable),
+both native as :class:`Gt1Song`: ``parse_gts1``, ``write_gts1``, and
+``relocate`` reproduce the editor's F9 relocator byte for byte.
 """
 
 from __future__ import annotations
@@ -15,10 +14,13 @@ from pysidtracker import SidParseError as BaseSidParseError
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.gt1 import (
+    DEFAULT_PARAMS,
     Gt1Instrument,
     Gt1Song,
     PLAYER_ORG,
     SEGMENTS_V11,
+    SEGMENTS_V15,
+    V15,
     reference,
 )
 
@@ -33,11 +35,15 @@ _LOOPSONG = 0xFF
 _OLD_ENDMARK = 0xFE
 _STRIP_TIMING = frozenset(("11.1", "11.2"))
 _AUTHOR_PLAYERS = frozenset(("11.3", "11.4", "11.5"))
+_V15_PATTREF = 208  # V1.4b-V1.53 MAX_PATT; orderlist entries above are commands
+_V15_FILT = 256
+_V15_FILTSTEPS = 64
+_V15_WAVETBL_MAX = 512
 
 
 @dataclass(frozen=True)
 class Gt1Sng:
-    """The raw V1.25 header fields: song name, author, copyright (NUL-trimmed)."""
+    """The raw V1.x header fields: song name, author, copyright (NUL-trimmed)."""
 
     name: bytes
     author: bytes
@@ -56,15 +62,16 @@ class _Cursor(ByteCursor):
             raise SngParseError(str(exc)) from exc
 
 
-def _require_musicroutine11(player: str) -> None:
+def _require_family(player: str, family: str, expected: str, layout: str) -> None:
+    """Validate ``player`` for an editor-song layout; load its reference code."""
     try:
-        family = PLAYERS[player]["family"]
+        actual = PLAYERS[player]["family"]
     except KeyError:
         raise SngParseError(f"unknown playroutine {player!r}") from None
-    if family != "11":
+    if actual != family:
         raise SngParseError(
-            f"playroutine {player!r} is not a musicroutine 11.x routine; "
-            "V1.25 editor songs require 11.1 to 11.5"
+            f"playroutine {player!r} is not {expected}; "
+            f"{layout} editor songs require {expected}"
         )
     reference(player)
 
@@ -78,13 +85,13 @@ def _endmark(blob: bytes) -> int:
     raise SngParseError(f"orderlist missing endmark, ends {bytes(blob[-2:])!r}")
 
 
-def parse_gts1(data: bytes, player: str = "11.3") -> Gt1Song:
-    """Parse a V1.25 ``GTS!`` editor song into a native :class:`Gt1Song`.
+def parse_gts1(data: bytes, player: str | None = None) -> Gt1Song:
+    """Parse a V1.x ``GTS!`` editor song into a native :class:`Gt1Song`.
 
-    ``player`` (11.1-11.5, default 11.3) fixes the musicroutine for
-    ``relocate``, ``Gt1Player`` and ``to_sid``.
+    Both editor layouts are accepted: V1.25 (musicroutines 11.1-11.5) and
+    V1.4b-V1.53 (the same plus a trailing 256-byte filtertable). ``player``
+    pins the playroutine (default ``11.3`` / ``1.53`` per layout).
     """
-    _require_musicroutine11(player)
     cur = _Cursor(data)
     magic = cur.take(4, "identifier")
     if magic != GTS1_MAGIC:
@@ -144,19 +151,24 @@ def parse_gts1(data: bytes, player: str = "11.3") -> Gt1Song:
             )
         patterns.append(blob)
     remaining = len(data) - cur.pos
-    if remaining == 256:
-        raise SngParseError(
-            "V1.4b-V1.53 layout (trailing 256-byte filtertable): read it with "
-            "the GoatTracker 2 import (parse_sng) instead"
-        )
-    if remaining:
+    if remaining == _V15_FILT:
+        filtertable = cur.take(_V15_FILT, "filtertable")
+        player = player or "1.53"
+        _require_family(player, V15, "a standard V1.5x routine", "V1.4b-V1.53")
+        segments, params = SEGMENTS_V15, DEFAULT_PARAMS
+    elif not remaining:
+        player = player or "11.3"
+        _require_family(player, "11", "a musicroutine 11.x routine", "V1.25")
+        filtertable, segments, params = b"", SEGMENTS_V11, ()
+    else:
         raise SngParseError(
             f"{remaining} unexpected trailing bytes at offset {cur.pos}"
         )
     for chans in orderlists:
         for blob in chans:
             for value in blob[: _endmark(blob)]:
-                if value >= num_patterns:
+                is_ref = not filtertable or value < _V15_PATTREF
+                if is_ref and value >= num_patterns:
                     raise SngParseError(
                         f"orderlist references pattern {value} but only "
                         f"{num_patterns} patterns are stored"
@@ -164,12 +176,13 @@ def parse_gts1(data: bytes, player: str = "11.3") -> Gt1Song:
     return Gt1Song(
         player=player,
         address=PLAYER_ORG,
-        params=(),
+        params=params,
         instruments=instruments,
         wavetable=wavetable,
+        filtertable=filtertable,
         orderlists=orderlists,
         patterns=patterns,
-        segments=SEGMENTS_V11,
+        segments=segments,
         sng=sng,
     )
 
@@ -178,7 +191,7 @@ def _instrument_rows(song: Gt1Song) -> list:
     """Per-instrument inline wavetable row counts from the flat-table pointers."""
     if len(song.instruments) != _MAX_INSTR:
         raise SngValidationError(
-            f"V1.25 editor songs carry {_MAX_INSTR} instruments, "
+            f"V1.x editor songs carry {_MAX_INSTR} instruments, "
             f"got {len(song.instruments)}"
         )
     pointers = [ins.wave_ptr for ins in song.instruments]
@@ -192,10 +205,13 @@ def _instrument_rows(song: Gt1Song) -> list:
 
 
 def write_gts1(song: Gt1Song) -> bytes:
-    """Serialize a V1.25 editor song (``song.sng`` set) back to ``GTS!`` bytes."""
+    """Serialize a V1.x editor song (``song.sng`` set) back to ``GTS!`` bytes.
+
+    :raises SngValidationError: if the song is packed or malformed.
+    """
     if song.sng is None:
         raise SngValidationError(
-            "not a V1.25 editor song: use parse_gts1 to read one first"
+            "not a V1.x editor song: use parse_gts1 to read one first"
         )
     orderlists = song.orderlists
     if not 1 <= len(orderlists) <= 32 or any(len(chans) != 3 for chans in orderlists):
@@ -240,6 +256,14 @@ def write_gts1(song: Gt1Song) -> bytes:
             raise SngValidationError("patterns must end in the $FF end row")
         out.append(len(blob))
         out += blob
+    if not song.filtertable:
+        return bytes(out)
+    if len(song.filtertable) != _V15_FILT:
+        raise SngValidationError(
+            f"V1.4b-V1.53 editor songs carry a {_V15_FILT}-byte filtertable, "
+            f"got {len(song.filtertable)} bytes"
+        )
+    out += song.filtertable
     return bytes(out)
 
 
@@ -247,26 +271,8 @@ def _swap_nybbles(value: int) -> int:
     return ((value & 0x0F) << 4) | (value >> 4)
 
 
-def _pack_pattern(src: bytes, rows: int, strip_timing: bool) -> bytes:
-    """Pack editor rows the way the editor's ``packpattern`` does."""
-    temp = []
-    instr = 0
-    for count in range(rows):
-        note = src[count * 3]
-        byte = src[count * 3 + 1]
-        data = src[count * 3 + 2]
-        if count and not byte & 0xF8:
-            byte |= instr
-        else:
-            instr = byte & 0xF8
-        if (byte & 7) == 7 and data < 0xC0:
-            data -= 1
-        elif (byte & 7) == 7 and strip_timing:
-            byte &= 0xF8
-            data = 0
-        if (byte & 7) == 4:
-            data = _swap_nybbles(data)
-        temp.append((note, byte, data))
+def _optimize(temp: list) -> bytes:
+    """The shared ``optimize`` phases: deduped rows, then packed rests."""
     stream = []
     command, databyte = -1, -1
     for note, byte, data in temp:
@@ -303,6 +309,53 @@ def _pack_pattern(src: bytes, rows: int, strip_timing: bool) -> bytes:
     return bytes(out)
 
 
+def _pack_pattern(src: bytes, rows: int, strip_timing: bool) -> bytes:
+    """Pack editor rows the way the V1.25 editor's ``packpattern`` does."""
+    temp = []
+    instr = 0
+    for count in range(rows):
+        note = src[count * 3]
+        byte = src[count * 3 + 1]
+        data = src[count * 3 + 2]
+        if count and not byte & 0xF8:
+            byte |= instr
+        else:
+            instr = byte & 0xF8
+        if (byte & 7) == 7 and data < 0xC0:
+            data -= 1
+        elif (byte & 7) == 7 and strip_timing:
+            byte &= 0xF8
+            data = 0
+        if (byte & 7) == 4:
+            data = _swap_nybbles(data)
+        temp.append((note, byte, data))
+    return _optimize(temp)
+
+
+def _pack_pattern_15(src: bytes, rows: int) -> bytes:
+    """Pack editor rows the way the V1.53 editor's ``packpattern`` does."""
+    temp = []
+    instr = 0
+    for count in range(rows):
+        note = src[count * 3]
+        byte = src[count * 3 + 1]
+        data = src[count * 3 + 2]
+        if count and not byte & 0xF8:
+            byte |= instr
+        else:
+            instr = byte & 0xF8
+        if (byte & 7) == 7 and data < 0xEF and (data & 0x7F) >= 3:
+            data -= 1
+        elif (byte & 7) == 4:
+            data = _swap_nybbles(data)
+        elif (byte & 7) == 5:
+            data = (data * 4) & 0xFF
+        elif (byte & 7) == 0 and data:
+            data ^= 0x80
+        temp.append((note, byte, data))
+    return _optimize(temp)
+
+
 def _wave_block(pairs: list) -> list:
     """The inline wavetable the relocator copies: through its first 0xFF row."""
     for index, (wave, _note) in enumerate(pairs):
@@ -311,16 +364,33 @@ def _wave_block(pairs: list) -> list:
     return list(pairs)
 
 
-def relocate(song: Gt1Song) -> Gt1Song:
-    """Pack a V1.25 editor song the way the editor's F9 relocator packs it.
+def _dedup(flat: list, block: list) -> int:
+    """The wavetable row (1-based) the relocator points the instrument at."""
+    for start in range(len(flat) - len(block) + 1):
+        if flat[start : start + len(block)] == block:
+            return start + 1
+    found = len(flat) + 1
+    if block:
+        flat.extend(block)
+    return found
 
-    Packed patterns use the musicroutine row form; instruments and
-    wavetables are trimmed as the relocator does. Songs without ``sng``
-    come back unchanged.
+
+def relocate(song: Gt1Song) -> Gt1Song:
+    """Pack a V1.x editor song the way the editor's F9 relocator packs it.
+
+    V1.25 keeps the musicroutine row and instrument forms; V1.4b-V1.53 gets
+    the standard playroutine forms, the deduped wavetable, and the
+    filtertable. Songs without ``sng`` come back unchanged.
     """
     if song.sng is None:
         return song
-    _require_musicroutine11(song.player)
+    if song.filtertable:
+        return _relocate_v153(song)
+    return _relocate_v125(song)
+
+
+def _relocate_v125(song: Gt1Song) -> Gt1Song:
+    _require_family(song.player, "11", "a musicroutine 11.x routine", "V1.25")
     strip_timing = song.player in _STRIP_TIMING
     highest = 0
     for chans in song.orderlists:
@@ -349,15 +419,7 @@ def relocate(song: Gt1Song) -> Gt1Song:
     for num in range(ninstr):
         ins = song.instruments[num]
         block = _wave_block(song.wavetable[offset : offset + rows[num]])
-        found = -1
-        if block:
-            for start in range(len(flat) - len(block) + 1):
-                if flat[start : start + len(block)] == block:
-                    found = start + 1
-                    break
-        if found < 0:
-            found = len(flat) + 1
-            flat.extend(block)
+        found = _dedup(flat, block)
         offset += rows[num]
         packed_instruments.append(
             Gt1Instrument(
@@ -399,4 +461,115 @@ def relocate(song: Gt1Song) -> Gt1Song:
         orderlists=orderlists,
         patterns=patterns,
         segments=SEGMENTS_V11,
+    )
+
+
+def _relocate_v153(song: Gt1Song) -> Gt1Song:
+    _require_family(song.player, V15, "a standard V1.5x routine", "V1.4b-V1.53")
+    orderlists = song.orderlists
+    if not 1 <= len(orderlists) <= 32 or any(len(chans) != 3 for chans in orderlists):
+        raise SngValidationError("orderlists must carry 3 channels per subtune")
+    highest = 0
+    for chans in orderlists:
+        for blob in chans:
+            for value in blob[: _endmark(blob)]:
+                if value < _V15_PATTREF:
+                    if value >= len(song.patterns):
+                        raise SngValidationError(
+                            f"orderlists reference pattern {value} but only "
+                            f"{len(song.patterns)} patterns are stored"
+                        )
+                    highest = max(highest, value)
+    rows = _instrument_rows(song)
+    patterns = []
+    instrmax = 0
+    for num in range(highest + 1):
+        blob = song.patterns[num]
+        rowcount = (len(blob) - 3) // 3
+        patterns.append(_pack_pattern_15(blob[:-3], rowcount))
+        instrmax = max(
+            instrmax, max((blob[3 * r + 1] & 0xF8 for r in range(rowcount)), default=0)
+        )
+    ninstr = max(instrmax // 8, 1)
+    flat = []
+    packed_instruments = []
+    offset = 0
+    for num in range(ninstr):
+        ins = song.instruments[num]
+        block = _wave_block(song.wavetable[offset : offset + rows[num]])
+        found = _dedup(flat, block)
+        offset += rows[num]
+        packed_instruments.append(
+            Gt1Instrument(
+                ins.attack_decay,
+                ins.sustain_release,
+                _swap_nybbles(ins.pulse & 0xFE),
+                (ins.pulse_speed & 0xFE) | (ins.pulse & 1),
+                ins.pulse_low >> 4,
+                ins.pulse_high >> 4,
+                (ins.filter * 4) & 0xFF,
+                found,
+            )
+        )
+    if len(flat) * 2 > _V15_WAVETBL_MAX:
+        raise SngValidationError(
+            f"wavetable needs {len(flat) * 2} bytes, over the "
+            f"{_V15_WAVETBL_MAX}-byte limit"
+        )
+    amount = 0
+    for ins in song.instruments:
+        amount = max(amount, ins.filter)
+    for blob in song.patterns:
+        for num in range((len(blob) - 3) // 3):
+            note, byte, data = blob[3 * num], blob[3 * num + 1], blob[3 * num + 2]
+            if note == _LOOPSONG:
+                break
+            if (byte & 7) == 5:
+                amount = max(amount, data)
+    for num in range(_V15_FILTSTEPS):
+        amount = max(amount, song.filtertable[num * 4 + 3])
+    amount += 1
+    size = 4 * amount
+    if size > _V15_FILT:
+        raise SngValidationError(
+            f"filtertable needs {size} bytes, over the {_V15_FILT}-byte limit"
+        )
+    filtered = bytearray(song.filtertable[:size])
+    for off in range(4, size, 4):
+        filtered[off + 3] = (filtered[off + 3] * 4) & 0xFF
+    filtered[2] = (filtered[2] - 1) & 0xFF
+    filtered[3] = (filtered[3] - 1) & 0xFF
+    kept = [chans for chans in orderlists if all(_endmark(blob) for blob in chans)]
+    if not kept:
+        raise SngValidationError(
+            "every subtune is empty; the editor discards such songs"
+        )
+    song_lists = []
+    for chans in kept:
+        packed = []
+        for blob in chans:
+            end = _endmark(blob)
+            packed.append(
+                blob[:end]
+                + b"\xff"
+                + (b"\x00" if end == len(blob) - 1 else blob[end + 1 : end + 2])
+            )
+        song_lists.append(packed)
+    ref = reference(song.player)
+    state = {pos: ref.code[pos] for pos in ref.free}
+    author = bytes(0x20 if byte == 0 else byte for byte in song.sng.author)
+    author = author.ljust(32, b" ")
+    return Gt1Song(
+        player=song.player,
+        address=song.address,
+        params=song.params,
+        author=author,
+        state=state,
+        data=bytes(ref.code[ref.code_end :]),
+        instruments=packed_instruments,
+        wavetable=flat,
+        filtertable=bytes(filtered),
+        orderlists=song_lists,
+        patterns=patterns,
+        segments=SEGMENTS_V15,
     )

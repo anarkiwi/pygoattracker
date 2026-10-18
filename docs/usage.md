@@ -164,7 +164,7 @@ See [format.md](format.md) for the conversion's mapping rules and limits.
 ## Command line
 
 ```bash
-pygoattracker info tune.sng        # also detects NinjaTracker 2 files
+pygoattracker info tune.sng        # also detects NinjaTracker 2 and GTS! (GoatTracker 1.x) files
 pygoattracker reglog tune.sng tune.reglog --seconds 30
 pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
 pygoattracker nt2 tune.sng tune.nt2 --lenient

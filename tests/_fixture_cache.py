@@ -9,9 +9,11 @@ filesystem reader extracts them.
 """
 
 import hashlib
+import io
 import os
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,21 @@ _GT1_URL = "https://cadaver.github.io/tools"
 GT1_ARCHIVES = {
     "goattrk.zip": "f12df334df5b1749fa0660575d63520a5e064ed254e4390cede6b03f9808ecef",
     "goatold.zip": "ef4ab3287bbb60be5cf5f323518a630e392650516bc23510b6a821acd3702233",
+}
+
+# GoatTracker V1.25 editor example songs (musicroutine 11.x layout).
+GOATOLD_SONGS = {
+    "BOFH.SNG": "b5042f224a178013240655badf406547ec55e7aad8fabd0a9d74808a9cc2ba26",
+    "DRUMTEST.SNG": "cfb0defe77036d8572d3addb6a6e8b3e2ac87ddb0ac65334e6f24aada13e4b90",
+    "EXAMPLE.SNG": "d7860d64b0d82d670b26a2c3ab9e5ab510cccce7523f2399664dda6533a0afa2",
+    "GOATCLAS.SNG": "99cb99aab743dd2c210edb90d5c7fbbbaebf128bb05ca58dcde9cfeb7372bec9",
+    "NINTENDO.SNG": "2f6a09895429771472051359bf4521244fefbe1ab9b7c587a26b7d6bdb59c298",
+    "TIMETEST.SNG": "31d4cd23c0c8732995dda81c6bd7e0eaea8defc2f71b6b67aa7e64982e58de0f",
+}
+
+# GoatTracker V1.53 editor example song (256-byte filtertable layout).
+GOATTRK_SONGS = {
+    "examples/dojo.sng": "cee3451227d8cda831033af98d8c2dd4b73900a7c937c59bf3ee17571fc586bd",
 }
 
 EXAMPLE_SONGS = {
@@ -84,6 +101,25 @@ def example_song(name: str) -> bytes:
 def gt1_archive(name: str) -> bytes:
     """Bytes of a pinned GoatTracker V1.x release archive (cached download)."""
     return _download(name, f"{_GT1_URL}/{name}", GT1_ARCHIVES[name])
+
+
+def _archive_member(archive: str, member: str, sha256: str) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(gt1_archive(archive))) as zin:
+        payload = zin.read(member)
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != sha256:
+        raise AssertionError(f"{archive}:{member}: checksum mismatch ({digest})")
+    return payload
+
+
+def goatold_song(name: str) -> bytes:
+    """Bytes of a pinned GoatTracker V1.25 example song (goatold.zip)."""
+    return _archive_member("goatold.zip", f"EXAMPLES/{name}", GOATOLD_SONGS[name])
+
+
+def goattrk_song(member: str) -> bytes:
+    """Bytes of a pinned GoatTracker V1.53 example song (goattrk.zip)."""
+    return _archive_member("goattrk.zip", member, GOATTRK_SONGS[member])
 
 
 def _sectors_per_track(track: int) -> int:

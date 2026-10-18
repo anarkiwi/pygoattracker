@@ -248,6 +248,8 @@ class Gt1Instrument:
     pulse_high: int = 0
     filter: int = 0
     wave_ptr: int = 0
+    # Editor-instrument name (V1.25 .sng); packed tunes carry none.
+    name: bytes = b""
 
     def to_bytes(self) -> bytes:
         """The packed 8-byte row."""
@@ -286,6 +288,8 @@ class Gt1Song:
     patterns: list = field(default_factory=list)
     initialized: bool = False
     segments: tuple = ()
+    # V1.25 editor-song marker (``gt1sng.parse_gts1``); makes ``pack`` run the relocator first.
+    sng: "Gt1Sng | None" = None
 
     def __post_init__(self):
         if not self.segments:
@@ -295,6 +299,14 @@ class Gt1Song:
     def ref(self) -> Reference:
         """The playroutine reference."""
         return reference(self.player)
+
+    def _packed(self) -> "Gt1Song":
+        """The song as it packs: editor songs run the F9 relocator first."""
+        if self.sng is None:
+            return self
+        from pygoattracker import gt1sng
+
+        return gt1sng.relocate(self)
 
     def _sizes(self) -> dict:
         orders = [o for chans in self.orderlists for o in chans]
@@ -310,6 +322,8 @@ class Gt1Song:
 
     def layout(self) -> dict:
         """Absolute addresses of the packed tables, laid out in :attr:`segments` order."""
+        if self.sng is not None:
+            return self._packed().layout()
         pos, starts = self.address + len(self.ref.code), {}
         sizes = self._sizes()
         for name in self.segments:
@@ -357,6 +371,8 @@ class Gt1Song:
 
     def pack(self) -> tuple[int, bytes]:
         """``(address, bytes)`` of the playroutine and song data, as the packer saves them."""
+        if self.sng is not None:
+            return self._packed().pack()
         lay = self.layout()
         orders = [o for chans in self.orderlists for o in chans]
         order_addrs = _offsets(lay["songs"], orders)
@@ -378,6 +394,8 @@ class Gt1Song:
 
     def to_sid(self, name: str = "", author: str = "", released: str = "") -> bytes:
         """A PSID v2 file playing this song, as the packer's SID output writes it."""
+        if self.sng is not None:
+            return self._packed().to_sid(name=name, author=author, released=released)
         address, data = self.pack()
         head = bytearray(0x7C)
         head[0:8] = b"PSID\x00\x02\x00\x7c"

@@ -512,6 +512,13 @@ def parse_gts1(data: bytes) -> Song:
         raise SngParseError(f"bad pattern count {num_patterns}")
     for num in range(num_patterns):
         converter.read_pattern(cur, num)
+    remaining = len(data) - cur.pos
+    if remaining == 0:
+        raise SngParseError(
+            "V1.25 (musicroutine 11.x) editor song without a 256-byte "
+            "filtertable: this converts the V1.4b-V1.53 GTS! layout; read it "
+            "with pygoattracker.parse_gts1 and play it with Gt1Player"
+        )
     filtertable = cur.take(256, "filtertable")
     if cur.pos != len(data):
         raise SngParseError(f"{len(data) - cur.pos} unexpected trailing bytes")

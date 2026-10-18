@@ -567,3 +567,14 @@ def test_player_uses_the_build_s_hard_restart_adsr():
     player = d.player()
     assert player.adparam == 0xFF01
     assert player.render_grid(60) != stock.render_grid(60)
+
+
+def test_player_uses_the_build_s_pulse_and_realtime_optimizations():
+    d = sid.decompile_sid(_minimal_packed())
+    stock = d.player()
+    assert (stock.optimize_pulse, stock.optimize_realtime) == (True, True)
+    d.info.build = dataclasses.replace(d.info.build, pulseopt=None, realtime=True)
+    assert d.player().optimize_pulse is True  # None stays the editor default
+    d.info.build = dataclasses.replace(d.info.build, pulseopt=False, realtime=False)
+    player = d.player()
+    assert (player.optimize_pulse, player.optimize_realtime) == (False, False)

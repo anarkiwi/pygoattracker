@@ -202,6 +202,27 @@ def test_hvsc_representatives(rel, expect):
     assert len(reparsed.instruments) == len(song.instruments)
 
 
+def test_wrapper_selected_player():
+    """Issue #34: a wrapper rewrites the play entry per song to pick a player.
+
+    Ewe_Woz_Ere_DX bundles two players. Songs 1-9 enter the wrapper-selected
+    build (zero-page ghost that the play wrapper flushes to the chip), which the
+    decoder must select -- not the frequency anchor it sees first. Songs 2 and 9
+    are the issue's named cases; they decode to the wrapper-flush build.
+    """
+    rel = "MUSICIANS/B/Bop/Ewe_Woz_Ere_DX.sid"
+    path = _resolve(rel)
+    if path is None:
+        pytest.skip(f"{rel} unavailable (local or mirror)")
+    raw = path.read_bytes()
+    for subtune in (1, 8):  # songs 2 and 9
+        result = sid.decompile_sid(raw, subtune=subtune)
+        assert (
+            result.info.wrapper_flush
+        ), f"song {subtune + 1}: the wrapper-selected ghost-flush build must be the one decoded"
+        assert result.player() is not None, f"song {subtune + 1}: no player"
+
+
 def test_hvsc_corpus_round_trips_through_the_typed_model():
     """Every sampled tune re-encodes from its typed song to its own packed bytes,
     and to the same Song (so the same .sng, where a .sng can hold it)."""

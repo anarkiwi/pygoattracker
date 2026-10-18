@@ -29,10 +29,10 @@ from pysidtracker import (
     SidError,
     SidHeader,
     SidImage,
+    detect_playroutine,
     find_code_all,
     init_effects,
     read_bytes,
-    run_init,
     trace_init,
 )
 from pysidtracker import parse_sid_header as _parse_sid_header
@@ -817,69 +817,122 @@ def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build)
     return typed.to_song(), info, typed
 
 
-def _initsongnum_cell(image):
-    """The cell a song's own ``mt_init`` stores the selected song to.
+def _all_anchors(image):
+    """Every maximal greloc frequency-table anchor in ``image``, in order.
 
-    The player's jump table (``jmp mt_init``, ``jmp mt_play``) sits before its
-    data; ``mt_init`` opens by storing its incoming ``A`` to the cell, the
-    operand of its first store. ``None`` when it tracks no such cell.
+    The :func:`_find_freq_hi_anchor` scan, one best ``(addr, firstnote,
+    length)`` per site, minus runs whose high column sits inside another's,
+    so an image bundling several players yields one anchor per module.
     """
-    anchor = _recognize(image)
-    if anchor is None:
-        return None
-    base = player_span(image, anchor[0]).start
+    data = bytes(image.mem)
+    hi = bytes(constants.FREQ_HI)
+    n = len(hi)
+    sites = {}
+    for firstnote in range(n - _FREQ_MIN_LEN + 1):
+        for pos in image.find_all(hi[firstnote : firstnote + _FREQ_MIN_LEN]):
+            length = 0
+            while (
+                firstnote + length < n
+                and pos + length < image.end
+                and data[pos + length] == hi[firstnote + length]
+            ):
+                length += 1
+            if length < _FREQ_MIN_LEN or pos - length < image.load:
+                continue
+            lo = pos - length
+            cur = sites.get(lo)
+            if cur is None or length > cur[2]:
+                sites[lo] = (lo, firstnote, length)
+    anchors = sorted(sites.values())
+    kept = []
+    for a in anchors:
+        if not any(
+            b[0] + b[2] <= a[0] + a[2] and a[0] + 2 * a[2] <= b[0] + 2 * b[2]
+            for b in kept
+        ):
+            kept.append(a)
+    return kept
+
+
+def _ini_cell(image, base):
+    """The cell a module's ``mt_init`` stores its incoming ``A`` to, per the
+    stock single-store idiom (``STA abs``/``STA zp`` first), else None."""
     if base is None:
         return None
     mem = image.mem
-    init_addr = mem[base + 1] | (mem[base + 2] << 8)
-    if mem[init_addr] in (0x85, 0x8D):  # STA abs / STA abs,X (X is 0 on entry)
-        return mem[init_addr + 1] | (mem[init_addr + 2] << 8)
+    ini = mem[base + 1] | (mem[base + 2] << 8)
+    if mem[ini] in (0x85, 0x8D):
+        return mem[ini + 1] | (mem[ini + 2] << 8)
     return None
 
 
-def _select_subtune(image, subtune, decoded, crunched):
-    """Header song ``subtune`` mapped to the player's own song selection.
+def _modules(image):
+    """``(anchor, song-cell)`` per player module of ``image``.
 
-    Runs init with ``A = subtune`` and reads the song cell so a wrapper that
-    remaps songs selects the subtune the player plays. A crunched image keeps
-    the literal song; an out-of-range selection raises :class:`SidParseError`.
+    One entry per module jump table found by :func:`player_span`: the
+    module's longest frequency-table anchor and the cell its ``mt_init``
+    first stores to (the stock idiom's 0-based per-module song).
     """
-    if not crunched:
-        cell = _initsongnum_cell(image)
-        if cell is not None:
-            effects = init_effects(image, subtune, watch=[cell])
-            subtune = effects.writes[cell].value if cell in effects.writes else subtune
-    if not 0 <= subtune < decoded:
+    modules = {}
+    for anchor in _all_anchors(image):
+        base = player_span(image, anchor[0]).start
+        cell = _ini_cell(image, base)
+        if cell is None:
+            continue
+        cur = modules.get(base)
+        if cur is None or anchor[2] > cur[0][2]:
+            modules[base] = (anchor, cell)
+    return list(modules.values())
+
+
+def _finish(decoded, song):
+    """``decoded`` narrowed to the selected song, else a clean ``SidParseError``."""
+    if not 0 <= song < len(decoded.song.subtunes):
         raise SidParseError(
-            f"no such subtune: the song selects subtune {subtune}, "
-            f"but the player decodes {decoded} subtune(s)"
+            f"no such subtune: the song selects subtune {song}, "
+            f"but the player decodes {len(decoded.song.subtunes)} subtune(s)"
         )
-    return subtune
+    decoded.subtune = song
+    return decoded
+
+
+def _select_song(image, default_anchor, subtune, modules):
+    """Decompile the module the player's own init selects for ``subtune``.
+
+    Init runs once with ``A = subtune`` on a private snapshot; the module is
+    the one whose ``mt_init`` stored to its song cell (last store wins), the
+    song its value; no claim falls back to default_anchor at the literal song.
+    """
+    effects = init_effects(image, subtune)
+    hits = [
+        (anchor, effects.writes[cell])
+        for anchor, cell in modules
+        if cell in effects.writes
+    ]
+    if hits:
+        anchor, write = max(hits, key=lambda pair: pair[1].pc)
+        song = write.value
+    else:
+        anchor, song = default_anchor, subtune
+    decoded = _decompile_any_songs(image, image.header, image.end, anchor, song)
+    return _finish(decoded, song)
 
 
 def decompile_sid(src, subtune=0) -> DecompiledSid:
     """Decompile a packed GoatTracker ``.sid`` into a :class:`DecompiledSid`.
 
-    ``src`` may be a path, ``bytes``, or a binary file object. Direct-load
-    images are inverted statically; crunched or relocated images have their
-    init routine run in a 6502 emulator first (requires :mod:`jennings`).
+    ``src`` may be a path, ``bytes``, or a binary file object. Crunched images
+    are unpacked via shared playroutine detection (emulated init); each header
+    song is resolved through the player's own init to its module and subtune.
     """
     raw = read_bytes(src)
     image = _load_image(raw)
-    header = image.header
-    dataend = image.end
-    anchor = _recognize(image)
-    crunched = anchor is None
-    if crunched:
-        run_init(image, subtune=subtune)
-        dataend = 0x10000
-        anchor = _recognize(image)
-    if anchor is None:
+    detection = detect_playroutine(image, _recognize, subtune=subtune)
+    if detection.anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
-    d = _decompile_any_songs(image, header, dataend, anchor, subtune)
-    d.subtune = _select_subtune(image, subtune, len(d.song.subtunes), crunched)
-    d.info.init_regs = init_regs(_load_image(raw), subtune)
-    return d
+    decoded = _select_song(image, detection.anchor, subtune, _modules(image))
+    decoded.info.init_regs = init_regs(_load_image(raw), subtune)
+    return decoded
 
 
 def init_regs(image, subtune=0) -> tuple:
@@ -915,14 +968,9 @@ def _candidate_song_counts(header):
 def _layout_candidates(image, header, anchor):
     """``(songtbl, songs, patt_lo)`` hypotheses to try, most-trusted first.
 
-    The song(order)-table's base and subtune count are first assumed to sit
-    immediately after the frequency table (``addr + 2*length``, the stock
-    gt2reloc layout) for each candidate subtune count -- reproducing the
-    established decode path for tunes that already resolve. They are then taken
-    from the player's *sequencer code* (:data:`_P_SONGTBL`), whose captured
-    ``mt_songtbllo``/``mt_songtblhi`` operands give the true base and count
-    (``songs = (songtblhi - songtbllo)/3``) for gt2reloc/player revisions whose
-    song data is not laid out right after the frequency table.
+    The stock layout (songtbl right after the frequency table) at the header
+    count comes first, then the in-span :data:`_P_SONGTBL` sequencer signature
+    (the player's stated base and count), then every stock candidate count.
     """
     addr, _firstnote, length = anchor
     songtbl0 = addr + 2 * length
@@ -934,15 +982,21 @@ def _layout_candidates(image, header, anchor):
             seen.add(cand)
             out.append(cand)
 
-    for songs in _candidate_song_counts(header):
-        add((songtbl0, songs, songtbl0 + 6 * songs))
+    if 1 <= header.songs <= constants.MAX_SONGS:
+        add((songtbl0, header.songs, songtbl0 + 6 * header.songs))
+    low = player_span(image, addr).start
+    low = low if low is not None else image.load
     for match in find_code_all(image, _P_SONGTBL):
+        if not low <= match.addr < addr:
+            continue
         lo, hi = match.captures["lo"], match.captures["hi"]
         if hi <= lo or (hi - lo) % 3:
             continue
-        songs = (hi - lo) // 3
-        if 1 <= songs <= constants.MAX_SONGS:
-            add((lo, songs, lo + 6 * songs))
+        n = (hi - lo) // 3
+        if 1 <= n <= constants.MAX_SONGS:
+            add((lo, n, lo + 6 * n))
+    for n in _candidate_song_counts(header):
+        add((songtbl0, n, songtbl0 + 6 * n))
     return out
 
 
@@ -981,11 +1035,16 @@ def _decompile(
     mem = image.mem
     code = player_span(image, anchor[0])
     build = read_build(code)
-    order_addrs = [
+    all_addrs = [
         mem[songtbl + i] | (mem[songtbl + 3 * songs + i] << 8) for i in range(3 * songs)
     ]
-    if any(not 0 < a < dataend for a in order_addrs):
+    # A player may declare more songs than it fills, so take the valid prefix.
+    i = 0
+    while i < len(all_addrs) and 0 < all_addrs[i] < dataend:
+        i += 1
+    if not i or i % 3:
         raise SidParseError("orderlist pointer out of range")
+    order_addrs = all_addrs[:i]
     orderlists = []
     order_end = 0
     order_start = min(order_addrs)

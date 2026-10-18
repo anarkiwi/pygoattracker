@@ -79,6 +79,18 @@ TUNES = {
     "hr_0f0f": ("MUSICIANS/D/DJ_Space/Contra_Jungle_Theme.sid", 1, 109.707),
     # one define at two sites voids only that define, not the hard restart.
     "hr_ambiguous_define": ("GAMES/M-R/Miner_Prophet_preview.sid", 1, 40.24),
+    # the build's pulse/realtime skips off: the editor's skips must not apply.
+    "burning_madness": ("MUSICIANS/N/Narciso/Burning_Madness.sid", 1, 108.61),
+    "monkey_island_2_bone_song": (
+        "MUSICIANS/N/Nordischsound/Monkey_Island_2-Bone_Song.sid",
+        1,
+        53.587,
+    ),
+    "terranigma_prime_blue": (
+        "MUSICIANS/N/Nordischsound/Terranigma-Prime_Blue.sid",
+        1,
+        33.528,
+    ),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

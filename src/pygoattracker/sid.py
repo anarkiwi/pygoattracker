@@ -125,6 +125,7 @@ class PackedInfo:
     build: PlayerBuild = field(default_factory=PlayerBuild)
     state: PlayerState | None = None
     init_regs: tuple = ()
+    wrapper_flush: bool = False
 
 
 @dataclass
@@ -157,6 +158,7 @@ class DecompiledSid:
             state=info.state,
             default_tempo=build.deftempo,
             init_regs=info.init_regs,
+            wrapper_flush=info.wrapper_flush,
         )
 
     def repack(self) -> list[tuple[int, bytes, bytes]]:
@@ -896,24 +898,77 @@ def _finish(decoded, song):
     return decoded
 
 
-def _select_song(image, default_anchor, subtune, modules):
-    """Decompile the module the player's own init selects for ``subtune``.
+def _play_target(image, subtune):
+    """The play entry's target after the tune's own init for ``subtune``.
 
-    Init runs once with ``A = subtune`` on a private snapshot; the module is
-    the one whose ``mt_init`` stored to its song cell (last store wins), the
-    song its value; no claim falls back to default_anchor at the literal song.
+    A wrapper-selected build rewrites the play entry per song, so the target
+    comes from the init's own effects (a private snapshot), not the as-loaded
+    image.
     """
-    effects = init_effects(image, subtune)
-    hits = [
-        (anchor, effects.writes[cell])
-        for anchor, cell in modules
-        if cell in effects.writes
-    ]
-    if hits:
-        anchor, write = max(hits, key=lambda pair: pair[1].pc)
-        song = write.value
-    else:
-        anchor, song = default_anchor, subtune
+    h = image.header
+    play = h.play_address or h.real_load_address
+    lo, hi = play + 1, play + 2
+    effects = init_effects(image, subtune, watch={lo, hi})
+    lo_val = effects.writes[lo].value if lo in effects.writes else image.mem[lo]
+    hi_val = effects.writes[hi].value if hi in effects.writes else image.mem[hi]
+    return lo_val | (hi_val << 8)
+
+
+def _entered_anchor(image, candidates, subtune):
+    """The candidate player the tune's own play entry enters for ``subtune``.
+
+    The entered player's code span contains the (post-init) play target; a
+    secondary player bundled in the image has its own span and is not entered.
+    """
+    target = _play_target(image, subtune)
+    for anchor in candidates:
+        span = player_span(image, anchor[0])
+        if span.start is not None and span.start <= target < anchor[0]:
+            return anchor
+    return None
+
+
+def _wrapper_flush(image, subtune):
+    """Zero-page ghost the entered play wrapper flushes to the chip, or None.
+
+    A wrapper-selected build copies a zero-page ghost to the SID
+    (``ldx #24; lda ghost,x; sta $d400,x``) instead of the player writing the
+    chip directly. The ghost starts all-zero, so the first frame is muted.
+    """
+    target = _play_target(image, subtune)
+    mem = image.mem
+    for _ in range(4):
+        if mem[target] == 0x4C:  # JMP on to the wrapper (or the next hop)
+            target = mem[target + 1] | (mem[target + 2] << 8)
+            continue
+        break
+    hi = min(target + 0x40, image.end)
+    for spec in (
+        "A2 18 B5 {g} 9D 00 D4 CA 10",
+        "A2 00 B5 {g} 9D 00 D4 E8 E0 19 D0",
+    ):
+        for m in find_code_all(image, spec, start=target, end=hi):
+            return m.captures["g"]
+    return None
+
+
+def _select_song(image, default_anchor, subtune, modules):
+    """Decompile the player the tune's own init/play enters, for ``subtune``.
+
+    A wrapper-selected build rewrites the play entry per song, so the entered
+    player is decompiled (not the first recognised anchor); the song-claim
+    modules and the default anchor are the fallbacks, with the claim's song.
+    """
+    anchor = _entered_anchor(image, _all_anchors(image), subtune)
+    song = subtune
+    if anchor is None:
+        effects = init_effects(image, subtune)
+        hits = [(a, effects.writes[c]) for a, c in modules if c in effects.writes]
+        if hits:
+            anchor, write = max(hits, key=lambda pair: pair[1].pc)
+            song = write.value
+        else:
+            anchor = default_anchor
     decoded = _decompile_any_songs(image, image.header, image.end, anchor, song)
     return _finish(decoded, song)
 
@@ -1086,6 +1141,7 @@ def _decompile(
         mem, header, layout, anchor, orderlists, order_addrs, where, build
     )
     info.state = read_state(code, build)
+    info.wrapper_flush = _wrapper_flush(image, subtune) is not None
     return DecompiledSid(song, info, header, subtune, typed, image)
 
 

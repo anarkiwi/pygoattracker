@@ -16,7 +16,7 @@ from pysidtracker import run_init
 from pysidtracker.mos6502 import disasm_len
 
 from pygoattracker._gt1_refs import PLAYERS
-from pygoattracker.errors import SidParseError
+from pygoattracker.errors import SidParseError, SngParseError
 from pygoattracker.sid import _load_image
 
 if TYPE_CHECKING:
@@ -139,7 +139,9 @@ def _instructions(code: bytes, author, end: int):
 @lru_cache(maxsize=None)
 def reference(name: str) -> Reference:
     """The preprocessed reference for playroutine ``name``."""
-    entry = PLAYERS[name]
+    entry = PLAYERS.get(name)
+    if entry is None:
+        raise SngParseError(f"unknown playroutine {name!r}")
     code, author = entry["code"], entry["author"]
     relocs, params, end = _walk(code, author)
     wild = set()

@@ -14,11 +14,19 @@ from pysidtracker.oracle import EmuPlayer
 from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.gt1 import DEFAULT_PARAMS, Gt1Song, decompile_gt1
 from pygoattracker.gt1player import Gt1Player
-from pygoattracker.gt1sng import Gt1Sng, parse_gts1, relocate, write_gts1
+from pygoattracker.gt1sng import (
+    Gt1Sng,
+    LAYOUT_V093,
+    parse_gts1,
+    relocate,
+    write_gts1,
+)
 from tests._fixture_cache import (
+    GOATTRK093_SONGS,
     GOATTRK_SONGS,
     GOATOLD_SONGS,
     goatold_song,
+    goattrk093_song,
     goattrk_song,
 )
 
@@ -26,6 +34,7 @@ REPO = Path(__file__).resolve().parent.parent
 ORACLE_SID = "MUSICIANS/C/Cadaver/GoatTracker_Classical_Example.sid"
 DOJO_SID = "MUSICIANS/C/Cadaver/Dojo.sid"
 SONGS = sorted(GOATOLD_SONGS)
+V093_SONGS = sorted(GOATTRK093_SONGS)
 V153_SONGS = sorted(GOATTRK_SONGS)
 
 
@@ -78,6 +87,26 @@ def _sng(
         out += bytes(body)
     if filtertable is not None:
         out += bytes(filtertable)[:256].ljust(256, b"\x00")
+    return bytes(out)
+
+
+def _v093_body(
+    wave=b"\x01\x00\x00\x00", orderlist=b"\x00\xff", pattern=b"\x5f\x00\x00\xff\x00\x00"
+):
+    """A hand-built V0.9x body: ``$00``-terminated wavetables, orderlist
+    ``[entries][endmark]`` (no restart byte), independent of the fixtures."""
+    out = bytearray(b"GTS!")
+    for text in (b"NAME", b"AUTHOR", b"CC"):
+        out += text.ljust(32, b"\x00")
+    out.append(1)
+    for _ in range(3):
+        out.append(len(orderlist) - 1)
+        out += orderlist
+    for _ in range(31):
+        out += bytes(7) + bytes((len(wave),)) + b"\x00" * 16 + wave
+    out.append(1)
+    out.append(len(pattern))
+    out += pattern
     return bytes(out)
 
 
@@ -288,6 +317,63 @@ def test_author_block_per_playroutine():
 def test_playback_matches_6502_for_each_playroutine(player):
     song = parse_gts1(goatold_song("GOATCLAS.SNG"), player)
     assert Gt1Player(song).render_grid(120) == emulated(song, 120)
+
+
+@pytest.mark.parametrize("member", V093_SONGS)
+def test_v093_parse_and_round_trip(member):
+    data = goattrk093_song(member)
+    song = parse_gts1(data)
+    assert song.sng is not None and song.sng.layout == LAYOUT_V093
+    assert song.player == "0.93"
+    assert "filtertable" not in song.segments
+    assert len(song.instruments) == 31
+    assert write_gts1(song) == data
+
+
+@pytest.mark.parametrize("member", V093_SONGS)
+def test_v093_is_native_only(member):
+    song = parse_gts1(goattrk093_song(member))
+    with pytest.raises(SngValidationError, match="native-only"):
+        relocate(song)
+    for call in (song.pack, song.to_sid):
+        with pytest.raises(SngValidationError, match="native-only"):
+            call()
+    with pytest.raises(SngParseError, match="playroutine"):
+        Gt1Player(song)
+    with pytest.raises(SngParseError):
+        song.to_gt2()
+
+
+def test_reader_reads_v093_natively_and_gt2_import_rejects():
+    from pygoattracker.reader import parse_sng
+
+    data = goattrk093_song("examples/example.sng")
+    assert isinstance(parse_sng(data), Gt1Song)
+    with pytest.raises(SngParseError):
+        parse_sng(data, convert=True)
+
+
+def test_v093_layouts_stay_distinct():
+    assert parse_gts1(goattrk093_song("examples/example.sng")).sng.layout == LAYOUT_V093
+    assert parse_gts1(goatold_song("GOATCLAS.SNG")).sng.layout == "1.25"
+    assert parse_gts1(goattrk_song("examples/dojo.sng")).sng.layout == "1.4b-V1.53"
+
+
+def test_v093_detection_is_by_wavetable_terminator_not_fixture():
+    body = _v093_body(wave=b"\x01\x00\x00\x00", orderlist=b"\x00\xff")
+    assert parse_gts1(body).sng.layout == LAYOUT_V093
+    assert write_gts1(parse_gts1(body)) == body
+    v125 = _v093_body(wave=b"\x01\x00\xff\x00", orderlist=b"\x00\xff\x00")
+    assert parse_gts1(v125).sng.layout == "1.25"
+
+
+def test_v093_rejects_bad_bodies():
+    with pytest.raises(SngParseError, match="trailing bytes"):
+        parse_gts1(_v093_body() + b"\x00")
+    with pytest.raises(SngParseError, match="end row"):
+        parse_gts1(_v093_body(pattern=b"\x5f\x00\x00\x5f\x00\x00"))
+    with pytest.raises(SngParseError, match="references pattern"):
+        parse_gts1(_v093_body(orderlist=b"\x05\xff"))
 
 
 def _v153(**kw):

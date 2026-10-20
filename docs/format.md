@@ -12,14 +12,16 @@ documentation and `gplay.c`.
 as GoatTracker 2.76 imports them, and GTS! (GoatTracker 1.x) natively as a
 `Gt1Song`. The GTS2/GTS3 bodies keep the GT2 import path (inline instrument
 wavetables, synthesized pulse programs, 0XY-arpeggio extraction) so they play
-and write back as GTS5. Both `GTS!` layouts — the V1.25 musicroutine body and
-the V1.4b–V1.53 body with its 256-byte filtertable — round-trip byte for byte
-with `parse_gts1`/`write_gts1`, and `relocate` packs them for `Gt1Player`
-exactly as the editor's F9 relocator does;
-see [gt1.md](gt1.md#v1x-editor-songs). `read_sng(data, convert=True)` keeps
-GoatTracker 2.76's lossy GT2 import of the V1.4b–V1.53 layout as a `Song`; the
-V1.25 body is native only. The writer always emits GTS5; GTS5 read → write
-round trips are byte-identical.
+and write back as GTS5. The three `GTS!` layouts — the V0.9x body (no
+restart byte, `$00`-terminated wavetables), the V1.25 musicroutine body, and
+the V1.4b–V1.53 body with its 256-byte filtertable — all round-trip byte for
+byte with `parse_gts1`/`write_gts1`; `relocate` packs the V1.25 and
+V1.4b–V1.53 bodies for `Gt1Player` exactly as the editor's F9 relocator does
+(V0.9x is native-only). See [gt1.md](gt1.md#v1x-editor-songs).
+`read_sng(data, convert=True)` keeps GoatTracker 2.76's lossy GT2 import of
+the V1.4b–V1.53 layout as a `Song`; the V0.9x and V1.25 bodies are native
+only. The writer always emits GTS5; GTS5 read → write round trips are
+byte-identical.
 
 ## Container and detection notes
 

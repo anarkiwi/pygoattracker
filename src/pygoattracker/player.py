@@ -76,6 +76,7 @@ class _Channel:
     tempo: int = 0
     mute: bool = False
     gatetimer: int = 0
+    has_note: bool = False
 
 
 class Player(MemPlayer):
@@ -533,6 +534,7 @@ class Player(MemPlayer):
         chan.command = 0
         chan.vibdelay = iptr.vibdelay
         chan.cmddata = iptr.speed_ptr
+        chan.has_note = True
         if chan.newcommand == constants.CMD_TONEPORTA:
             return
         if iptr.firstwave:
@@ -637,13 +639,24 @@ class Player(MemPlayer):
             return True
         return False
 
-    def _tickn_command(self, chan: _Channel) -> None:
+    def _vibrato_arm_limit(self) -> int:
+        """Highest channel that has inited a note (>=0), so channel 0 always arms."""
+        limit = -1
+        for i, ch in enumerate(self._channels):
+            if ch.has_note and i > limit:
+                limit = i
+        return max(limit, 0)
+
+    def _tickn_command(self, channel: int, chan: _Channel) -> None:
         command = chan.command
         if command == constants.CMD_PORTAUP:
             self._porta_up(chan, chan.cmddata)
         elif command == constants.CMD_PORTADOWN:
             self._porta_down(chan, chan.cmddata)
         elif command == constants.CMD_DONOTHING:
+            # Vibrato is armed only up to the highest note channel; a rest channel above it is skipped.
+            if channel > self._vibrato_arm_limit():
+                return
             # Instrument vibrato (player.s mt_effect_0). Speed 0 = no vibrato AND
             # no vibdelay decrement (mt_effect_0's leading ``beq`` is before the
             # dec). vibdelay is channel-retained, reloaded only at note-init
@@ -809,7 +822,7 @@ class Player(MemPlayer):
                     self._stop()
             skip_tickn = self._wave_exec(channel, chan)
         if not skip_tickn and (not self.optimize_realtime or chan.tick):
-            self._tickn_command(chan)
+            self._tickn_command(channel, chan)
         # Pulse execution, with the editor's default skip optimizations.
         # A mid-frame stop request still finishes the frame, as in the
         # original (PLAY_STOP only becomes PLAY_STOPPED next call).

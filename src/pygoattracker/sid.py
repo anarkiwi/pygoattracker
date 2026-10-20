@@ -447,8 +447,10 @@ def _executed_length(mem, start, entry_points, limit=constants.MAX_TABLELEN):
     return max(reached), True
 
 
-def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
-    """Return the unique valid (flags, table lengths) tiling of the region."""
+def _solve_layout(
+    mem, region_start, region_end, num_instr, eps, build=None, pulsepref=None
+):
+    """Return the valid (flags, table lengths) tiling, breaking pulse/filter ties by ``pulsepref``."""
     region_len = region_end - region_start
     solutions = []
     for pulse in (0, 1):
@@ -471,11 +473,10 @@ def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
                         solutions.append(sol)
     if not solutions:
         raise SidParseError("could not segment packed instruments/tables")
-    # vib-vs-gate can be ambiguous (same K, same tiling): the player's code says
-    # which pair it reads, else a FIXEDPARAMS-suppressible pair is the vibrato's.
     build = build or PlayerBuild()
     solutions.sort(
         key=lambda s: (
+            pulsepref is not None and s["pulse"] != pulsepref,
             build.insvib is not None and s["vib"] != build.insvib,
             build.gatecol is not None and s["gate"] != build.gatecol,
             s["gate"],
@@ -749,6 +750,50 @@ def _detect_nowavedelay(wave_left):
     return not any(0x01 <= b <= 0x0F for b in wave_left)
 
 
+def _oracle_wave_writes(image, frames=30):
+    """The chnwave values the tune's own ``play`` code writes to the WAVE regs."""
+    try:
+        from pysidtracker import EmuPlayer
+    except Exception:
+        return set()
+    h = image.header
+    try:
+        emu = EmuPlayer(
+            image.image,
+            image.load,
+            h.init_address or h.real_load_address,
+            h.play_address or h.real_load_address,
+        )
+        grid = emu.render_grid(frames)
+    except Exception:
+        return set()
+    return {row[i] for row in grid for i in (4, 11, 18) if i < len(row) and row[i]}
+
+
+def _select_nowavedelay(image, mem, tstart, wlen):
+    """The build's NOWAVEDELAY, chosen by the player's observed WAVE writes.
+
+    A wave byte ``p`` executes as chnwave ``p`` (delayless) or ``p - 0x10``
+    (delayed); the candidate set the emulated player's writes land in wins.
+    ``None`` when the oracle is unavailable, silent, or the sets agree.
+    """
+    wave = mem[tstart : tstart + wlen]
+    if not any(0x01 <= b <= 0x0F for b in wave):
+        return 1  # no delay/silent rows at all: the build is delay-less
+    forms = {p for p in wave if 0x10 <= p <= 0xDF}
+    delayed = {p - 0x10 for p in forms}
+    if not forms or delayed == forms:
+        return None
+    written = _oracle_wave_writes(image)
+    if not written:
+        return None
+    support1 = len((written & forms) - delayed)
+    support0 = len((written & delayed) - forms)
+    if support1 == support0:
+        return None
+    return 1 if support1 > support0 else 0
+
+
 def _detect_simplepulse(pulse_left):
     """SIMPLEPULSE forces set-pulse rows to a 0x80 marker; the un-optimized
     player keeps the original 0x81-0xFE left byte."""
@@ -767,7 +812,9 @@ def _freq_table(mem, addr, firstnote, length):
     return tuple(table)
 
 
-def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build):
+def _build_song(
+    mem, header, sol, anchor, orderlists, order_addrs, where, build, nowavedelay=None
+):
     """The typed song, the editor-form :class:`Song` it states, and the info."""
     addr, firstnote, length = anchor
     songtbl, patt_lo, patt_addrs = where
@@ -796,7 +843,8 @@ def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build)
         gate_flags=any(v & 0xC0 for v in sol["arrays"].get("gatetimer", ())),
     )
     pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
-    nowavedelay = _detect_nowavedelay(mem[tstart : tstart + wlen])
+    if nowavedelay is None:
+        nowavedelay = _detect_nowavedelay(mem[tstart : tstart + wlen])
     simplepulse = _detect_simplepulse(pleft)
     subtunes = [
         Subtune(channels=orderlists[s * 3 : s * 3 + 3])
@@ -1131,17 +1179,23 @@ def _decompile(
         raise SidParseError("bad packed layout (instrument/table region empty)")
     num_instr = max((r.instrument for rows in patterns for r in rows), default=1)
     eps = _pattern_features(patterns)[1:]
-    # Exact-fit tiling first (established path); if no flag combination tiles the
-    # region, read the table bases directly from the player's table-access code.
+    pulsepref = any(
+        region_start < m.captures["v"] + 1 < region_end
+        for m in find_code_all(image, _P_PULSEPTR)
+    )
+    # Exact-fit tiling first; fall back to the player's table-access code if it fails.
     try:
-        layout = _solve_layout(mem, region_start, region_end, num_instr, eps, build)
+        layout = _solve_layout(
+            mem, region_start, region_end, num_instr, eps, build, pulsepref
+        )
     except SidParseError:
         layout = _chain_layout(image, mem, region_start, num_instr, region_end, eps)
         if layout is None:
             raise
     where = (songtbl, patt_lo, patt_addrs)
+    nowavedelay = _select_nowavedelay(image, mem, layout["tstart"], layout["wlen"])
     song, info, typed = _build_song(
-        mem, header, layout, anchor, orderlists, order_addrs, where, build
+        mem, header, layout, anchor, orderlists, order_addrs, where, build, nowavedelay
     )
     info.state = read_state(code, build)
     info.wrapper_flush = _wrapper_flush(image, subtune) is not None

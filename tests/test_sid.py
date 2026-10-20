@@ -578,3 +578,32 @@ def test_player_uses_the_build_s_pulse_and_realtime_optimizations():
     d.info.build = dataclasses.replace(d.info.build, pulseopt=False, realtime=False)
     player = d.player()
     assert (player.optimize_pulse, player.optimize_realtime) == (False, False)
+
+
+def _wave_mem(left: bytes, tstart=0x20) -> bytearray:
+    mem = bytearray(0x100)
+    mem[tstart : tstart + len(left)] = left
+    return mem
+
+
+def test_nowavedelay_is_chosen_from_the_observed_wave_writes(monkeypatch):
+    """NOWAVEDELAY is picked from the emulated player's WAVE writes, not from a
+    fingerprint of the byte table; each case feeds the oracle a write set."""
+    write = [set()]
+    memo = _wave_mem(bytes([0x09, 0x81, 0x41]))  # 0x09 delay row; forms {0x81, 0x41}
+    plain = _wave_mem(bytes([0x81, 0x41, 0x80, 0xE9]))  # no delay/silent rows
+
+    def oracle(_image):
+        return write[0]
+
+    monkeypatch.setattr(sid, "_oracle_wave_writes", oracle)
+
+    assert sid._select_nowavedelay(None, plain, 0x20, 4) == 1  # resolved pre-oracle
+    for observed, expected in (
+        ({0x81}, 1),  # wave byte written as-is
+        ({0x71}, 0),  # wave byte written minus $10
+        ({}, None),  # oracle silent: defer to the data heuristic
+        ({0x81, 0x71}, None),  # both candidates supported: indeterminate
+    ):
+        write[0] = observed
+        assert sid._select_nowavedelay(None, memo, 0x20, 3) == expected

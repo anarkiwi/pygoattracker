@@ -21,6 +21,7 @@ from pygoattracker.model import (
     PlayPattern,
     Repeat,
     Row,
+    Song,
     Subtune,
     Transpose,
 )
@@ -343,6 +344,60 @@ def test_live_vibrato_default_off_holds_gateoff_frequency():
     # Through the same gate-off window the held frequency is exactly note-1's
     # pitch -- the incoming instrument 2's vibrato is NOT applied.
     assert history[17:19] == [C4_FREQ, C4_FREQ]
+
+
+def _three_voice_vibrato_song() -> Song:
+    """Voices 0/1/2 each get their own pattern: 0 plays a note, 1 and 2 rest.
+
+    All share instrument 1, which carries a speed-table vibrato -- the packed
+    playroutine's per-channel effect arming is what the assertions exercise.
+    """
+    song = Song(name="M", author="T", copyright="2026")
+    song.wavetable.add(0x41, 0x00)
+    song.wavetable.add(constants.TABLEJUMP, 0x00)
+    idx = song.speedtable.add(3, 0x40)
+    song.instruments.append(
+        Instrument(
+            attack_decay=0x09,
+            sustain_release=0x00,
+            wave_ptr=1,
+            gateoff_timer=2,
+            first_wave=0x09,
+            vibrato_param=idx,
+            vibrato_delay=16,
+            name="VIB",
+        )
+    )
+    note_row = Row(note=note("A-4"), instrument=1)
+    song.patterns = [
+        Pattern(rows=[note_row] + [Row() for _ in range(7)]),
+        Pattern.empty(8),
+        Pattern.empty(8),
+    ]
+    song.subtunes = [
+        Subtune(
+            channels=[
+                Orderlist(entries=[PlayPattern(0)]),
+                Orderlist(entries=[PlayPattern(1)]),
+                Orderlist(entries=[PlayPattern(2)]),
+            ]
+        )
+    ]
+    return song
+
+
+def test_rest_channel_above_note_channel_holds_zero():
+    """A rest channel above the highest note channel does not vibrate.
+
+    The packed playroutine arms the continuous instrument-vibrato only up to and
+    including the highest channel that initialised a note. Voice 0 plays a note;
+    voices 1 and 2 are pure rests. With instrument 1 carrying a speed-table
+    vibrato, voice 0's gate-off frequency departs zero but voices 1 and 2 hold it.
+    """
+    song = _three_voice_vibrato_song()
+    assert any(f != 0 for f in freq_history(song, 12, voice=0))
+    assert all(f == 0 for f in freq_history(song, 12, voice=1))
+    assert all(f == 0 for f in freq_history(song, 12, voice=2))
 
 
 def test_portamento_up(song):

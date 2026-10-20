@@ -1,7 +1,7 @@
-"""GoatTracker V1.x editor songs (``GTS!``): the V1.25 layout (11.1-11.5)
-and the V1.4b-V1.53 layout (the same plus a trailing 256-byte filtertable),
-both native as :class:`Gt1Song`: ``parse_gts1``, ``write_gts1``, and
-``relocate`` reproduce the editor's F9 relocator byte for byte.
+"""GoatTracker V1.x editor songs (``GTS!``): the V0.9x, V1.25, and
+V1.4b-V1.53 layouts, native as :class:`Gt1Song`. ``parse_gts1``/``write_gts1``
+reproduce each body byte for byte; ``relocate`` ports the F9 relocator for
+the V1.25 and V1.4b-V1.53 bodies (V0.9x is native-only).
 """
 
 from __future__ import annotations
@@ -39,15 +39,24 @@ _V15_PATTREF = 208  # V1.4b-V1.53 MAX_PATT; orderlist entries above are commands
 _V15_FILT = 256
 _V15_FILTSTEPS = 64
 _V15_WAVETBL_MAX = 512
+# The three editor-song layouts, and the V0.9x body's limits (goattrk093).
+LAYOUT_V093 = "0.9x"
+LAYOUT_V125 = "1.25"
+LAYOUT_V153 = "1.4b-V1.53"
+_PLAYER_V093 = "0.93"
+_V093_WAVEMAX = 128  # MAX_WAVELEN*2: 64 rows, the last a $00-waveform endmark
+_V093_ENDMARKS = (_LOOPSONG, _OLD_ENDMARK)
 
 
 @dataclass(frozen=True)
 class Gt1Sng:
-    """The raw V1.x header fields: song name, author, copyright (NUL-trimmed)."""
+    """The raw V1.x header fields: song name, author, copyright (NUL-trimmed),
+    plus the editor-song layout the body was parsed from."""
 
     name: bytes
     author: bytes
     copyright: bytes
+    layout: str = LAYOUT_V125
 
 
 class _Cursor(ByteCursor):
@@ -88,22 +97,25 @@ def _endmark(blob: bytes) -> int:
 def parse_gts1(data: bytes, player: str | None = None) -> Gt1Song:
     """Parse a V1.x ``GTS!`` editor song into a native :class:`Gt1Song`.
 
-    Both editor layouts are accepted: V1.25 (musicroutines 11.1-11.5) and
-    V1.4b-V1.53 (the same plus a trailing 256-byte filtertable). ``player``
-    pins the playroutine (default ``11.3`` / ``1.53`` per layout).
+    Three layouts are accepted (V0.9x, V1.25, V1.4b-V1.53), detected from the
+    first orderlist and the tail. ``player`` pins the playroutine; V0.9x
+    songs are native-only (their playroutine is unportable).
     """
     cur = _Cursor(data)
     magic = cur.take(4, "identifier")
     if magic != GTS1_MAGIC:
         raise SngParseError(f"not a GoatTracker 1.x song (identifier {magic!r})")
-    sng = Gt1Sng(
-        cur.take(32, "song name").rstrip(b"\x00"),
-        cur.take(32, "author name").rstrip(b"\x00"),
-        cur.take(32, "copyright name").rstrip(b"\x00"),
-    )
+    name = cur.take(32, "song name").rstrip(b"\x00")
+    author = cur.take(32, "author name").rstrip(b"\x00")
+    copyright_ = cur.take(32, "copyright name").rstrip(b"\x00")
     num_subtunes = cur.u8("subtune count")
     if not 1 <= num_subtunes <= 32:
         raise SngParseError(f"bad subtune count {num_subtunes}")
+    if _detect_layout(data, cur.pos, num_subtunes) == LAYOUT_V093:
+        return _parse_v093(
+            cur, num_subtunes, Gt1Sng(name, author, copyright_, LAYOUT_V093)
+        )
+    sng = Gt1Sng(name, author, copyright_, LAYOUT_V125)
     orderlists = []
     for subtune in range(num_subtunes):
         chans = []
@@ -156,6 +168,7 @@ def parse_gts1(data: bytes, player: str | None = None) -> Gt1Song:
         player = player or "1.53"
         _require_family(player, V15, "a standard V1.5x routine", "V1.4b-V1.53")
         segments, params = SEGMENTS_V15, DEFAULT_PARAMS
+        sng = Gt1Sng(sng.name, sng.author, sng.copyright, LAYOUT_V153)
     elif not remaining:
         player = player or "11.3"
         _require_family(player, "11", "a musicroutine 11.x routine", "V1.25")
@@ -183,6 +196,100 @@ def parse_gts1(data: bytes, player: str | None = None) -> Gt1Song:
         orderlists=orderlists,
         patterns=patterns,
         segments=segments,
+        sng=sng,
+    )
+
+
+def _detect_layout(data: bytes, body: int, num_subtunes: int) -> str:
+    """Which editor layout the body uses, decided by the first wavetable.
+
+    ``$FE`` endmark orderlists are byte-identical between V0.9x and the
+    V1.25/V1.4b-V1.53 bodies, so they cannot decide; the first instrument
+    can -- its last wave row is ``$00`` (V0.9x) or ``$FF`` (the later bodies).
+    """
+    off = body
+    for _ in range(num_subtunes * 3):
+        if off >= len(data):
+            return LAYOUT_V125  # truncated; the full parse reports it
+        off += data[off] + 2  # one orderlist: length byte + length+1 stored
+    if off + 8 > len(data):
+        return LAYOUT_V125
+    wavelen = data[off + 7]
+    if wavelen & 1 or wavelen < 2 or off + 24 + wavelen - 2 >= len(data):
+        return LAYOUT_V125  # V0.9x wavetables are even, with a $00 terminator
+    return LAYOUT_V093 if data[off + 24 + wavelen - 2] == 0 else LAYOUT_V125
+
+
+def _parse_v093(cur: _Cursor, num_subtunes: int, sng: Gt1Sng) -> Gt1Song:
+    """Parse a V0.9x body: orderlists with no restart byte, and inline
+    wavetables terminated by a ``$00`` waveform row (at most 64 rows)."""
+    orderlists = []
+    for subtune in range(num_subtunes):
+        chans = []
+        for channel in range(3):
+            what = f"orderlist (subtune {subtune}, channel {channel})"
+            length = cur.u8(f"{what} length")
+            if length < 1:
+                raise SngParseError(f"{what} has zero length")
+            blob = cur.take(length + 1, what)
+            if blob[-1] not in _V093_ENDMARKS:
+                raise SngParseError(f"{what} missing endmark, got {blob[-1]:#04x}")
+            chans.append(blob)
+        orderlists.append(chans)
+    instruments = []
+    wavetable = []
+    for num in range(1, _MAX_INSTR + 1):
+        what = f"instrument {num}"
+        params = cur.take(8, what)
+        name = cur.take(16, f"{what} name")
+        wavelen = params[7]
+        if wavelen & 1 or not 2 <= wavelen <= _V093_WAVEMAX:
+            raise SngParseError(f"{what} has bad wavetable size {wavelen}")
+        wave = cur.take(wavelen, f"{what} wavetable")
+        if wave[-2] != 0:
+            raise SngParseError(
+                f"{what} wavetable is not $00-terminated, last row {wave[-2]:#04x}"
+            )
+        pointer = len(wavetable) + 1
+        wavetable.extend(zip(wave[0::2], wave[1::2]))
+        instruments.append(Gt1Instrument(*params[:7], pointer, name=name))
+    num_patterns = cur.u8("pattern count")
+    if not 1 <= num_patterns <= _MAX_PATT:
+        raise SngParseError(f"bad pattern count {num_patterns}")
+    patterns = []
+    for num in range(num_patterns):
+        what = f"pattern {num}"
+        length = cur.u8(f"{what} length")
+        if not length or length % 3 or length > _MAX_PATTROWS * 3 + 3:
+            raise SngParseError(f"{what} has bad row length {length}")
+        blob = cur.take(length, what)
+        if blob[-3] != _LOOPSONG:
+            raise SngParseError(
+                f"{what} is missing the $FF end row, got {blob[-3]:#04x}"
+            )
+        patterns.append(blob)
+    if cur.pos != len(cur.data):
+        raise SngParseError(
+            f"{len(cur.data) - cur.pos} unexpected trailing bytes at offset {cur.pos}"
+        )
+    for chans in orderlists:
+        for blob in chans:
+            for value in blob[:-1]:
+                if value >= num_patterns:
+                    raise SngParseError(
+                        f"orderlist references pattern {value} but only "
+                        f"{num_patterns} patterns are stored"
+                    )
+    return Gt1Song(
+        player=_PLAYER_V093,
+        address=PLAYER_ORG,
+        params=(),
+        instruments=instruments,
+        wavetable=wavetable,
+        filtertable=b"",
+        orderlists=orderlists,
+        patterns=patterns,
+        segments=SEGMENTS_V11,
         sng=sng,
     )
 
@@ -379,11 +486,17 @@ def relocate(song: Gt1Song) -> Gt1Song:
     """Pack a V1.x editor song the way the editor's F9 relocator packs it.
 
     V1.25 keeps the musicroutine row and instrument forms; V1.4b-V1.53 gets
-    the standard playroutine forms, the deduped wavetable, and the
-    filtertable. Songs without ``sng`` come back unchanged.
+    the standard forms, the deduped wavetable, and the filtertable. Songs
+    without ``sng`` come back unchanged; V0.9x songs are native-only.
     """
     if song.sng is None:
         return song
+    if song.sng.layout == LAYOUT_V093:
+        raise SngValidationError(
+            "GoatTracker V0.9x editor songs are native-only: the V0.93 "
+            "playroutine is not transcribed, so the song cannot be packed or "
+            "played (write it back with write_gts1)"
+        )
     if song.filtertable:
         return _relocate_v153(song)
     return _relocate_v125(song)

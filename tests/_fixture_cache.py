@@ -32,6 +32,15 @@ _GT1_URL = "https://cadaver.github.io/tools"
 GT1_ARCHIVES = {
     "goattrk.zip": "f12df334df5b1749fa0660575d63520a5e064ed254e4390cede6b03f9808ecef",
     "goatold.zip": "ef4ab3287bbb60be5cf5f323518a630e392650516bc23510b6a821acd3702233",
+    "goattrk093.zip": (
+        "2034f37e1a14c261bdb08028e8aa7fc8fa81922f9ebe76fc3cf6b87aa1425327"
+    ),
+}
+# goattrk093.zip is not on the cadaver tools mirror; it ships in CSDb 152697.
+_GT1_ARCHIVE_URLS = {
+    "goattrk.zip": f"{_GT1_URL}/goattrk.zip",
+    "goatold.zip": f"{_GT1_URL}/goatold.zip",
+    "goattrk093.zip": "https://csdb.dk/getinternalfile.php/154230/goattrk093.zip",
 }
 
 # GoatTracker V1.25 editor example songs (musicroutine 11.x layout).
@@ -63,6 +72,16 @@ GOATTRK_SONGS = {
     ),
     "examples/nintendo.sng": (
         "e652f7b206a74087500e4097f327b9d7d254389c3a0d15845e1dab7f21bb1302"
+    ),
+}
+
+# GoatTracker V0.93 editor example songs (no restart byte, $00-terminated wavetables).
+GOATTRK093_SONGS = {
+    "examples/drumtest.sng": (
+        "f1a161f25d7cd4e4d374a443e8eeadeed16e587a84767af6f1b2b1c06808395b"
+    ),
+    "examples/example.sng": (
+        "5abd769dacb64254e16cbb39481b10d3a226cc694b1a743c536476cea11e19a8"
     ),
 }
 
@@ -117,7 +136,7 @@ def example_song(name: str) -> bytes:
 
 def gt1_archive(name: str) -> bytes:
     """Bytes of a pinned GoatTracker V1.x release archive (cached download)."""
-    return _download(name, f"{_GT1_URL}/{name}", GT1_ARCHIVES[name])
+    return _download(name, _GT1_ARCHIVE_URLS[name], GT1_ARCHIVES[name])
 
 
 def _archive_member(archive: str, member: str, sha256: str) -> bytes:
@@ -137,6 +156,11 @@ def goatold_song(name: str) -> bytes:
 def goattrk_song(member: str) -> bytes:
     """Bytes of a pinned GoatTracker V1.53 example song (goattrk.zip)."""
     return _archive_member("goattrk.zip", member, GOATTRK_SONGS[member])
+
+
+def goattrk093_song(member: str) -> bytes:
+    """Bytes of a pinned GoatTracker V0.93 example song (goattrk093.zip)."""
+    return _archive_member("goattrk093.zip", member, GOATTRK093_SONGS[member])
 
 
 def _sectors_per_track(track: int) -> int:

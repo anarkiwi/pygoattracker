@@ -40,7 +40,6 @@ raises a clean ``SidParseError`` (never any other exception).
 """
 
 import functools
-import sys
 from pathlib import Path
 
 import pytest
@@ -53,11 +52,7 @@ from pygoattracker.errors import GoatTrackerError, SidParseError
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
 from pygoattracker.writer import build_sng
-
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
-
-import fetch_tunes  # noqa: E402  (after sys.path tweak)
+from tests._fixture_cache import HVSC_CACHE
 
 _SAMPLE_FILE = Path(__file__).parent / "data" / "hvsc_goattracker_sample.txt"
 
@@ -106,7 +101,7 @@ def _resolve(rel: str):
     Returns ``None`` only when the tune is genuinely unreachable after retries,
     so an individual tune skips cleanly rather than failing offline CI.
     """
-    return resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
+    return resolve_tune(rel, cache_dir=HVSC_CACHE)
 
 
 @functools.lru_cache(maxsize=None)

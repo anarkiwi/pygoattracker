@@ -4,7 +4,6 @@ Each tune is a whole-song oracle-exact one (``test_oracle_hvsc``) or one whose
 instrument classes the player's own ``cmp #FIRSTNOHRINSTR`` operands state.
 """
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -15,10 +14,7 @@ from pysidtracker.testing import resolve_tune
 from pygoattracker import probe, sid
 from pygoattracker.packed import NONE, PackedLayout, PlayerBuild
 from pygoattracker.typed import Note, Rest, Row
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-
-import fetch_tunes  # noqa: E402  pylint: disable=wrong-import-position
+from tests._fixture_cache import HVSC_CACHE
 
 BUILDS = {
     # NOWAVEDELAY off without delay rows.
@@ -66,7 +62,7 @@ BUILDS = {
 
 
 def _decompiled(rel):
-    path = resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
+    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
     if path is None:
         pytest.skip(f"{rel} unavailable (offline, not cached)")
     return sid.decompile_sid(Path(path).read_bytes())

@@ -82,8 +82,7 @@ def test_the_note_table_is_where_unchanged_frequencies_are_loaded_from():
     subject[0x3000] = 0x10
     trace = observe.Trace(subject, *wire_mpu(subject))
     trace.call(0x1000)
-    assert observe._note_bases(trace, [(0x2000, 0, 0x80)]) == (0x2000, 0x2080)
-    assert observe._note_bases(trace, [(0x2100, 0, 0x80)]) is None
+    assert observe._note_bases(trace) == (0x2000, 0x2080)
     subject[0x2010], subject[0x2090] = 0x34, 0x12
     assert sid._freq_table(subject, 0x3000, 12, 8, (0x2000, 0x2080))[0x10] == 0x1234
 

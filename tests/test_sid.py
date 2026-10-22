@@ -485,6 +485,26 @@ def test_chain_layout_returns_none_without_table_idiom():
     assert sid._chain_layout(image, image.mem, LOAD + 0x10, 1, LOAD + 0x20, eps) is None
 
 
+@pytest.mark.parametrize("sta, pulse", [(0x9D, 1), (0x8D, 0)])
+def test_solve_layout_lone_table_is_what_the_player_reads(sta, pulse):
+    """A lone pulse/filter table tiles either way; ``sta chnpulseptr,x`` decides."""
+    region = LOAD + 0x10
+    code = b"\xb9" + _le(region + 2) + b"\xf0\x00" + bytes([sta, 0, 0])
+    data = bytes([0x09, 0x00, 0x01, 0x01, 0xFF, 0x00, 0xFF, 0x00])
+    image = _img_from_data(code.ljust(0x10, b"\x00") + data)
+    eps = (set(), set(), set(), set())
+    pulsecol = sid._reads_pulseptr(image, region + 3)
+    sol = sid._solve_layout(
+        image.mem, region, region + len(data), 1, eps, pulsecol=pulsecol
+    )
+    assert (sol["pulse"], sol["filt"], sol["plen"], sol["flen"]) == (
+        pulse,
+        1 - pulse,
+        pulse,
+        1 - pulse,
+    )
+
+
 # --- orderlist decode is bounded (a wrong subtune-count guess lands here) -----
 
 

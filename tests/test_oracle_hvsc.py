@@ -95,6 +95,8 @@ TUNES = {
     "goat_city": ("DEMOS/G-L/Goat_City.sid", 1, 45.986),
     # the same, plus a $00 pulse step: its time wraps to 256 modulations.
     "2_hours_not_enough": ("DEMOS/0-9/2_Hours_NOT_Enough.sid", 1, 59.0),
+    # a lone pulse table: the player's pointer load, not the tiling, says which.
+    "butzemann": ("DEMOS/A-F/Butzemann.sid", 1, 132.051),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

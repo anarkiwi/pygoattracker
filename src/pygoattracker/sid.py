@@ -100,8 +100,9 @@ _P_WAVE = CodePattern("B9 {w:w} C9 FF C8 98")  # lda wavetbl,y (start of tables)
 _P_WEXEC = CodePattern("BC ?? ?? F0 ?? B9 {w:w}")  # lda wavetbl-1,y (waveexec)
 # ``ldy chninstr,x; lda insgatetimer-1,y; sta chngatetimer,x`` -> gate present.
 _P_GATE = CodePattern("BC ?? ?? B9 {g:w} 9D ?? ?? BD")
-# ``lda inspulseptr-1,y; beq skippulse; sta chnpulseptr,x; lda #0`` -> pulse.
-_P_PULSEPTR = CodePattern("B9 {v:w} F0 ?? 9D ?? ?? A9 00")
+# ``lda inspulseptr-1,y; beq skippulse; sta chnpulseptr,x`` -> pulse; the
+# filter pointer's ``sta filtstep+1`` is not indexed.
+_P_PULSEPTR = CodePattern("B9 {v:w} F0 ?? 9D")
 
 
 @dataclass
@@ -447,8 +448,19 @@ def _executed_length(mem, start, entry_points, limit=constants.MAX_TABLELEN):
     return max(reached), True
 
 
-def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
-    """Return the unique valid (flags, table lengths) tiling of the region."""
+def _reads_pulseptr(image, column):
+    """Whether the player loads the instrument column at ``column`` as pulseptr."""
+    return any(m.captures["v"] + 1 == column for m in find_code_all(image, _P_PULSEPTR))
+
+
+def _solve_layout(
+    mem, region_start, region_end, num_instr, eps, build=None, pulsecol=False
+):
+    """Return the unique valid (flags, table lengths) tiling of the region.
+
+    A lone pulse or filter table tiles identically either way; ``pulsecol``
+    (the column after the wave pointers is read as pulseptr) says which.
+    """
     region_len = region_end - region_start
     solutions = []
     for pulse in (0, 1):
@@ -478,6 +490,7 @@ def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
         key=lambda s: (
             build.insvib is not None and s["vib"] != build.insvib,
             build.gatecol is not None and s["gate"] != build.gatecol,
+            s["pulse"] + s["filt"] == 1 and s["pulse"] != pulsecol,
             s["gate"],
         )
     )
@@ -647,11 +660,7 @@ def _chain_layout(image, mem, insad, num_instr, order_start, eps):
         flen = chain[2][1] - chain[2][0]
     elif extra == 1:
         onelen = chain[1][1] - chain[1][0]
-        pulse_present = any(
-            insad < m.captures["v"] + 1 < wtbl
-            for m in find_code_all(image, _P_PULSEPTR)
-        )
-        if pulse_present:
+        if _reads_pulseptr(image, insad + 3 * num_instr):
             pulse, plen = 1, onelen
         else:
             filt, flen = 1, onelen
@@ -1142,7 +1151,10 @@ def _decompile(
     # Exact-fit tiling first (established path); if no flag combination tiles the
     # region, read the table bases directly from the player's table-access code.
     try:
-        layout = _solve_layout(mem, region_start, region_end, num_instr, eps, build)
+        pulsecol = _reads_pulseptr(image, region_start + 3 * num_instr)
+        layout = _solve_layout(
+            mem, region_start, region_end, num_instr, eps, build, pulsecol
+        )
     except SidParseError:
         layout = _chain_layout(image, mem, region_start, num_instr, region_end, eps)
         if layout is None:

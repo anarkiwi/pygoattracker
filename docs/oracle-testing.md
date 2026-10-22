@@ -34,6 +34,7 @@ byte-exact over the whole song:
 | `Loader_Music`, `Ryan_Went_Sling`, `Galaga_Start_Theme`, `Heavy_Industrial_Machinery`, `Contra_Jungle_Theme` | hard-restart ADSR `$FF00` (AD stored first), `$FF00` (altplayer, ghost), `$1000`, `$FF0F`, `$0F0F` |
 | `Goat_City` | unoptimized packing: wave-delay code (NOWAVEDELAY off) read from the player, with no delay rows |
 | `2_Hours_NOT_Enough` | the same, plus a `$00` pulse-table step (its time wraps to 256 modulations) |
+| `Butzemann` | a lone pulse table (no filter table): the column after the wave pointers is the one the player loads as pulseptr |
 | `Miner_Prophet_preview` | a define found at two sites leaves the rest of the build read |
 | `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |
 

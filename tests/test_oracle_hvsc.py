@@ -106,6 +106,14 @@ TUNES = {
     "captain_ishtar_5": ("MUSICIANS/B/Bayliss_Richard/Captain_Ishtar.sid", 5, 6.744),
     "cruiser_x_79_4": ("MUSICIANS/B/Bayliss_Richard/Cruiser-X_79.sid", 4, 7.745),
     "trance_sector_12": ("MUSICIANS/B/Bayliss_Richard/Trance_Sector.sid", 12, 9),
+    # a lone pulse table the code-located layout reads as the player plays it.
+    "blast_em_all": ("MUSICIANS/J/Jammer/Blast_em_All.sid", 1, 155.413),
+    "an_ufo_attack": ("MUSICIANS/M/Mutetus/An_UFO_Attack_from_Space.sid", 1, 144.62),
+    # the pulse optimization measured from a set row on the gate timer's fetch.
+    "peep_show": ("MUSICIANS/M/MCH/Peep_Show.sid", 1, 40.52),
+    # an empty pattern past the image end, read from the power-on RAM there.
+    "hose_it_out": ("MUSICIANS/N/Narciso/Hose_It_Out.sid", 1, 38.804),
+    "legend_of_zelda_preview": ("GAMES/G-L/Legend_of_Zelda_Preview.sid", 1, 18.534),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

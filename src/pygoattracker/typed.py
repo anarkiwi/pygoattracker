@@ -42,10 +42,19 @@ _NOTE_BYTE = {C.REST: Rest(), C.KEYOFF: KeyOff(), C.KEYON: KeyOn()}
 
 
 def note_of(byte: int) -> NoteColumn:
-    """The note column byte ``$60-$BF`` as what it does."""
-    if C.FIRSTNOTE <= byte <= C.LASTNOTE:
+    """The note column byte as what ``mt_note`` does with it.
+
+    Below ``REST`` it keys a note (``pitch`` negative under ``$60``); above, it
+    sets the gate to ``byte | $F0``, a key off or key on.
+    """
+    if byte < C.REST:
         return Note(byte - C.FIRSTNOTE)
-    return _NOTE_BYTE[byte]
+    if byte == C.REST:
+        return Rest()
+    gate = byte | 0xF0
+    if gate not in (C.KEYOFF | 0xF0, C.KEYON | 0xF0):
+        raise ValueError(f"note byte {byte:#04x} sets gate {gate:#04x}")
+    return KeyOn() if gate == C.KEYON | 0xF0 else KeyOff()
 
 
 def note_byte(note: NoteColumn) -> int:

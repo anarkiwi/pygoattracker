@@ -3,8 +3,9 @@
 
 Assembles each playroutine with the jennings assembler (``pysidtracker.asm6502``)
 from the fixture-cached V1.53 and V1.25 (musicroutine 11.x) archives; V1.50..V1.52
-are V1.53 with the :data:`VARIANTS` edits. ``--check`` exits 1 when the module is
-stale.
+are V1.53 with the :data:`VARIANTS` edits and the V0.96..V1.22 standard
+playroutines are musicroutine 11.1 with the :data:`PRE125` edits. ``--check``
+exits 1 when the module is stale.
 """
 
 from __future__ import annotations
@@ -49,6 +50,24 @@ LABELS = (
     "mt_chnnote",
     "mt_chnsongadrlo",
     "mt_hrtimer",
+    "mt_chnfreqlo",
+    "mt_chnfreqhi",
+    "mt_chnnewnote",
+    "mt_chncommand",
+    "mt_chncmddata",
+    "mt_chninstnum",
+    "mt_chnwavetbl",
+    "mt_chnpulse",
+    "mt_chnpulsedir",
+    "mt_chnarpcount",
+    "mt_chnvibcount",
+    "mt_chnsongptr",
+    "mt_chnsongadrhi",
+    "mt_chnpattptr",
+    "mt_chnpattnum",
+    "mt_chntick",
+    "mt_chntempo",
+    "mt_chnnext",
 )
 
 _PULSE_153 = """                beq mt_skippulse
@@ -115,8 +134,165 @@ _TIME_150 = """mt_funktempo:   dc.b 0,0
 mt_timecounter: dc.b 0
 """
 
+_NEWNOTE_123 = """                sta mt_chnarpcount,x
+                sta mt_chnvibcount,x
+                ldy mt_chninstnum,x
+                lda mt_instfilter,y
+                beq mt_nofilterchange
+                sta mt_filtcutoff+1
+                asl
+                asl
+                asl
+                asl
+                sta mt_filttype+1
+mt_nofilterchange:
+                lda mt_instpulse,y
+                beq mt_skippulse
+                sta mt_chnpulse,x
+                sta $d402,x
+                sta $d403,x
+                lda #$80
+                bne mt_skippulse2
+mt_skippulse:   lda mt_chnpulsedir,x
+                ora #$80
+mt_skippulse2:  sta mt_chnpulsedir,x
+                jmp mt_nextchn
+"""
+_NEWNOTE_122 = """                sta mt_chnpulsedir,x
+                sta mt_chnarpcount,x
+                sta mt_chnvibcount,x
+                ldy mt_chninstnum,x
+                lda mt_instpulse,y
+                beq mt_skippulse
+                sta mt_chnpulse,x
+                sta $d402,x
+                sta $d403,x
+mt_skippulse:   lda mt_instfilter,y
+                beq mt_nofilterchange
+                sta mt_filtcutoff+1
+                asl
+                asl
+                asl
+                asl
+                sta mt_filttype+1
+mt_nofilterchange:
+                jmp mt_nextchn
+"""
+_DIR_123 = """                bpl mt_noadsrinit
+                and #$7f
+"""
+_DIR_122 = """                bpl mt_noadsrinit
+                lda #$00
+"""
+_CLC_122 = """mt_play:        clc
+mt_filtcutoff:"""
+_CLC_121 = """mt_play:
+mt_filtcutoff:"""
+_INIT_122 = """                sta mt_chnpulsedir,x
+                sta $d404,x
+                lda #$05
+                sta mt_chntick,x
+                sta mt_chntempo,x
+                sta mt_chnnewnote,x
+"""
+_INIT_121 = """                sta mt_chnpulsedir,x
+                lda #$05
+                sta mt_chntick,x
+                sta mt_chntempo,x
+                sta mt_chnnewnote,x
+                lda #$08
+                sta $d404,x
+"""
+_INIT_116 = """                lda #$05
+                sta mt_chntick,x
+                sta mt_chntempo,x
+                sta mt_chnnewnote,x
+                lda #$08
+                sta mt_chnwave,x
+                sta $d404,x
+"""
+_PULSE_116 = """                beq mt_skippulse
+                sta mt_chnpulse,x
+                sta $d402,x
+                sta $d403,x
+mt_skippulse:   lda mt_instfilter,y
+"""
+_PULSE_115 = """                sta mt_chnpulse,x
+                sta $d402,x
+                sta $d403,x
+                lda mt_instfilter,y
+"""
+_ORDER_115 = """                cmp #LOOPSONG
+                bcc mt_noloopsong
+                iny
+                lda (mt_temp1),y
+                tay
+                lda (mt_temp1),y
+mt_noloopsong:  sta mt_chnpattnum,x
+                iny
+                tya
+                sta mt_chnsongptr,x
+                lda mt_chnnewnote,x
+"""
+_ORDER_111 = """                cmp #LOOPSONG-1
+                beq mt_repeatlastpattern
+                bcc mt_noloopsong
+                ldy #$00
+                lda (mt_temp1),y
+mt_noloopsong:  sta mt_chnpattnum,x
+                iny
+                tya
+                sta mt_chnsongptr,x
+mt_repeatlastpattern:
+                lda mt_chnnewnote,x
+"""
+_ENTRY_111 = """                jmp init
+                jmp play
+setvolume:      sta mt_volume+1
+                rts
+
+init:           sta playflag+1
+                rts
+
+play:           ldx #$00
+playflag:       lda #$00
+                bmi mt_play
+                asl
+                adc playflag+1
+                tay
+"""
+_ENTRY_103 = """play:
+playflag:       lda #$00
+                ldx #$00
+                asl
+                beq mt_play
+                adc playflag+1
+                tay
+"""
+_INITEND_111 = """                sta mt_chnpattptr,x
+                sta playflag+1
+                lda mt_chnnext,x
+                tax
+                bne mt_initloop
+                sta $d415
+                sta mt_filtctrl+1
+                sta mt_filtcutoffadd+1
+                rts
+"""
+_INITEND_103 = """                sta mt_chnpattptr,x
+                lda mt_chnnext,x
+                tax
+                bne mt_initloop
+                sta $d415
+                sta mt_filtctrl+1
+                sta mt_filtcutoffadd+1
+                sta playflag+1
+                rts
+"""
+
 _V153 = ("goattrk.zip", "src/player1.s")
 _V125 = "goatold.zip"
+_V093 = ("goattrk093.zip", "src/PLAYER.S")
 _PULSE = (_PULSE_153, _PULSE_152)
 _FILT = (_FILT_153, _FILT_150)
 _FUNK = ((_FUNK_153, _FUNK_150), (_TIME_153, _TIME_150))
@@ -139,6 +315,23 @@ VARIANTS = {
             "oldfreq",
         ),
     ),
+}
+_PRE123 = ((_NEWNOTE_123, _NEWNOTE_122), (_DIR_123, _DIR_122))
+_PRE122 = (*_PRE123, (_CLC_122, _CLC_121), (_INIT_122, _INIT_121))
+_PRE121 = (*_PRE122, (_INIT_121, _INIT_116))
+_PRE116 = (*_PRE121, (_PULSE_116, _PULSE_115))
+_PRE115 = (*_PRE116, (_ORDER_115, _ORDER_111))
+_PRE111 = (*_PRE115, (_ENTRY_111, _ENTRY_103), (_INITEND_111, _INITEND_103), "data093")
+
+# name -> musicroutine 11.1 source edits, by the editor release that brought them.
+PRE125 = {
+    "0.96": (*_PRE111, "freq093"),
+    "1.01": _PRE111,
+    "1.1": _PRE115,
+    "1.15": _PRE116,
+    "1.16": _PRE121,
+    "1.21": _PRE122,
+    "1.22": _PRE123,
 }
 MUSICROUTINE11 = {
     "11.1": (_V125, "SRC/PLAYER1.S", None),
@@ -167,6 +360,12 @@ def _patched(src: str, edits) -> str:
         if edit == "oldfreq":
             old = _freq_block(src)
             new = _freq_block(_source(_V125, "SRC/PLAYER3.S"))
+        elif edit == "freq093":
+            old, new = _freq_block(src), _freq_block(_source(*_V093))
+        elif edit == "data093":
+            v093 = _source(*_V093)
+            old = src[src.index("mt_tick0cmdtbllo:") :]
+            new = v093[v093.index("mt_chnnote:") :]
         else:
             old, new = edit
         if src.count(old) != 1:
@@ -307,6 +506,9 @@ def build() -> str:
             name: (arc, mem, auth, ())
             for name, (arc, mem, auth) in MUSICROUTINE11.items()
         }
+    )
+    entries.update(
+        {name: (_V125, "SRC/PLAYER1.S", None, edits) for name, edits in PRE125.items()}
     )
     for name, (archive, member, author, edits) in entries.items():
         code, symbols = assemble(_patched(_source(archive, member), edits))

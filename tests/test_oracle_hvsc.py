@@ -119,6 +119,18 @@ TUNES = {
     ),
     "gt1_114_fuggbot": ("MUSICIANS/J/Josstintimberlake/Fuggbot.sid", 1, 85),
     "gt1_115_swamped": ("MUSICIANS/D/Dalezy/swamped.sid", 1, 43),
+    # GT1 standard playroutines before V1.25: V0.96 (no jump table, packer init
+    # stub, pre-V1.01 frequency table), V1.01 ($FE repeats the last pattern),
+    # V1.1 (jump table, $FF loops to the start), V1.21, V1.22.
+    "gt1_096_mw1_title": (
+        "MUSICIANS/C/Cadaver/GoatTracker_example_MW1_title.sid",
+        1,
+        39,
+    ),
+    "gt1_101_kaori_360": ("DEMOS/G-L/Kaori_360.sid", 1, 80),
+    "gt1_110_disco_fever": ("MUSICIANS/H/Hoffmann_Michal/Disco_Fever.sid", 1, 80),
+    "gt1_121_plaah": ("MUSICIANS/H/Hukka/Plaah.sid", 1, 62),
+    "gt1_122_bee": ("MUSICIANS/H/Hukka/Bee.sid", 1, 154),
 }
 
 

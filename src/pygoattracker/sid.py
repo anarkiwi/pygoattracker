@@ -32,7 +32,6 @@ from pysidtracker import (
     detect_playroutine,
     find_code_all,
     find_code_first,
-    init_effects,
     read_bytes,
     trace_init,
 )
@@ -50,7 +49,7 @@ from pygoattracker.packed import (
     player_span,
 )
 from pygoattracker.player import Player
-from pygoattracker.probe import Bench, confirms, measure, state
+from pygoattracker.probe import Bench, confirms, measure, song_read, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.model import (
     Orderlist,
@@ -893,97 +892,66 @@ def _all_anchors(image):
     return kept
 
 
-def _ini_cell(image, base):
-    """The cell a module's ``mt_init`` stores its incoming ``A`` to, per the
-    stock single-store idiom (``STA abs``/``STA zp`` first), else None."""
-    if base is None:
-        return None
-    mem = image.mem
-    ini = mem[base + 1] | (mem[base + 2] << 8)
-    if mem[ini] in (0x85, 0x8D):
-        return mem[ini + 1] | (mem[ini + 2] << 8)
-    return None
+def _finish(decoded, song, measured):
+    """``decoded`` narrowed to the selected song, else a clean ``SidParseError``.
 
-
-def _modules(image):
-    """``(anchor, song-cell)`` per player module of ``image``.
-
-    One entry per module jump table found by :func:`player_span`: the
-    module's longest frequency-table anchor and the cell its ``mt_init``
-    first stores to (the stock idiom's 0-based per-module song).
+    Unmeasured, the tune's own init and play loaded no recognised song table,
+    so the song plays from a routine the decoder does not know.
     """
-    modules = {}
-    for anchor in _all_anchors(image):
-        base = player_span(image, anchor[0]).start
-        cell = _ini_cell(image, base)
-        if cell is None:
-            continue
-        cur = modules.get(base)
-        if cur is None or anchor[2] > cur[0][2]:
-            modules[base] = (anchor, cell)
-    return list(modules.values())
-
-
-def _finish(decoded, song):
-    """``decoded`` narrowed to the selected song, else a clean ``SidParseError``."""
-    if not 0 <= song < len(decoded.song.subtunes):
+    count = len(decoded.song.subtunes)
+    if not 0 <= song < count:
+        if not measured:
+            raise SidParseError(
+                f"no GoatTracker song table read: the tune's init and play load "
+                f"none for subtune {song}, and the player decodes {count} subtune(s)"
+            )
         raise SidParseError(
             f"no such subtune: the song selects subtune {song}, "
-            f"but the player decodes {len(decoded.song.subtunes)} subtune(s)"
+            f"but the player decodes {count} subtune(s)"
         )
     decoded.subtune = song
     return decoded
 
 
-def _play_target(image, subtune):
-    """The play entry's target after the tune's own init for ``subtune``.
+def _measured_song(image, subtune):
+    """``(image, anchor, song, table)`` from the song-table load the tune's own
+    init and play make for ``subtune`` (:func:`~pygoattracker.probe.song_read`),
+    else None.
 
-    A wrapper-selected build rewrites the play entry per song, so the target
-    comes from the init's own effects (a private snapshot), not the as-loaded
-    image.
+    The loading player is the anchor above its ``lda songtbllo,y``; ``song`` is
+    the entry it indexes and ``table`` its ``(songtbllo, songs)``. The player
+    decodes from ``image`` unless init installed it (the load is not in the
+    loaded image), then from the memory init left.
     """
-    h = image.header
-    play = h.play_address or h.real_load_address
-    lo, hi = play + 1, play + 2
-    effects = init_effects(image, subtune, watch={lo, hi})
-    lo_val = effects.writes[lo].value if lo in effects.writes else image.mem[lo]
-    hi_val = effects.writes[hi].value if hi in effects.writes else image.mem[hi]
-    return lo_val | (hi_val << 8)
+    seen = song_read(image, subtune, _P_SONGTBL)
+    if seen is None:
+        return None
+    after, match, addr = seen
+    lo, hi = match.captures["lo"], match.captures["hi"]
+    if match not in find_code_all(image, _P_SONGTBL):
+        image = after
+    anchor = next((a for a in _all_anchors(image) if a[0] > match.addr), None)
+    if anchor is None or hi <= lo or (hi - lo) % 3:
+        return None
+    return image, anchor, (addr - lo) // 3, (lo, (hi - lo) // 3)
 
 
-def _entered_anchor(image, candidates, subtune):
-    """The candidate player the tune's own play entry enters for ``subtune``.
-
-    The entered player's code span contains the (post-init) play target; a
-    secondary player bundled in the image has its own span and is not entered.
-    """
-    target = _play_target(image, subtune)
-    for anchor in candidates:
-        span = player_span(image, anchor[0])
-        if span.start is not None and span.start <= target < anchor[0]:
-            return anchor
-    return None
-
-
-def _select_song(image, default_anchor, subtune, modules):
+def _select_song(image, default_anchor, subtune):
     """Decompile the player the tune's own init/play enters, for ``subtune``.
 
-    A wrapper-selected build rewrites the play entry per song, so the entered
-    player is decompiled (not the first recognised anchor); the song-claim
-    modules and the default anchor are the fallbacks, with the claim's song.
+    The song-table load the player makes (:func:`_measured_song`) fixes the
+    player, its song and its table; without one, the default anchor's player
+    and the header song.
     """
-    anchor = _entered_anchor(image, _all_anchors(image), subtune)
-    song = subtune
-    if anchor is None:
-        effects = init_effects(image, subtune)
-        hits = [(a, effects.writes[c]) for a, c in modules if c in effects.writes]
-        if hits:
-            anchor, write = max(hits, key=lambda pair: pair[1].pc)
-            song = write.value
-        else:
-            anchor = default_anchor
-    decoded = _decompile_any_songs(image, image.header, image.end, anchor, song)
-    return _finish(decoded, song)
+    measured = _measured_song(image, subtune)
+    if measured is None:
+        decoded = _decompile_any_songs(
+            image, image.header, image.end, default_anchor, subtune
+        )
+        return _finish(decoded, subtune, False)
+    image, anchor, song, table = measured
+    decoded = _decompile_any_songs(image, image.header, image.end, anchor, song, table)
+    return _finish(decoded, song, True)
 
 
 def decompile_sid(src, subtune=0) -> DecompiledSid:
@@ -998,7 +966,7 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
     detection = detect_playroutine(image, _recognize, subtune=subtune)
     if detection.anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
-    decoded = _select_song(image, detection.anchor, subtune, _modules(image))
+    decoded = _select_song(image, detection.anchor, subtune)
     decoded.info.init_regs = init_regs(_load_image(raw), subtune)
     return decoded
 
@@ -1033,11 +1001,12 @@ def _candidate_song_counts(header):
     return counts
 
 
-def _layout_candidates(image, header, anchor):
+def _layout_candidates(image, header, anchor, table=None):
     """``(songtbl, songs, patt_lo)`` hypotheses to try, most-trusted first.
 
-    The stock layout (songtbl right after the frequency table) at the header
-    count comes first, then the in-span :data:`_P_SONGTBL` sequencer signature
+    A measured ``table`` (``(songtbl, songs)``, the player's own) comes first,
+    then the stock layout (songtbl right after the frequency table) at the header
+    count, then the in-span :data:`_P_SONGTBL` sequencer signature
     (the player's stated base and count), then every stock candidate count.
     """
     addr, _firstnote, length = anchor
@@ -1050,6 +1019,8 @@ def _layout_candidates(image, header, anchor):
             seen.add(cand)
             out.append(cand)
 
+    if table is not None:
+        add((table[0], table[1], table[0] + 6 * table[1]))
     if 1 <= header.songs <= constants.MAX_SONGS:
         add((songtbl0, header.songs, songtbl0 + 6 * header.songs))
     low = player_span(image, addr).start
@@ -1068,7 +1039,9 @@ def _layout_candidates(image, header, anchor):
     return out
 
 
-def _decompile_any_songs(image, header, dataend, anchor, subtune) -> DecompiledSid:
+def _decompile_any_songs(
+    image, header, dataend, anchor, subtune, table=None
+) -> DecompiledSid:
     """Decompile trying each layout hypothesis until one decodes.
 
     Candidates (see :func:`_layout_candidates`) are tried most-trusted first. On
@@ -1079,7 +1052,7 @@ def _decompile_any_songs(image, header, dataend, anchor, subtune) -> DecompiledS
     """
     primary_exc = None
     first_exc = None
-    for songtbl, songs, patt_lo in _layout_candidates(image, header, anchor):
+    for songtbl, songs, patt_lo in _layout_candidates(image, header, anchor, table):
         try:
             return _decompile(
                 image, header, dataend, anchor, subtune, songtbl, songs, patt_lo

@@ -48,7 +48,7 @@ import pytest
 from pysidtracker import PlayroutineKind
 from pysidtracker.testing import resolve_tune
 
-from pygoattracker import sid
+from pygoattracker import probe, sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
@@ -240,6 +240,42 @@ def test_wrapper_selected_player():
             result.info.wrapper_flush
         ), f"song {subtune + 1}: the wrapper-selected ghost-flush build must be the one decoded"
         assert result.player() is not None, f"song {subtune + 1}: no player"
+
+
+def _tune(rel):
+    path = _resolve(rel)
+    if path is None:
+        pytest.skip(f"{rel} unavailable (local or mirror)")
+    return path.read_bytes()
+
+
+def test_the_song_table_load_selects_the_player_and_its_song():
+    """Captain_Future_Preview bundles one-song players; its init enters the
+    second for song 2, whose player loads its own song-table entry 0."""
+    raw = _tune("GAMES/A-F/Captain_Future_Preview.sid")
+    image = sid._load_image(raw)
+    after, match, addr = probe.song_read(image, 1, sid._P_SONGTBL)
+    assert (match.addr, match.captures["lo"], addr) == (0x1BF9, 0x1E3A, 0x1E3A)
+    assert after.mem[match.addr] == 0xB9
+    result = sid.decompile_sid(raw, subtune=1)
+    assert result.subtune == 0 and len(result.song.subtunes) == 1
+    assert result.info.layout.songtbl == 0x1E3A
+
+
+def test_a_song_table_loaded_by_init_itself():
+    """Party_Bit_3SID's init calls play: the load happens inside init."""
+    image = sid._load_image(_tune("MUSICIANS/J/Jellica/Party_Bit_3SID.sid"))
+    _, match, addr = probe.song_read(image, 0, sid._P_SONGTBL)
+    assert addr == match.captures["lo"]
+
+
+def test_a_song_no_goattracker_player_plays():
+    """Lord_of_Dragonspire's song 2 is played by another routine: no song table
+    is loaded, and the decoder says so."""
+    raw = _tune("MUSICIANS/P/Page_Jason/Lord_of_Dragonspire.sid")
+    assert probe.song_read(sid._load_image(raw), 1, sid._P_SONGTBL) is None
+    with pytest.raises(SidParseError, match="no GoatTracker song table read"):
+        sid.decompile_sid(raw, subtune=1)
 
 
 def test_hvsc_corpus_round_trips_through_the_typed_model():

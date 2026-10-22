@@ -63,6 +63,23 @@ waveforms the player plays back is taken. A define the planted song cannot
 show is None, and only then are NOWAVEDELAY and SIMPLEPULSE inferred from
 greloc's optimized-packing rules.
 
+### Selecting the song by the player's own song-table load
+
+Which player in the image plays a header song, which of its subtunes, and its
+song table are read from what the tune does, not from the header or an init
+idiom: `pygoattracker.probe.song_read` boots the image as the PSID driver does,
+runs the tune's init with `A = song - 1` and then the two play calls in which
+`player.s` starts a song (`mt_initsongnum`'s reset, then tick 0's
+`mt_sequencer`), and records the first read by an `LDA songtbllo,Y` of the
+song-table idiom below, matched in the memory init leaves (so a player init
+installs or a wrapper that calls play inside init are seen too). The read
+address minus `songtbllo` is the selected entry (`3 · subtune`); the idiom's
+operands are that player's `(songtbllo, songs)`, tried first as its layout. A
+song whose init and play load no GoatTracker song table (another routine in a
+multi-player rip plays it) raises `SidParseError("no GoatTracker song table
+read ...")`; a song whose entry lies past the player's table raises `no such
+subtune`.
+
 ### Locating tables from the player code
 
 gt2reloc shipped many packer/player revisions whose table geometry differs, and

@@ -31,6 +31,14 @@ playroutine (as produced by `gt2reloc`) followed by the song data.
 `Song`. `result.info` carries the packed playroutine options (`freq_table`,
 `simplepulse`) for building a matching `Player`.
 
+`GoatTrackerSidParser` (the `goattracker2` [pysidtracker format](usage.md#pysidtracker-command-line))
+wraps this: `parse(data, subtune=k)` returns the `DecompiledSid` of subtune `k`,
+whose `player()` plays it, and `recognize` returns the frequency-table anchor
+only when the image also holds the packed player's pattern-fetch idiom (the
+pattern-pointer idiom below), since the standard frequency table alone appears
+in most trackers' tunes. `Gt1SidParser` (`goattracker1`) does the same for
+GoatTracker V1.x tunes, returning a `DecompiledGt1`.
+
 The decompiler reads the frequency table, orderlists, packed patterns,
 per-field instrument arrays and the four wave/pulse/filter/speed tables,
 reversing greloc's byte transforms to editor form. The build flags that live in

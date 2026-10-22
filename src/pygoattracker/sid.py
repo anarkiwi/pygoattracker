@@ -31,6 +31,7 @@ from pysidtracker import (
     SidImage,
     detect_playroutine,
     find_code_all,
+    find_code_first,
     init_effects,
     read_bytes,
     trace_init,
@@ -1156,16 +1157,21 @@ def read_sid(src, subtune=0) -> Song:
 class GoatTrackerSidParser(BaseSidParser):
     """Plug GoatTracker ``.sid`` decompilation into the shared parser API.
 
-    :meth:`parse` returns the recovered :class:`~pygoattracker.model.Song`;
-    :meth:`recognize` locates the greloc frequency-table anchor so the inherited
+    :meth:`parse` returns the :class:`DecompiledSid` of a subtune (its ``song``
+    and a :meth:`DecompiledSid.player` of it); :meth:`recognize` returns the
+    greloc frequency-table anchor, so the inherited
     :meth:`~pysidtracker.BaseSidParser.detect` can classify direct-load vs
-    packed/relocated tunes.
+    packed/relocated tunes, but only when the image also holds the packed
+    player's pattern-fetch idiom: the standard frequency table alone is common
+    to most trackers' tunes.
     """
 
     error_class = SidParseError
 
-    def parse(self, data, subtune=0, **kwargs) -> Song:
-        return read_sid(data, subtune=subtune)
+    def parse(self, data, subtune=0, **kwargs) -> DecompiledSid:
+        return decompile_sid(data, subtune=subtune)
 
     def recognize(self, image: SidImage):
+        if find_code_first(image, _P_PATTTBL) is None:
+            return None
         return _recognize(image)

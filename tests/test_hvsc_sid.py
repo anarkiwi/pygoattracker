@@ -160,23 +160,25 @@ def test_hvsc_corpus_decompiles():
         )
 
 
-def test_hvsc_corpus_all_direct_load():
-    # Every recognised HVSC GoatTracker tune is a direct-load image: static
-    # recognition succeeds without emulating init. init=False proves no tune in
-    # the sample needs the unpack path (and keeps the test emulator-free/fast).
+def test_hvsc_corpus_recognized_tunes_are_direct_load():
+    # Static recognition (init=False, emulator-free) finds every decodable HVSC
+    # GoatTracker tune as a direct-load image; a tune it does not recognize (no
+    # packed-player idiom) is one the decompiler cannot decode either.
     present = _present()
     if len(present) < 100:
         pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
     parser = sid.GoatTrackerSidParser()
-    non_direct = []
+    decodable = []
     for rel, path in present:
         raw = path.read_bytes()
-        detection = parser.detect(raw, init=False)
-        if detection.kind is not PlayroutineKind.DIRECT:
-            non_direct.append(rel)
-    # Only tunes whose frequency table is absent entirely (a couple of
-    # non-gt2reloc oddities) fail static recognition; allow a tiny tail.
-    assert len(non_direct) <= 3, f"unexpected non-direct tunes: {non_direct}"
+        if parser.detect(raw, init=False).kind is PlayroutineKind.DIRECT:
+            continue
+        try:
+            sid.decompile_sid(raw)
+        except SidParseError:
+            continue
+        decodable.append(rel)
+    assert not decodable, f"decodable tunes not recognized: {decodable}"
 
 
 @pytest.mark.parametrize("rel,expect", _REPRESENTATIVES.items())

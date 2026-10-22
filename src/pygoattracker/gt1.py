@@ -12,14 +12,15 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from pysidtracker import run_init
+from pysidtracker import BaseSidParser, SidHeader, SidImage, run_init
 from pysidtracker.mos6502 import disasm_len
 
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SidParseError, SngParseError
-from pygoattracker.sid import _load_image
+from pygoattracker.sid import _load_image, parse_sid_header
 
 if TYPE_CHECKING:
+    from pygoattracker.gt1player import Gt1Player
     from pygoattracker.model import Song
 
 PLAYER_ORG = 0x1000
@@ -582,3 +583,36 @@ def decompile_gt1(raw: bytes, subtune: int = 0) -> Gt1Song:
     song = decompile_image(image.mem, found, image.end)
     song.initialized = True
     return song
+
+
+@dataclass
+class DecompiledGt1:
+    """A decompiled GoatTracker V1.x ``.sid``: the song, its PSID header and subtune."""
+
+    song: Gt1Song
+    header: SidHeader
+    subtune: int = 0
+
+    def player(self) -> Gt1Player:
+        """A :class:`~pygoattracker.gt1player.Gt1Player` of this subtune."""
+        # pylint: disable-next=import-outside-toplevel
+        from pygoattracker.gt1player import Gt1Player
+
+        return Gt1Player(self.song, subtune=self.subtune)
+
+
+class Gt1SidParser(BaseSidParser):
+    """Plug GoatTracker V1.x ``.sid`` decompilation into the shared parser API.
+
+    :meth:`recognize` returns the relocated playroutine match; :meth:`parse`
+    returns the :class:`DecompiledGt1` of a subtune.
+    """
+
+    error_class = SidParseError
+
+    def parse(self, data, subtune=0, **kwargs) -> DecompiledGt1:
+        song = decompile_gt1(data, subtune)
+        return DecompiledGt1(song, parse_sid_header(data), subtune)
+
+    def recognize(self, image: SidImage):
+        return find_player(image.mem)

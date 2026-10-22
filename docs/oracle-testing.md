@@ -32,6 +32,8 @@ byte-exact over the whole song:
 | `Metroid-Brinstar` | 3x multispeed: channels start on `DEFAULTTEMPO` |
 | `Dirty_Cheater` | init stub writes voice 3 before the player |
 | `Loader_Music`, `Ryan_Went_Sling`, `Galaga_Start_Theme`, `Heavy_Industrial_Machinery`, `Contra_Jungle_Theme` | hard-restart ADSR `$FF00` (AD stored first), `$FF00` (altplayer, ghost), `$1000`, `$FF0F`, `$0F0F` |
+| `Goat_City` | unoptimized packing: wave-delay code (NOWAVEDELAY off) read from the player, with no delay rows |
+| `2_Hours_NOT_Enough` | the same, plus a `$00` pulse-table step (its time wraps to 256 modulations) |
 | `Miner_Prophet_preview` | a define found at two sites leaves the rest of the build read |
 | `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |
 
@@ -62,6 +64,13 @@ python -m pysidtracker.survey find $HVSC --player 'goattracker|^\(gt' --out tune
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC tunes.csv --work .hvsc-survey --render oracle_hvsc:render
 python -m pysidtracker.survey triage .hvsc-survey
 PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC tunes.csv <md5>_<song> --work .hvsc-survey --render oracle_hvsc:render
+```
+
+`python -m pysidtracker.whydiff` explains a subtune's first difference against the
+6502 player, line by line, with `oracle_hvsc:player` as the player hook:
+
+```bash
+PYTHONPATH=scripts python -m pysidtracker.whydiff $HVSC/<path>.sid oracle_hvsc:player --song 1 --frames 1000
 ```
 
 `scripts/build_census.py $HVSC tunes.csv` tallies which `PlayerBuild` defines

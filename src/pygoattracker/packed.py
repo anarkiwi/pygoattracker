@@ -88,6 +88,7 @@ class PlayerBuild:
     fixed: tuple | None = None
     pulseopt: bool | None = None
     realtime: bool | None = None
+    wavedelay: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -264,7 +265,18 @@ def _read_build(image) -> PlayerBuild:
         fixed=fixed,
         pulseopt=_has(image, "BC ?? ?? F0 ?? 1D ?? ?? F0"),
         realtime=_found(_maybe(image, "BD {c:w} F0 ?? BC", c=c)),
+        wavedelay=_wavedelay(image),
     )
+
+
+def _wavedelay(image):
+    """``mt_wavexec``'s ``cmp #$10`` delay test (NOWAVEDELAY 0), or its ``beq``."""
+    head = "BC ?? ?? F0 ?? B9 ?? ??"
+    for spec, delay in ((f"{head} C9 10 B0", True), (f"{head} F0", False)):
+        m = _maybe(image, spec)
+        if m is not None:
+            return None if m is _AMBIGUOUS else delay
+    return None
 
 
 def read_state(image, build: PlayerBuild) -> PlayerState | None:

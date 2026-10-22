@@ -543,6 +543,7 @@ def test_survey_render(packed):
         d.typed, freq_table=d.info.note_read, simplepulse=d.info.simplepulse
     ).render_grid(60)
     assert grid.shape == (60, 25) and (grid == np.asarray(want)).all()
+    assert (np.asarray(oracle_hvsc.player(packed, 1).render_grid(60)) == grid).all()
     assert json.loads(json.dumps(info))["simplepulse"] == d.info.simplepulse
     assert {"adparam", "firstnohr", "pulseopt", "realtime", "state"} <= set(info)
     with pytest.raises(pysidtracker.SidParseError):

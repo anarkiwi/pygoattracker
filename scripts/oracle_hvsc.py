@@ -36,3 +36,10 @@ def render(data, song, nframes):
         state=d.info.state is not None,
     )
     return np.asarray(player.render_grid(nframes), np.int16), info
+
+
+def player(data, song):
+    """The ``MemPlayer`` of 1-based ``song`` (``python -m pysidtracker.whydiff``'s hook)."""
+    if find_player(_load_image(data).mem) is not None:
+        return Gt1Player(decompile_gt1(data, subtune=song - 1), subtune=song - 1)
+    return decompile_sid(data, subtune=song - 1).player()

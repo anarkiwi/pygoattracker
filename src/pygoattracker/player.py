@@ -689,16 +689,16 @@ class Player(MemPlayer):
             if left >= 0x80:
                 chan.pulse = ((left & 0x0F) << 8) | self._rt(ptbl, chan.pulse_table_ptr)
                 chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
-            else:
-                chan.pulsetime = left
-        if chan.pulsetime:
-            speed = self._rt(ptbl, chan.pulse_table_ptr)
-            if speed >= 0x80:
-                speed -= 0x100
-            chan.pulse = (chan.pulse + speed) & 0xFFF
-            chan.pulsetime -= 1
-            if not chan.pulsetime:
-                chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
+                return
+            chan.pulsetime = left
+        # mt_newpulsemod: a $00 step modulates and its dec wraps to 256 steps.
+        speed = self._rt(ptbl, chan.pulse_table_ptr)
+        if speed >= 0x80:
+            speed -= 0x100
+        chan.pulse = (chan.pulse + speed) & 0xFFF
+        chan.pulsetime = (chan.pulsetime - 1) & 0xFF
+        if not chan.pulsetime:
+            chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
 
     def _pulse_exec_simple(self, chan: _Channel) -> None:
         """SIMPLEPULSE pulse executor (player.s mt_setpulse/mt_pulsemod,

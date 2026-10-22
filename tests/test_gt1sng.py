@@ -5,7 +5,6 @@ parse, round-trip byte for byte, and play identical to the packed 6502
 playroutine (``EmuPlayer``) once the F9 relocator runs.
 """
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,12 +24,12 @@ from tests._fixture_cache import (
     GOATTRK093_SONGS,
     GOATTRK_SONGS,
     GOATOLD_SONGS,
+    HVSC_CACHE,
     goatold_song,
     goattrk093_song,
     goattrk_song,
 )
 
-REPO = Path(__file__).resolve().parent.parent
 ORACLE_SID = "MUSICIANS/C/Cadaver/GoatTracker_Classical_Example.sid"
 DOJO_SID = "MUSICIANS/C/Cadaver/Dojo.sid"
 SONGS = sorted(GOATOLD_SONGS)
@@ -39,11 +38,9 @@ V153_SONGS = sorted(GOATTRK_SONGS)
 
 
 def _oracle_sid(relpath: str = ORACLE_SID) -> Path:
-    sys.path.insert(0, str(REPO / "scripts"))
-    import fetch_tunes
     from pysidtracker.testing import resolve_tune
 
-    path = resolve_tune(relpath, cache_dir=fetch_tunes.CACHE)
+    path = resolve_tune(relpath, cache_dir=HVSC_CACHE)
     if path is None:
         pytest.skip("oracle sid unavailable (no local HVSC tree, mirror offline)")
     return Path(path)

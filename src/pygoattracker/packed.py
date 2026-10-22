@@ -2,7 +2,7 @@
 
 ``decode`` states the packed bytes as what the packed player does with them;
 ``pack`` re-emits every byte at its address from the typed song and its layout;
-``read_build`` reads the greloc defines from the instructions ``player.s`` assembles.
+:class:`PlayerBuild` holds the greloc defines :mod:`pygoattracker.probe` measures.
 """
 
 from dataclasses import dataclass, replace
@@ -69,11 +69,13 @@ class PackedLayout:
 
 @dataclass(frozen=True)
 class PlayerBuild:
-    """The greloc defines in the player's code that change what the song data does.
+    """The greloc defines of the player that change what the song data does.
 
     ``ghost``: the full-buffering ghost registers (None: the player writes the chip);
     ``alt``: altplayer.s, whose flush ascends. Below ``firstnohr`` hard restart, below
-    ``firstlegato`` gate-off, then legato. None: a define the code does not state.
+    ``firstlegato`` gate-off, then legato. None: a define the player does not show.
+    ``wrapper``: a play wrapper outside the player flushes its zero-page ghost;
+    ``funk``: the funk tempo table a ghost build's first play call starts from.
     """
 
     ghost: int | None = None
@@ -83,11 +85,13 @@ class PlayerBuild:
     firstnohr: int | None = None
     firstlegato: int | None = None
     deftempo: int | None = None
-    insvib: bool | None = None
-    gatecol: bool | None = None
     fixed: tuple | None = None
     pulseopt: bool | None = None
     realtime: bool | None = None
+    wavedelay: bool | None = None
+    simplepulse: bool | None = None
+    funk: tuple | None = None
+    wrapper: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,43 +105,12 @@ class PlayerState:
     funk: tuple
 
 
-class _Ambiguous(Exception):
-    pass
-
-
-_AMBIGUOUS = object()
-
-
 class PlayerCode(NamedTuple):
     """The ``[start, end)`` span of ``image`` one player's code is in (None: open)."""
 
     image: object
     start: int | None = None
     end: int | None = None
-
-
-def _code(image) -> PlayerCode:
-    return image if isinstance(image, PlayerCode) else PlayerCode(image)
-
-
-def _find(code, spec):
-    return find_code_all(code.image, spec, start=code.start, end=code.end)
-
-
-def _one(image, spec, **want):
-    at = [m for m in _find(image, spec) if want.items() <= m.captures.items()]
-    if len(at) > 1:
-        raise _Ambiguous(spec)
-    return at[0] if at else None
-
-
-def _branch(m, off):
-    d = m.u8(off + 1)
-    return m.addr + off + 2 + d - (d & 0x80) * 2
-
-
-def _has(image, spec):
-    return bool(_find(image, spec))
 
 
 _TEMPO = "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D"
@@ -162,137 +135,6 @@ def player_span(image, data):
         if m.addr < m.captures["p"] <= t
     ]
     return PlayerCode(image, bases[-1], data) if bases else PlayerCode(image)
-
-
-def read_build(image) -> PlayerBuild:
-    """Every define of :class:`PlayerBuild` the player code states.
-
-    ``image`` is a whole image or one player's :class:`PlayerCode`.
-    """
-    try:
-        return _read_build(_code(image))
-    except _Ambiguous:
-        return PlayerBuild()
-
-
-def _maybe(image, spec, **want):
-    """:func:`_one`, or ``_AMBIGUOUS`` where the fragment is at more than one site."""
-    try:
-        return _one(image, spec, **want)
-    except _Ambiguous:
-        return _AMBIGUOUS
-
-
-def _found(m):
-    """True/False for a site found or not, None for an ambiguous one."""
-    return None if m is _AMBIGUOUS else m is not None
-
-
-def _read_build(image) -> PlayerBuild:
-    asc = _one(image, "A2 00 BD {g:w} 9D ?? ?? E8 E0 19 D0")
-    flush = asc or _one(image, "A2 18 BD {g:w} 9D ?? ?? CA 10")
-    tempo = _one(image, _TEMPO)
-    if tempo is None:  # no mt_initchn: not a player.s this reader knows
-        return PlayerBuild()
-    # Hard restart: ADPARAM/SRPARAM in either order to targets with SR at AD + 1.
-    for sta, cap in (("9D", "w"), ("95", "b")):
-        hr = _maybe(
-            image, f"A9 {{x}} {sta} {{p:{cap}}} A9 {{y}} {sta} {{q:{cap}}} A9 FE 9D"
-        )
-        if hr is not None:
-            break
-    ad = sr = skiphr = None
-    if hr is None:
-        cmp = _maybe(image, "BD ?? ?? C9 {n} B0 ?? A9 FE 9D")
-        firstnohr = 1
-        if cmp is not None and cmp is not _AMBIGUOUS:
-            skiphr = cmp.addr + 7
-    elif hr is _AMBIGUOUS:
-        cmp, firstnohr = _AMBIGUOUS, None
-    else:
-        ops = " ??" * (1 + (cap == "w"))
-        cmp = _maybe(
-            image, f"BD ?? ?? C9 {{n}} B0 ?? A9 ?? {sta}{ops} A9 ?? {sta}{ops} A9 FE 9D"
-        )
-        firstnohr = NONE
-        c = hr.captures
-        ad, sr = (c["x"], c["y"]) if c["p"] < c["q"] else (c["y"], c["x"])
-        skiphr = hr.addr + 8 + 2 * (cap == "w")
-    if cmp is _AMBIGUOUS:
-        firstnohr = None
-    elif cmp is not None:
-        firstnohr = cmp.captures["n"]
-    legato = [
-        m.captures["l"]
-        for m in _find(image, "C9 {l} 90 ?? B0")
-        if _branch(m, 2) == skiphr
-    ]
-    tick034 = _maybe(image, "9D ?? ?? BD ?? ?? 9D ?? ?? 60")
-    insvib = _has(image, "BC ?? ?? B9 ?? ?? A8") or (
-        None
-        if tick034 is _AMBIGUOUS
-        else any(
-            m.captures["t"] == getattr(tick034, "addr", None)
-            for m in _find(image, "B9 ?? ?? 4C {t:w}")
-        )
-    )
-    c = tempo.captures["c"]
-    gatecol = _found(_maybe(image, "BD {c:w} DD ?? ?? F0", c=c))
-    fixed = None
-    if gatecol is False:
-        gate = _maybe(image, "BD {c:w} C9 {g} F0", c=c)
-        waves = {m.captures["w"] for m in _find(image, "BD {w:w} 3D ?? ?? 9D")}
-        first = (
-            _maybe(image, "A9 {f} 9D {w:w}", w=waves.pop()) if len(waves) == 1 else None
-        )
-        if _found(gate) and _found(first):
-            fixed = gate.captures["g"], first.captures["f"]
-    return PlayerBuild(
-        ghost=flush.captures["g"] if flush else None,
-        alt=None if flush is None else asc is not None,
-        adparam=ad,
-        srparam=sr,
-        firstnohr=firstnohr,
-        firstlegato=(
-            None
-            if skiphr is None and firstnohr is None
-            else legato[0] if len(legato) == 1 else NONE
-        ),
-        deftempo=tempo.captures["t"],
-        insvib=insvib,
-        gatecol=gatecol,
-        fixed=fixed,
-        pulseopt=_has(image, "BC ?? ?? F0 ?? 1D ?? ?? F0"),
-        realtime=_found(_maybe(image, "BD {c:w} F0 ?? BC", c=c)),
-    )
-
-
-def read_state(image, build: PlayerBuild) -> PlayerState | None:
-    """The ghost image the first play call flushes, and the immediates init keeps.
-
-    ``mt_filtdone`` loads cutoff, mode and volume and stores them to the ghost; a
-    build without filter code stores no cutoff, which the image then holds.
-    """
-    image = _code(image)
-    g, mem = build.ghost, image.image.mem
-    if g is None:
-        return None
-    try:
-        filt = _one(image, "A9 {t} 09 {f} 8D {r:w}", r=g + 0x18)
-        cut = _one(image, "A9 {c} 8D {r:w}", r=g + 0x16)
-        funk = _one(image, "C9 02 B0 ?? A8 49 01 9D ?? ?? B9 {k:w} E9 00")
-    except _Ambiguous:
-        return None
-    if filt is None:
-        return None
-    k = funk.captures["k"] if funk else None
-    return PlayerState(
-        registers=tuple(mem[g : g + C.SID_REGISTERS]),
-        cutoff=cut.captures["c"] if cut else mem[g + 0x16],
-        filttype=filt.captures["t"],
-        volume=filt.captures["f"],
-        funk=(mem[k], mem[k + 1]) if funk else (8, 5),
-    )
 
 
 # ---- packed bytes <-> meaning ------------------------------------------------

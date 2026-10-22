@@ -39,6 +39,7 @@ Roughly 79% of the sampled corpus is in scope and must decompile; the remainder
 raises a clean ``SidParseError`` (never any other exception).
 """
 
+import functools
 import sys
 from pathlib import Path
 
@@ -108,6 +109,23 @@ def _resolve(rel: str):
     return resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
 
 
+@functools.lru_cache(maxsize=None)
+def _decoded(path, subtune=0):
+    """``decompile_sid`` of ``path``, or the :class:`SidParseError` it raises; the
+    corpus tests share one decompile per tune."""
+    try:
+        return sid.decompile_sid(Path(path).read_bytes(), subtune=subtune)
+    except SidParseError as exc:
+        return exc
+
+
+def _decompile(path, subtune=0):
+    result = _decoded(str(path), subtune)
+    if isinstance(result, SidParseError):
+        raise result
+    return result
+
+
 def _present() -> list:
     """``(rel, path)`` for each sampled tune resolvable locally or via mirror."""
     out = []
@@ -133,9 +151,8 @@ def test_hvsc_corpus_decompiles():
     parsed = 0
     excluded = 0
     for rel, path in present:
-        raw = path.read_bytes()
         try:
-            result = sid.decompile_sid(raw)
+            result = _decompile(path)
         except SidParseError:
             # Documented out-of-scope variant (see module docstring). A clean
             # SidParseError is the contract for tunes the packed path cannot
@@ -234,7 +251,7 @@ def test_hvsc_corpus_round_trips_through_the_typed_model():
     checked = 0
     for rel, path in present:
         try:
-            result = sid.decompile_sid(path.read_bytes())
+            result = _decompile(path)
         except SidParseError:
             continue
         assert result.repack() == [], rel
@@ -258,9 +275,8 @@ def test_hvsc_corpus_resolves_overclaimed_songs():
     overclaimed = 0
     resolved_to_music = 0
     for rel, path in present:
-        raw = path.read_bytes()
         try:
-            base = sid.decompile_sid(raw)
+            base = _decompile(path)
         except SidParseError:
             continue
         decoded = len(base.song.subtunes)
@@ -269,7 +285,7 @@ def test_hvsc_corpus_resolves_overclaimed_songs():
         overclaimed += 1
         for s in range(base.header.songs):
             try:
-                result = sid.decompile_sid(raw, subtune=s)
+                result = _decompile(path, s)
                 result.player()
             except SidParseError:
                 continue  # this song selects a subtune the player has no song for

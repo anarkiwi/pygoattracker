@@ -41,11 +41,27 @@ GoatTracker V1.x tunes, returning a `DecompiledGt1`.
 
 The decompiler reads the frequency table, orderlists, packed patterns,
 per-field instrument arrays and the four wave/pulse/filter/speed tables,
-reversing greloc's byte transforms to editor form. The build flags that live in
-the player *code* rather than the song data (which instrument fields are
-present, table lengths, `nowavedelay`, `simplepulse`) are recovered by
-re-deriving greloc's deterministic rules and by an exact-fit tiling of the
+reversing greloc's byte transforms to editor form. Which instrument fields are
+present and the table lengths come from an exact-fit tiling of the
 instrument/table region.
+
+### Measuring the build by running the player
+
+The greloc defines assembled into the player (`PlayerBuild`: NOWAVEDELAY,
+SIMPLEPULSE, the hard-restart ADSR, the `FIRSTNOHRINSTR`/`FIRSTLEGATOINSTR`
+instrument classes, `DEFAULTTEMPO`, FIXEDPARAMS, the pulse and realtime
+optimizations, the ghost registers and their flush order, the funk tempo
+table) are measured, not pattern-matched: `pygoattracker.probe.Bench` plants
+chosen song data at the decoded layout, boots the image's own 6502 code on
+jennings and reads back its SID writes (every `$20` mirror of `$D400-$D7FF`).
+A waveform byte `$51` comes back as `$41` only with `mt_wavexec`'s delay test
+in; a set-pulse row's one byte in both pulse registers is SIMPLEPULSE; the
+envelope between two notes is the hard restart; a bisection over instrument
+numbers finds the class bounds; and so on. Where a tiling is ambiguous
+(vibrato or gate columns), the one whose planted gate timers and first
+waveforms the player plays back is taken. A define the planted song cannot
+show is None, and only then are NOWAVEDELAY and SIMPLEPULSE inferred from
+greloc's optimized-packing rules.
 
 ### Locating tables from the player code
 
@@ -121,7 +137,8 @@ byte space.
 packed tempo (`t - 1` from 3), `vibdelay - 1`, the wave and filter column
 transforms, NOWAVEDELAY, SIMPLEPULSE, the speedtable's row 0, and the
 instrument classes (`FIRSTNOHRINSTR`, `FIRSTLEGATOINSTR`) or FIXEDPARAMS'
-immediates read from player code (`PackedInfo.build`, a `PlayerBuild`).
+gate timer and first waveform measured from the player (`PackedInfo.build`, a
+`PlayerBuild`).
 `DecompiledSid.repack()` re-encodes the typed song with `packed.pack` and lists
 every byte that differs from the image: none, for every HVSC tune `decompile_sid`
 reads. `PackedInfo.freq_table` is the tuning greloc packed
@@ -132,8 +149,10 @@ starts from, in a full-ghosting build (`GHOSTREGS`), whose `mt_play` copies the
 previous call's ghost to the SID before it runs: a `Player` given a `state`
 outputs each call one call late. `PackedInfo.init_regs` are the SID writes of
 the tune's own init routine, which the chip holds until the player overwrites
-them. In an image holding several players, `PlayerBuild` is read from the code
-between the decoded data's jump table and its frequency table (`player_span`).
+them. In an image holding several players, the decoded data's own player is the
+code between its jump table and its frequency table (`player_span`); an
+interrupt-driven tune with no play address is probed through that jump table's
+`jmp mt_play`.
 `PlayerBuild.deftempo` (greloc `DEFAULTTEMPO`) is the `Player`'s
 `default_tempo`.
 

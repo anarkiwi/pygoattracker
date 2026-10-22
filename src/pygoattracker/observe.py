@@ -376,23 +376,18 @@ def _anchor(trace, anchors, ours):
     )
 
 
-def _note_bases(trace, anchors):
-    """``(low, high)``: the operands of the loads, by one index, of a voice's two
-    frequency bytes that reach its registers unchanged, the high one from the stock
-    high column of one of ``anchors``: the note table the player indexes; else None.
-    """
-    loads = {(r.addr, r.base): r for r in trace.reads}
+def _note_bases(trace):
+    """``(low, high)``: the operands of the loads, by one index loaded from data, of
+    the two frequency bytes a voice's registers are written from: the note table
+    the player indexes; else None."""
+    loads = {(r.addr, r.base): r for r in trace.reads if r.origin is not None}
     voices = {}
-    for addr, org, exact, base in trace.sid:
+    for addr, org, _, base in trace.sid:
         reg, read = addr & 0x1F, loads.get((org, base))
-        if exact and reg in _FREQ and read is not None:
+        if reg in _FREQ and read is not None:
             key = (reg // 7, read.origin, read.value)
             voices.setdefault(key, {})[reg % 7] = read
-    bases = {
-        (v[0].base, v[1].base)
-        for v in voices.values()
-        if len(v) == 2 and any(a + n <= v[1].addr < a + 2 * n for a, _, n in anchors)
-    }
+    bases = {(v[0].base, v[1].base) for v in voices.values() if len(v) == 2}
     return bases.pop() if len(bases) == 1 else None
 
 
@@ -403,10 +398,10 @@ def instrument_layout(bench, anchors, tables) -> dict:
 
     A planted note shows the columns its instrument byte indexes and the wavetable
     pointer (instrument 1's, else set to 1); planted with instrument 1's other
-    columns 1, no wavetable and speed commands on the other voices, what each
-    column is and where the speed table is; where no vibrato or command shows it,
-    planted with every pointer at a row 1 of two set rows, where the last table's
-    right column starts.
+    columns 1, no wavetable and speed commands on the other voices (or as few of
+    these as the player plays through), what each column is and where the speed
+    table is; where no vibrato or command shows it, planted with every pointer at
+    a row 1 of two set rows, where the last table's right column starts.
     """
     lay = bench.lay
     rooms = {a + k for a, n in zip(lay.patt_addrs, bench.patt_sizes) for k in range(n)}
@@ -434,7 +429,7 @@ def instrument_layout(bench, anchors, tables) -> dict:
     if end is None:
         raise SidParseError("no orderlist follows the tables")
     ours = planted | set(range(tstart, end))
-    anchor, bases = _anchor(trace, anchors, ours), _note_bases(trace, anchors)
+    anchor, bases = _anchor(trace, anchors, ours), _note_bases(trace)
     wave = [c for c in cols if _row1(trace.reads, c) == tstart]
     if not wave:
         trace = run(dict.fromkeys(cols, 1), held)
@@ -444,12 +439,18 @@ def instrument_layout(bench, anchors, tables) -> dict:
     ones = {c: int(c != wave[0]) for c in cols}
     try:
         effects = bench.plant(_effects(bench))
-        trace = _run(bench.boot({**effects, **ones}), held)
-    except (ProbeMiss, SidParseError):
-        effects, trace = buf, None
-    if trace is None:
-        effects, trace = buf, run(ones, held)
-    buf = effects
+    except ProbeMiss:
+        effects = buf
+    for plant, cells in ((effects, ones), (buf, ones), (buf, dict.fromkeys(cols, 1))):
+        try:
+            trace = _run(bench.boot({**plant, **cells}), held)
+        except SidParseError:
+            trace = None
+        if trace is not None:
+            break
+    else:
+        raise SidParseError("the planted note does not play")
+    buf = plant
     params = {a for a in rooms & set(buf) if buf[a] == 1} - planted
     roles = _roles(trace, cols, wave[0], tstart)
     lefts = {"wave": tstart}

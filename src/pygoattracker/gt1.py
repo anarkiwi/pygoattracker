@@ -65,6 +65,14 @@ FILTER_STEP0 = frozenset(("1.50", "1.50b"))
 ORDERLIST_LOOP_AFTER = frozenset(("1.50",))
 MUSICROUTINE11_SFX = frozenset(("11.2", "11.4"))
 MUSICROUTINE11_TIMING = frozenset(("11.3", "11.4", "11.5"))
+# Standard playroutines before V1.25 (musicroutine 11.1 with edits), oldest first,
+# and the behaviours each later release changed.
+PRE125 = ("0.96", "1.01", "1.1", "1.15", "1.16", "1.21", "1.22")
+ORDERLIST_ENDSONG = frozenset(PRE125[:3])
+PULSE_ALWAYS = frozenset(PRE125[:4])
+INIT_WAVE = frozenset(PRE125[:5])
+INIT_GATE = frozenset(PRE125[:6])
+PULSEDIR_RESET = frozenset(PRE125)
 
 SEGMENTS_V15 = (
     "instruments",
@@ -78,6 +86,12 @@ SEGMENTS_V15 = (
 SEGMENTS_V11 = tuple(name for name in SEGMENTS_V15 if name != "filtertable")
 
 _SPEEDCODE = re.compile(rb"\xa2(.)\x8e\x04\xdc\xa2(.)\x8e\x05\xdc", re.S)
+# The packer's init for a playroutine without a jump table: ``tax``, ``inx``,
+# ``stx playflag+1``, ``rts``; the song table it indexes starts one song early.
+_STUB_INIT = (0xAA, 0xE8, 0x8E)
+_RTS = 0x60
+_SONG_BIAS = 3
+_JUMP = 3
 _INSTR_FIELDS = 8
 _ORDER_END = 0xFF
 _PATT_END = 0xFF
@@ -99,6 +113,26 @@ class Reference:
     zeropage: tuple
     regex: re.Pattern
     author_end: int = _AUTHOR
+
+    @property
+    def stub_init(self) -> bool:
+        """The playroutine has no jump table: the packer prefixes an init stub."""
+        return "init" not in self.labels
+
+    @property
+    def song_bias(self) -> int:
+        """How far before the song table the packer points the song table operands."""
+        return _SONG_BIAS if self.stub_init else 0
+
+    @property
+    def play_entry(self) -> int:
+        """Offset of the packed play entry: ``play`` itself, or the jump table's second jump."""
+        return self.labels["play"] if self.stub_init else _JUMP
+
+    def init_stub(self, address: int) -> bytes:
+        """The packer's init stub for the playroutine at ``address``."""
+        flag = (address + self.labels["playflag"] + 1).to_bytes(2, "little")
+        return bytes(_STUB_INIT) + flag + bytes((_RTS,))
 
     @property
     def free(self) -> tuple:
@@ -228,16 +262,18 @@ def find_player(mem) -> Gt1Match | None:
 
 
 def _prefer_data_match(buf: bytes, found: Gt1Match) -> Gt1Match:
-    """Among code-identical variants, pick the one whose data block also matches."""
+    """Among code-identical variants, pick the one whose frequency tables match."""
     ref = found.ref
     for name in PLAYERS:
         other = reference(name)
         if other.regex.pattern != ref.regex.pattern:
             continue
-        start = found.address + other.labels["mt_freqtblhi"]
-        if (
-            buf[start : found.address + len(other.code)]
-            == other.code[other.labels["mt_freqtblhi"] :]
+        hi, lo = other.labels["mt_freqtblhi"], other.labels["mt_freqtbllo"]
+        size = abs(lo - hi)
+        if all(
+            buf[found.address + pos : found.address + pos + size]
+            == other.code[pos : pos + size]
+            for pos in (hi, lo)
         ):
             return Gt1Match(other, found.address, found.tables, found.params)
     return found
@@ -344,6 +380,7 @@ class Gt1Song:
             pos += sizes[name]
         wave, wavelen = starts["wavetable"], len(self.wavetable)
         songtbl, nsongs = starts["songtable"], len(self.orderlists)
+        songtbl -= self.ref.song_bias
         patttbl = starts["patterntable"]
         return {
             "instad": starts["instruments"] - _INSTR_FIELDS,
@@ -410,10 +447,14 @@ class Gt1Song:
         if self.sng is not None:
             return self._packed().to_sid(name=name, author=author, released=released)
         address, data = self.pack()
+        play = address + self.ref.play_entry
+        if self.ref.stub_init:
+            stub = self.ref.init_stub(address)
+            address, data = address - len(stub), stub + data
         head = bytearray(0x7C)
         head[0:8] = b"PSID\x00\x02\x00\x7c"
         head[0x0A:0x0C] = address.to_bytes(2, "big")
-        head[0x0C:0x0E] = (address + 3).to_bytes(2, "big")
+        head[0x0C:0x0E] = play.to_bytes(2, "big")
         head[0x0E:0x10] = len(self.orderlists).to_bytes(2, "big")
         head[0x10:0x12] = (1).to_bytes(2, "big")
         for offset, text in ((0x16, name), (0x36, author), (0x56, released)):
@@ -437,10 +478,15 @@ def _word(mem, lo: int, hi: int) -> int:
     return mem[lo & 0xFFFF] | mem[hi & 0xFFFF] << 8
 
 
-def _orderlist_len(mem, addr: int) -> int:
+def _orderlist_len(mem, addr: int, endsong: bool = False) -> int:
+    """Length of the orderlist at ``addr`` through its end mark and restart byte.
+
+    ``endsong`` orderlists end at ``$FE`` (repeat) or ``$FF`` (loop to the
+    start) with no restart byte.
+    """
     for pos in range(addr, min(addr + 0x101, 0xFFFF)):
-        if mem[pos] == _ORDER_END:
-            return pos + 2 - addr
+        if mem[pos] == _ORDER_END or (endsong and mem[pos] == _ORDER_END - 1):
+            return pos + 1 + (not endsong) - addr
     raise SidParseError(f"GT1 orderlist at ${addr:04X} has no end mark")
 
 
@@ -474,20 +520,20 @@ def decompile_image(mem, found: Gt1Match, end: int = 0x10000) -> Gt1Song:
     inst = (tab["instad"] + _INSTR_FIELDS) & 0xFFFF
     wave = (tab["wavetbl"] + 1) & 0xFFFF
     wavelen = (tab["notetbl"] + 1 - wave) & 0xFFFF
-    nsongs3 = (tab["songtblhi"] - tab["songtbllo"]) & 0xFFFF
+    songlo = (tab["songtbllo"] + ref.song_bias) & 0xFFFF
+    songhi = (tab["songtblhi"] + ref.song_bias) & 0xFFFF
+    nsongs3 = (songhi - songlo) & 0xFFFF
     npatt = (tab["patttblhi"] - tab["patttbllo"]) & 0xFFFF
     _need(inst == found.address + len(ref.code), "instruments do not follow the player")
     _need(nsongs3 % 3 == 0 and nsongs3 and npatt, "song or pattern table size")
-    order_addrs = [
-        _word(mem, tab["songtbllo"] + i, tab["songtblhi"] + i) for i in range(nsongs3)
-    ]
+    order_addrs = [_word(mem, songlo + i, songhi + i) for i in range(nsongs3)]
     patt_addrs = [
         _word(mem, tab["patttbllo"] + i, tab["patttblhi"] + i) for i in range(npatt)
     ]
     starts = {
         "instruments": inst,
         "wavetable": wave,
-        "songtable": tab["songtbllo"],
+        "songtable": songlo,
         "patterntable": tab["patttbllo"],
         "orderlists": order_addrs[0],
         "patterns": patt_addrs[0],
@@ -498,7 +544,13 @@ def decompile_image(mem, found: Gt1Match, end: int = 0x10000) -> Gt1Song:
     _need(len(set(starts.values())) == len(starts), "overlapping tables")
     _need(segments[-1] == "patterns", "patterns are not the last table")
     nxt = dict(zip(segments, segments[1:]))
-    orders = _contiguous(mem, order_addrs, starts[nxt["orderlists"]], _orderlist_len)
+    endsong = ref.name in ORDERLIST_ENDSONG
+    orders = _contiguous(
+        mem,
+        order_addrs,
+        starts[nxt["orderlists"]],
+        lambda mem, addr: _orderlist_len(mem, addr, endsong),
+    )
     patterns = _patterns(mem, patt_addrs, end)
     sizes = {name: starts[nxt[name]] - starts[name] for name in segments[:-1]}
     _need(sizes["instruments"] % _INSTR_FIELDS == 0, "instrument table size")
@@ -559,7 +611,7 @@ def speedcode_timer(mem, init: int) -> int | None:
 
 
 def decompile_gt1(raw: bytes, subtune: int = 0) -> Gt1Song:
-    """Decompile a GoatTracker V1.5x packed ``.sid`` into a :class:`Gt1Song`.
+    """Decompile a GoatTracker V1.x packed ``.sid`` into a :class:`Gt1Song`.
 
     A tune whose header init is not the packed entry (an init stub) is decompiled
     from memory after running that init for ``subtune`` in a 6502 emulator.
@@ -568,12 +620,18 @@ def decompile_gt1(raw: bytes, subtune: int = 0) -> Gt1Song:
     found = find_player(image.mem)
     if found is None:
         raise SidParseError("no GoatTracker V1.x playroutine found")
-    header, address = image.header, found.address
-    if header.play_address != address + 3:
-        raise SidParseError("GT1 tune play address is not the packed jump table")
-    if header.init_address == address or (
-        header.init_address == address - 10
-        and speedcode_timer(image.mem, address - 10) is not None
+    header, address, ref = image.header, found.address, found.ref
+    if header.play_address != address + ref.play_entry:
+        raise SidParseError("GT1 tune play address is not the packed play entry")
+    init = header.init_address
+    packed = (
+        init == address - len(ref.init_stub(address))
+        and bytes(image.mem[init:address]) == ref.init_stub(address)
+        if ref.stub_init
+        else init == address
+    )
+    if packed or (
+        init == address - 10 and speedcode_timer(image.mem, address - 10) is not None
     ):
         return decompile_image(image.mem, found, image.end)
     run_init(image, subtune=subtune)

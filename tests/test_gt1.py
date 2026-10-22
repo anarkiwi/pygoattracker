@@ -14,6 +14,7 @@ from pysidtracker.oracle import EmuPlayer
 from pygoattracker import SidParseError
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.gt1 import (
+    ORDERLIST_ENDSONG,
     Gt1Instrument,
     Gt1Song,
     decompile_gt1,
@@ -23,6 +24,7 @@ from pygoattracker.gt1 import (
     speedcode_timer,
 )
 from pygoattracker.gt1player import Gt1Player
+from pygoattracker.sid import parse_sid_header
 from pygoattracker._gt1_refs import PLAYERS
 
 REPO = Path(__file__).resolve().parent.parent
@@ -176,12 +178,28 @@ ORDERLISTS_11 = [
 ]
 
 
+# Before V1.15: $FE repeats the last pattern and $FF loops to the start.
+ORDERLISTS_ENDSONG = [
+    [
+        bytes((0x00, 0x01, 0x02, 0xFF)),
+        bytes((0x03, 0x01, 0xFE)),
+        bytes((0x04, 0x04, 0xFF)),
+    ],
+    [
+        bytes((0x02, 0x01, 0xFE)),
+        bytes((0x00, 0xFF)),
+        bytes((0x03, 0xFF)),
+    ],
+]
+
+
 def make_song11(player="11.3", address=0x1000, **fields) -> Gt1Song:
     """A synthetic song exercising every musicroutine 11.x command."""
+    orders = ORDERLISTS_ENDSONG if player in ORDERLIST_ENDSONG else ORDERLISTS_11
     values = {
         "instruments": list(INSTRUMENTS_11),
         "wavetable": list(WAVETABLE),
-        "orderlists": [list(chans) for chans in ORDERLISTS_11],
+        "orderlists": [list(chans) for chans in orders],
         "patterns": list(PATTERNS_11),
     }
     values.update(fields)
@@ -199,10 +217,33 @@ def with_sfx(song: Gt1Song, x: int = 7) -> Gt1Song:
     return song
 
 
+class DriverEmu(EmuPlayer):
+    """An :class:`EmuPlayer` entering play with the flags init returned with.
+
+    sidplayfp's PSID driver idles after init and calls play from its interrupt
+    handler, whose ``rti`` restores the idle loop's flags before the next call.
+    """
+
+    def _init(self, subtune: int) -> None:
+        super()._init(subtune)
+        self._flags = self._mpu.p
+
+    def _frame(self) -> None:
+        self._mpu.p = self._flags
+        super()._frame()
+
+
 def emulated(song: Gt1Song, subtune: int, frames: int = FRAMES):
-    """The register grid of the packed 6502 playroutine itself."""
-    address, data = song.pack()
-    emu = EmuPlayer(data, address, address, address + 3, subtune)
+    """The register grid of the packed 6502 playroutine itself, as the packer saved it."""
+    raw = song.to_sid()
+    header = parse_sid_header(raw)
+    emu = DriverEmu(
+        raw[0x7E:],
+        header.real_load_address,
+        header.init_address,
+        header.play_address,
+        subtune,
+    )
     return emu.render_grid(frames)
 
 
@@ -277,6 +318,28 @@ def test_code_identical_players_told_apart_by_frequency_table():
     for player in ("1.52", "1.51"):
         raw = make_song(player).to_sid()
         assert decompile_gt1(raw).player == player
+    for player in ("0.96", "1.01"):
+        raw = make_song11(player).to_sid()
+        assert decompile_gt1(raw).player == player
+
+
+@pytest.mark.parametrize("player", M11_PLAYERS)
+def test_musicroutine11_song_start_resets_channel_state(player):
+    song = make_song11(player)
+    ref = song.ref
+    data = bytearray(ref.code[ref.code_end :])
+    for label, value in (("mt_chnwave", 0x41), ("mt_chnpulsedir", 0x81)):
+        pos = ref.labels[label] - ref.code_end
+        data[pos : pos + 15 : 7] = bytes((value,)) * 3
+    song.data = bytes(data)
+    for subtune in (0, 1):
+        assert Gt1Player(song, subtune).render_grid(200) == emulated(song, subtune, 200)
+
+
+def test_stub_init_play_entry_carry():
+    song = make_song11("0.96")
+    assert song.ref.stub_init and song.ref.song_bias == 3
+    assert Gt1Player(song, 0x7F).render_grid(50) == emulated(song, 0x7F, 50)
 
 
 def test_reference_relocation_walk():

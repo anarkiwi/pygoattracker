@@ -396,6 +396,20 @@ def _pulseopt(bench):
     return bool((steps == 0).any()) if steps.any() else None
 
 
+def _pulsefetch(bench, row):
+    """The pulse optimization also skips the step on the gate timer's fetch call:
+    with the gate timer at the call after a note's init, a set row lands a call
+    late. Needs the gate column, and only a set row."""
+    if not bench.lay.gate or row < 2:
+        return None
+    run = _melody(bench, gate=row - 1)
+    pw = run.grid[:, _PLO] | run.grid[:, _PHI] << 8
+    n = run.notes[0]
+    if pw[n] != pw[n - 1]:
+        return False
+    return True if pw[n + 1] != pw[n] else None
+
+
 def _realtime(bench, row):
     """``REALTIMEOPTIMIZATION`` skips continuous effects on each row's tick 0: the
     first continuous effect the build keeps holds the frequency there, and only
@@ -579,7 +593,10 @@ def measure(bench: Bench) -> PlayerBuild:
         firstlegato=firstlegato,
         deftempo=None if row is None else row - 1,
         fixed=fixed,
-        pulseopt=_shown(_pulseopt, bench),
+        pulseopt=_first_shown(
+            lambda: _pulseopt(bench),
+            lambda: None if row is None else _pulsefetch(bench, row),
+        ),
         realtime=(
             None
             if row is None

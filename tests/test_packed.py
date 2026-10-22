@@ -116,6 +116,15 @@ def test_the_optimizations_and_fixedparams_are_read_from_their_sites():
     )
 
 
+def test_nowavedelay_is_read_from_the_wavetable_step():
+    delay = "BC 40 20 F0 3A B9 F5 15 C9 10 B0 0A"
+    nodelay = "BC 40 20 F0 3A B9 F5 15 F0 0A"
+    assert P.read_build(image(TEMPO, delay)).wavedelay is True
+    assert P.read_build(image(TEMPO, nodelay)).wavedelay is False
+    assert P.read_build(image(TEMPO)).wavedelay is None
+    assert P.read_build(image(TEMPO, delay, delay)).wavedelay is None
+
+
 def test_a_define_at_two_sites_or_no_player_states_no_build():
     assert P.read_build(image(DESC, TEMPO, TEMPO)) == P.PlayerBuild()
     assert P.read_build(image(DESC, GATECOL)) == P.PlayerBuild()

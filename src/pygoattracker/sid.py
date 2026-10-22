@@ -745,7 +745,11 @@ def _chain_valid(mem, arrays, eps, wtbl, wlen, pulse, plen, filt, flen, vib, sle
 
 
 def _detect_nowavedelay(wave_left):
-    """greloc clears NOWAVEDELAY when a wavetable delay row (0x01-0x0F) exists."""
+    """greloc clears NOWAVEDELAY when a wavetable delay row (0x01-0x0F) exists.
+
+    Only a guess where the build states no NOWAVEDELAY: unoptimized packing
+    keeps the delay code without delay rows.
+    """
     return not any(0x01 <= b <= 0x0F for b in wave_left)
 
 
@@ -796,7 +800,11 @@ def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build)
         gate_flags=any(v & 0xC0 for v in sol["arrays"].get("gatetimer", ())),
     )
     pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
-    nowavedelay = _detect_nowavedelay(mem[tstart : tstart + wlen])
+    nowavedelay = (
+        _detect_nowavedelay(mem[tstart : tstart + wlen])
+        if build.wavedelay is None
+        else not build.wavedelay
+    )
     simplepulse = _detect_simplepulse(pleft)
     subtunes = [
         Subtune(channels=orderlists[s * 3 : s * 3 + 3])

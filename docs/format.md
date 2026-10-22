@@ -37,7 +37,9 @@ reversing greloc's byte transforms to editor form. The build flags that live in
 the player *code* rather than the song data (which instrument fields are
 present, table lengths, `nowavedelay`, `simplepulse`) are recovered by
 re-deriving greloc's deterministic rules and by an exact-fit tiling of the
-instrument/table region.
+instrument/table region. `nowavedelay` is read from `mt_wavexec`'s `cmp #$10`
+delay test where the code states it (`PlayerBuild.wavedelay`): unoptimized
+packing keeps the delay code whether or not the wavetable has delay rows.
 
 ### Locating tables from the player code
 

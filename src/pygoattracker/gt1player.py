@@ -1,6 +1,6 @@
 """Native players for GoatTracker V1.x packed tunes.
 
-Transcriptions of the V1.5x standard playroutine and the V1.25 musicroutines over
+Transcriptions of the V1.4x and V1.5x standard playroutines and the V1.25 musicroutines over
 the packed memory image: channel variables and self-modified operands live at
 their packed addresses, and every 8-bit carry and wraparound follows the 6502 code.
 """
@@ -13,6 +13,7 @@ from pysidtracker.registers import PW_HI_REGS
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.gt1 import (
     FILTER_STEP0,
+    HARDRESTART_1FRAME,
     INIT_GATE,
     INIT_WAVE,
     MUSICROUTINE11_SFX,
@@ -21,6 +22,7 @@ from pygoattracker.gt1 import (
     ORDERLIST_LOOP_AFTER,
     PULSE_ALWAYS,
     PULSEDIR_RESET,
+    V14,
     V15,
     Gt1Song,
 )
@@ -87,6 +89,19 @@ class Gt1Player(MemPlayer):
         for reg in PW_HI_REGS:
             regs[reg] &= 0x0F
         return regs
+
+    def _wave_next(self, ptr: int, note: int, instnum: int) -> tuple:
+        """The note of wavetable row ``ptr`` and the row after it (0 stops)."""
+        step = self._rd(self._notetbl + ptr)
+        if step < 0x80:
+            step += note
+        if self._rd(self._wavetbl + ptr + 1) != 0xFF:
+            return step & 0x7F, (ptr + 1) & 0xFF
+        loop = self._rd(self._notetbl + ptr + 1)
+        if loop:
+            total = loop + self._rd(self._ins + 7 + instnum) + 1
+            loop = ((total & 0xFF) + 0xFE + (total >> 8)) & 0xFF or (instnum + 1) & 0xFF
+        return step & 0x7F, loop
 
     def _sid(self, reg: int, value: int) -> None:
         self._mem[_SID + reg] = value & 0xFF
@@ -272,20 +287,7 @@ class _Player15(Gt1Player):
                 self._set(WAVE, x, wave)
         else:
             self._set(WAVE, x, wave)
-        note = self._rd(self._notetbl + ptr)
-        if note < 0x80:
-            note += self._v(NOTE, x)
-        note &= 0x7F
-        if self._rd(self._wavetbl + ptr + 1) == 0xFF:
-            loop = self._rd(self._notetbl + ptr + 1)
-            if loop:
-                instnum = self._v(INSTNUM, x)
-                total = loop + self._rd(self._ins + instnum + 7) + 1
-                loop = ((total & 0xFF) + 0xFE + (total >> 8)) & 0xFF
-                if not loop:
-                    loop = (instnum + 1) & 0xFF
-        else:
-            loop = (ptr + 1) & 0xFF
+        note, loop = self._wave_next(ptr, self._v(NOTE, x), self._v(INSTNUM, x))
         self._set(WAVEPTR, x, loop)
         self._arpfreq_reset(x, note)
 
@@ -728,20 +730,7 @@ class _Player11(Gt1Player):
             raise GoatTrackerError(f"GT1 effect index {command} outside the jump table")
 
     def _skipwave(self, x: int, ptr: int) -> None:
-        note = self._rd(self._notetbl + ptr)
-        if note < 0x80:
-            note += self._g(M_NOTE, x)
-        note &= 0x7F
-        if self._rd(self._wavetbl + ptr + 1) == 0xFF:
-            loop = self._rd(self._notetbl + ptr + 1)
-            if loop:
-                instnum = self._g(M_INSTNUM, x)
-                total = loop + self._rd(self._ins + 7 + instnum) + 1
-                loop = ((total & 0xFF) + 0xFE + (total >> 8)) & 0xFF
-                if not loop:
-                    loop = (instnum + 1) & 0xFF
-        else:
-            loop = (ptr + 1) & 0xFF
+        note, loop = self._wave_next(ptr, self._g(M_NOTE, x), self._g(M_INSTNUM, x))
         self._s(M_WAVETBL, x, loop)
         self._arpfreq(x, note)
 
@@ -939,4 +928,406 @@ class _Player11(Gt1Player):
             self._sid(reg + x, 0)
 
 
-_PLAYERS = {V15: _Player15, "11": _Player11}
+# V1.4x channel variables, by playroutine label (three 7-byte blocks).
+(
+    F_NOTE,
+    F_FREQLO,
+    F_FREQHI,
+    F_NEWNOTE,
+    F_COMMAND,
+    F_CMDDATA,
+    F_INSTNUM,
+    F_WAVE,
+    F_WAVETBL,
+    F_PULSE,
+    F_PULSEDIR,
+    F_ARPCOUNT,
+    F_PACKREST,
+    F_REPEAT,
+    F_SONGPTR,
+    F_SONGNUM,
+    F_PATTPTR,
+    F_PATTNUM,
+    F_TICK,
+    F_TEMPO,
+    F_TRANS,
+) = _F_VARS = tuple(
+    "mt_chn" + var
+    for var in (
+        "note",
+        "freqlo",
+        "freqhi",
+        "newnote",
+        "command",
+        "cmddata",
+        "instnum",
+        "wave",
+        "wavetbl",
+        "pulse",
+        "pulsedir",
+        "arpcount",
+        "packrest",
+        "repeat",
+        "songptr",
+        "songnum",
+        "pattptr",
+        "pattnum",
+        "tick",
+        "tempo",
+        "trans",
+    )
+)
+_F_HARDRESTART = 2
+_F_TIMINGMARK = 0xC0
+
+
+class _Player14(Gt1Player):
+    """The V1.3..V1.4f standard, 1-frame hard restart and multispeed playroutines."""
+
+    def _setup(self, tables: dict) -> None:
+        lab = self._lab
+        self._var = {var: lab[var] for var in _F_VARS}
+        self._chnloop = lab["mt_chnloop"] + 1
+        self._init_adc = lab["init"] + 5
+        self._filtstep = lab["mt_filtstep"] + 1
+        self._filttime = lab["mt_filttime"] + 1
+        self._cutoff = lab["mt_filtcutoff"] + 1
+        self._cutoffadd = lab["mt_filtcutoffadd"] + 1
+        self._hrtimer = lab.get("mt_hrtimer")
+        self._filt = tables["filttbl"]
+        self._hr1 = self._song.player in HARDRESTART_1FRAME
+        self._temp1 = self._temp2 = 0
+
+    def _g(self, var: str, x: int) -> int:
+        return self._mem[self._var[var] + x]
+
+    def _s(self, var: str, x: int, value: int) -> None:
+        self._mem[self._var[var] + x] = value & 0xFF
+
+    def _instr(self, x: int, field: int) -> int:
+        return self._rd(self._ins + field + self._g(F_INSTNUM, x))
+
+    def _song_init(self, subtune: int) -> None:
+        self._wr(self._init_adc, subtune)
+        self._wr(self._chnloop, (subtune << 1) + subtune + (subtune >> 7))
+
+    def _frame(self) -> None:
+        mem = self._mem
+        for x in (0, 7, 14):
+            acc = mem[self._chnloop]
+            if acc < 0x80:
+                self._channel_init(x, acc)
+            else:
+                self._channel(x)
+            self._nextchn(x)
+        mem[self._chnloop] = 0xFF
+        step = mem[self._filtstep]
+        if not step:
+            return
+        if not mem[self._filttime]:
+            self._setfilter(step)
+            return
+        mem[self._filttime] -= 1
+        cutoff = (mem[self._cutoff] - mem[self._cutoffadd]) & 0xFF
+        mem[self._cutoff] = cutoff
+        self._sid(0x16, cutoff)
+
+    def _channel_init(self, x: int, acc: int) -> None:
+        self._s(F_SONGNUM, x, acc)
+        self._mem[self._chnloop] = (acc + 1) & 0xFF
+        for var in (F_WAVE, F_TRANS, F_WAVETBL, F_SONGPTR, F_PACKREST, F_REPEAT):
+            self._s(var, x, 0)
+        self._s(F_TICK, x, 5)
+        self._s(F_TEMPO, x, 5)
+        self._s(F_NEWNOTE, x, _ENDPATT)
+        self._s(F_PATTPTR, x, _ENDPATT)
+        if not x:
+            self._sid(0x15, 0)
+            self._setfilter(0)
+
+    def _channel(self, x: int) -> None:
+        tick = self._g(F_TICK, x)
+        if not tick:
+            self._newnotes(x)
+            return
+        if tick >= 0x80:
+            tick = self._g(F_TEMPO, x)
+        self._s(F_TICK, x, tick - 1)
+        if self._g(F_PATTPTR, x) == _ENDPATT:
+            self._nextpatt(x)
+        elif self._g(F_NEWNOTE, x) >= 0x80:
+            self._pulsemod(x)
+        else:
+            self._effects2(x)
+
+    def _nextpatt(self, x: int) -> None:
+        song = self._g(F_SONGNUM, x)
+        base = self._rd(self._songlo + song) | self._rd(self._songhi + song) << 8
+        pos = self._g(F_SONGPTR, x)
+        for _ in range(_SEQ_GUARD):
+            acc = self._rd(base + pos)
+            pos = (pos + 1) & 0xFF
+            if acc < _REPEAT:
+                break
+            if acc < _TRANSDOWN:
+                self._s(F_REPEAT, x, acc - _REPEAT)
+            elif acc < _LOOPSONG:
+                self._s(F_TRANS, x, acc - 0xF0)
+            else:
+                pos = self._rd(base + pos)
+        else:
+            raise GoatTrackerError("GT1 orderlist never reaches a pattern")
+        self._s(F_PATTNUM, x, acc)
+        if self._g(F_REPEAT, x):
+            self._s(F_REPEAT, x, self._g(F_REPEAT, x) - 1)
+            pos = (pos - 1) & 0xFF
+        self._s(F_SONGPTR, x, pos)
+        self._s(F_PATTPTR, x, self._g(F_PATTPTR, x) + 1)
+        if self._g(F_NEWNOTE, x) < 0x80:
+            self._effects2(x)
+        else:
+            self._wavearp(x)
+
+    def _effects2(self, x: int) -> None:
+        if not self._hr1:
+            count = (self._g(F_NEWNOTE, x) - 1) & 0xFF
+            self._s(F_NEWNOTE, x, count)
+            if not count:
+                self._pulseok(x)
+                return
+        self._s(F_ARPCOUNT, x, 0)
+        if self._hr1:
+            self._s(F_NEWNOTE, x, 0)
+        pulse = self._instr(x, 2)
+        if pulse:
+            self._s(F_PULSEDIR, x, pulse)
+            self._s(F_PULSE, x, pulse & 0x0F)
+        self._s(F_WAVETBL, x, self._instr(x, 7))
+        filt = self._instr(x, 6)
+        if filt:
+            self._setfilter(filt)
+        if self._hr1:
+            self._pulseok(x)
+
+    def _pulsemod(self, x: int) -> None:
+        speed = self._instr(x, 3) & 0xFE
+        if speed:
+            direction = self._g(F_PULSEDIR, x)
+            low = direction & 0xFE
+            if direction & 1:
+                low -= speed
+                pulse = self._g(F_PULSE, x) - (low < 0)
+                limit = self._instr(x, 4)
+            else:
+                low += speed
+                pulse = self._g(F_PULSE, x) + (low >> 8)
+                limit = self._instr(x, 5)
+            self._s(F_PULSE, x, pulse)
+            self._s(F_PULSEDIR, x, (low & 0xFF) + ((pulse & 0xFF) >= limit))
+        self._pulseok(x)
+
+    def _pulseok(self, x: int) -> None:
+        ptr = self._g(F_WAVETBL, x)
+        if ptr:
+            self._wavetbl_step(x, ptr)
+            return
+        command = self._g(F_COMMAND, x)
+        if not command:
+            self._arpeggio(x)
+            return
+        self._temp2 = 0
+        param = self._g(F_CMDDATA, x)
+        if command == 1:
+            self._makespeed(param)
+            self._freqadd(x, 0)
+        elif command == 2:
+            self._makespeed(param)
+            self._freqsub(x, 1)
+        elif command == _CMD_TONEPORTA:
+            self._toneporta(x, param)
+        elif command == 4:
+            self._vibrato(x, param)
+
+    def _wavetbl_step(self, x: int, ptr: int) -> None:
+        wave = self._rd(self._wavetbl + ptr)
+        if wave:
+            self._s(F_WAVE, x, wave)
+        note, loop = self._wave_next(ptr, self._g(F_NOTE, x), self._g(F_INSTNUM, x))
+        self._s(F_WAVETBL, x, loop)
+        self._arpfreq(x, note)
+
+    def _arpeggio(self, x: int) -> None:
+        param = self._g(F_CMDDATA, x)
+        if not param:
+            return
+        count = self._g(F_ARPCOUNT, x)
+        step = (count + 1 + (param >> 7)) & 0xFF
+        self._s(F_ARPCOUNT, x, 0 if step >= 6 else step)
+        phase = count >> 1
+        if phase < 1:
+            offset = (param & 0x70) >> 4
+        elif phase == 1:
+            offset = param & 0x0F
+        else:
+            offset = 0
+        self._arpfreq(x, (offset + self._g(F_NOTE, x)) & 0xFF)
+
+    def _arpfreq(self, x: int, note: int) -> None:
+        self._s(F_FREQLO, x, self._rd(self._freqlo + note))
+        self._s(F_FREQHI, x, self._rd(self._freqhi + note))
+
+    def _nextchn(self, x: int) -> None:
+        self._sid(0x00 + x, self._g(F_FREQLO, x))
+        self._sid(0x01 + x, self._g(F_FREQHI, x))
+        self._sid(0x04 + x, self._g(F_WAVE, x))
+        if not self._g(F_NEWNOTE, x):
+            self._sid(0x05 + x, self._instr(x, 0))
+            sustain = self._instr(x, 1)
+            if self._g(F_COMMAND, x) == _CMD_SETSUSTAIN:
+                sustain = self._g(F_CMDDATA, x)
+            self._sid(0x06 + x, sustain)
+            self._s(F_NEWNOTE, x, 0xFF)
+        self._sid(0x02 + x, self._g(F_PULSEDIR, x))
+        self._sid(0x03 + x, self._g(F_PULSE, x))
+
+    def _setfilter(self, step: int) -> None:
+        mem, filt = self._mem, self._filt + step
+        ctrl = self._rd(filt)
+        if ctrl:
+            self._sid(0x17, ctrl)
+            self._sid(0x18, self._rd(filt + 1))
+            cutoff = self._rd(filt + 2)
+            if cutoff:
+                mem[self._cutoff] = cutoff
+                self._sid(0x16, cutoff)
+            time = 0
+        else:
+            mem[self._cutoffadd] = self._rd(filt + 2)
+            time = self._rd(filt + 1)
+        mem[self._filttime] = time
+        mem[self._filtstep] = self._rd(filt + 3)
+
+    def _newnotes(self, x: int) -> None:
+        self._s(F_TICK, x, 0xFF)
+        if self._g(F_PACKREST, x):
+            self._s(F_PACKREST, x, self._g(F_PACKREST, x) + 1)
+            self._tick0(x)
+            return
+        patt = self._g(F_PATTNUM, x)
+        base = self._rd(self._pattlo + patt) | self._rd(self._patthi + patt) << 8
+        pos = self._g(F_PATTPTR, x)
+        acc = self._rd(base + pos)
+        pos = (pos + 1) & 0xFF
+        if acc >= _PACKEDREST:
+            self._s(F_PATTPTR, x, self._g(F_PATTPTR, x) + 1)
+            self._s(F_PACKREST, x, acc + 1)
+            self._tick0(x)
+            return
+        if acc < _NOCMD:
+            note = acc
+            fx = self._rd(base + pos)
+            if fx & 0xF8:
+                self._s(F_INSTNUM, x, fx & 0xF8)
+            self._s(F_COMMAND, x, fx & 7)
+            pos = (pos + 1) & 0xFF
+            self._s(F_CMDDATA, x, self._rd(base + pos))
+            pos = (pos + 1) & 0xFF
+        else:
+            note = acc - _NOCMD
+        self._s(F_PATTPTR, x, _ENDPATT if self._rd(base + pos) == _ENDPATT else pos)
+        if note < _KEYOFF:
+            self._s(F_NOTE, x, note + self._g(F_TRANS, x))
+            if self._g(F_COMMAND, x) == _CMD_TONEPORTA:
+                self._tick0(x)
+                return
+            timer = self._hrtimer
+            self._s(F_NEWNOTE, x, _F_HARDRESTART if timer is None else self._rd(timer))
+            if not self._instr(x, 3) & 1:
+                self._sid(0x05 + x, 0)
+                self._sid(0x06 + x, 0)
+        if note <= _KEYOFF:
+            self._s(F_WAVE, x, self._g(F_WAVE, x) & 0xFE)
+        self._tick0(x)
+
+    def _tick0(self, x: int) -> None:
+        command, param = self._g(F_COMMAND, x), self._g(F_CMDDATA, x)
+        if command == _CMD_TONEPORTA:
+            self._s(F_ARPCOUNT, x, 0)
+        elif command == 5:
+            self._setfilter(param)
+        elif command == _CMD_SETSUSTAIN:
+            if self._g(F_NEWNOTE, x) < 0x80:
+                return
+            self._sid(0x06 + x, param)
+            self._wavearp2(x)
+            return
+        elif command == 7:
+            if param < 0x80:
+                for chn in (0, 7, 14):
+                    self._s(F_TEMPO, chn, param)
+            elif param < _F_TIMINGMARK:
+                self._s(F_TEMPO, x, param & 0x7F)
+        self._wavearp(x)
+
+    def _wavearp(self, x: int) -> None:
+        if self._g(F_NEWNOTE, x) >= 0x80:
+            self._wavearp2(x)
+
+    def _wavearp2(self, x: int) -> None:
+        ptr = self._g(F_WAVETBL, x)
+        if ptr:
+            self._wavetbl_step(x, ptr)
+        elif not self._g(F_COMMAND, x):
+            self._arpeggio(x)
+
+    def _makespeed(self, param: int) -> None:
+        self._temp1 = (param << 2) & 0xFF
+        self._temp2 = param >> 6
+
+    def _freqadd(self, x: int, carry: int) -> None:
+        low = self._g(F_FREQLO, x) + self._temp1 + carry
+        self._s(F_FREQLO, x, low)
+        self._s(F_FREQHI, x, self._g(F_FREQHI, x) + self._temp2 + (low >> 8))
+
+    def _freqsub(self, x: int, carry: int) -> None:
+        low = self._g(F_FREQLO, x) - self._temp1 - (1 - carry)
+        self._s(F_FREQLO, x, low)
+        self._s(F_FREQHI, x, self._g(F_FREQHI, x) - self._temp2 - (low < 0))
+
+    def _freq_vs(self, x: int, note: int) -> int:
+        here = self._g(F_FREQHI, x) << 8 | self._g(F_FREQLO, x)
+        there = self._rd(self._freqhi + note) << 8 | self._rd(self._freqlo + note)
+        return (here > there) - (here < there)
+
+    def _toneporta(self, x: int, param: int) -> None:
+        note = self._g(F_NOTE, x)
+        if not param:
+            self._arpfreq(x, note)
+            return
+        self._makespeed(param)
+        order = self._freq_vs(x, note)
+        if not order:
+            return
+        if order > 0:
+            self._freqsub(x, 1)
+            if self._freq_vs(x, note) < 0:
+                self._arpfreq(x, note)
+        else:
+            self._freqadd(x, 0)
+            if self._freq_vs(x, note) >= 0:
+                self._arpfreq(x, note)
+
+    def _vibrato(self, x: int, param: int) -> None:
+        self._temp1 = param
+        count = self._g(F_ARPCOUNT, x)
+        if count < 0x80 and count > param & 0x0F:
+            count ^= 0xFF
+        count = (count + 2) & 0xFF
+        self._s(F_ARPCOUNT, x, count)
+        if count & 1:
+            self._freqsub(x, 1)
+        else:
+            self._freqadd(x, 0)
+
+
+_PLAYERS = {V15: _Player15, V14: _Player14, "11": _Player11}

@@ -1,6 +1,6 @@
 """GoatTracker V1.x packed tunes: recognition, decompile round trip and playback.
 
-Synthetic songs are packed with each V1.5x playroutine and played both natively
+Synthetic songs are packed with each V1.x playroutine and played both natively
 and by running the packed 6502 playroutine itself on jennings.
 """
 
@@ -30,6 +30,7 @@ from pygoattracker._gt1_refs import PLAYERS
 REPO = Path(__file__).resolve().parent.parent
 V15_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "1.5"]
 M11_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "11"]
+V14_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "1.4"]
 FRAMES = 700
 
 
@@ -253,6 +254,98 @@ def test_native_player_matches_6502(player, subtune):
     song = make_song(player)
     grid = Gt1Player(song, subtune).render_grid(FRAMES)
     assert grid == emulated(song, subtune)
+
+
+INSTRUMENTS_14 = [
+    Gt1Instrument(0x09, 0x00, 0x48, 0x20, 0x02, 0x0C, 0x00, 1),
+    Gt1Instrument(0x0A, 0xA9, 0x00, 0x01, 0x01, 0x0E, 0x04, 5),
+    Gt1Instrument(0x00, 0xF9, 0x83, 0x31, 0x03, 0x09, 0x00, 7),
+    Gt1Instrument(0x22, 0x84, 0x31, 0x41, 0x03, 0x09, 0x0C, 11),
+]
+FILTERTABLE_14 = bytes(
+    (0x00, 0x03, 0xFC, 0x04)
+    + (0xF1, 0x1F, 0x40, 0x08)
+    + (0x00, 0x05, 0x02, 0x0C)
+    + (0xF2, 0x2F, 0x00, 0x00)
+)
+PATTERNS_14 = [
+    _n(0x30, 1, 0, 0x37)
+    + _note(0x32)
+    + bytes((0xFD,))
+    + _n(0x34, 2, 0, 0xB7)
+    + _note(0x5E)
+    + _note(0x5F)
+    + _n(0x35, 1, 1, 0x10)
+    + _n(0x37, 0, 2, 0x50)
+    + _n(0x37, 3, 4, 0x24)
+    + _n(0x38, 0, 4, 0xC3)
+    + _note(0x37)
+    + bytes((0xFF,)),
+    _n(0x30, 3)
+    + _n(0x3C, 0, 3, 0x08)
+    + _note(0x3C)
+    + _n(0x24, 0, 3, 0x30)
+    + _n(0x18, 0, 3, 0x7F)
+    + _n(0x24, 0, 3, 0x7F)
+    + _n(0x30, 0, 3, 0x00)
+    + _n(0x2B, 0, 6, 0xF8)
+    + _n(0x5F, 2, 6, 0x48)
+    + _n(0x2D, 0, 5, 0x04)
+    + _n(0x2D, 0, 7, 0x03)
+    + _n(0x5F, 0, 7, 0x84)
+    + _n(0x5F, 0, 7, 0xC5)
+    + _n(0x29, 1, 7, 0x06)
+    + bytes((0xFF,)),
+    _n(0x24, 2) + _n(0x26, 4) + bytes((0xF8,)) + _note(0x28) + bytes((0xFF,)),
+    _n(0x30, 4) + _note(0x5F) + _n(0x31, 1, 1, 0x04) + _note(0x5E) + bytes((0xFF,)),
+]
+ORDERLISTS_14 = [
+    [
+        bytes((0xD1, 0x00, 0xF3, 0x01, 0xE2, 0x02, 0xFF, 0x00)),
+        bytes((0x03, 0xFF, 0x00)),
+        bytes((0x01, 0x02, 0xFF, 0x01)),
+    ],
+    [
+        bytes((0x02, 0x01, 0xFF, 0x00)),
+        bytes((0xF1, 0x00, 0xFF, 0x00)),
+        bytes((0x03, 0xFF, 0x00)),
+    ],
+]
+
+
+def make_song14(player="1.4b", **fields) -> Gt1Song:
+    """A synthetic song exercising every V1.4x command, multispeed hard restart timer set."""
+    values = {
+        "instruments": list(INSTRUMENTS_14),
+        "orderlists": [list(chans) for chans in ORDERLISTS_14],
+        "patterns": list(PATTERNS_14),
+        "filtertable": FILTERTABLE_14,
+    }
+    values.update(fields)
+    song = make_song(player, **values)
+    timer = song.ref.labels.get("mt_hrtimer")
+    if timer is not None:
+        song.state = {**song.state, timer: 3}
+    return song
+
+
+@pytest.mark.parametrize("player", V14_PLAYERS)
+@pytest.mark.parametrize("subtune", [0, 1])
+def test_v14_matches_6502(player, subtune):
+    song = make_song14(player)
+    assert Gt1Player(song, subtune).render_grid(FRAMES) == emulated(song, subtune)
+
+
+@pytest.mark.parametrize("player", V14_PLAYERS)
+def test_v14_round_trip(player):
+    song = make_song14(player, address=0x2400)
+    decoded = decompile_gt1(song.to_sid())
+    assert decoded.player == player
+    assert decoded.pack() == song.pack()
+    assert decoded.segments == song.segments
+    timer = song.ref.labels.get("mt_hrtimer")
+    if timer is not None:
+        assert decoded.state[timer] == 3
 
 
 @pytest.mark.parametrize("player", M11_PLAYERS)

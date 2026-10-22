@@ -13,9 +13,14 @@ from pysidtracker.registers import PW_HI_REGS
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.gt1 import (
     FILTER_STEP0,
+    INIT_GATE,
+    INIT_WAVE,
     MUSICROUTINE11_SFX,
     MUSICROUTINE11_TIMING,
+    ORDERLIST_ENDSONG,
     ORDERLIST_LOOP_AFTER,
+    PULSE_ALWAYS,
+    PULSEDIR_RESET,
     V15,
     Gt1Song,
 )
@@ -28,6 +33,8 @@ _ENDPATT = 0xFF
 _REPEAT = 0xD0
 _TRANSDOWN = 0xE0
 _LOOPSONG = 0xFF
+_ENDSONG = 0xFE
+_TESTBIT = 0x08
 _CMD_TONEPORTA = 3
 _CMD_SETSUSTAIN = 6
 _FIRST_WAVE = 0x09
@@ -472,23 +479,67 @@ class _Player15(Gt1Player):
         self._sid(0x04 + x, self._v(WAVE, x) & self._v(GATE, x))
 
 
-# Musicroutine 11.x channel blocks: ``mt_chnnote``, ``mt_chnwave``, ``mt_chnsongadrlo``.
-M_NOTE, M_FREQLO, M_FREQHI, M_NEWNOTE, M_COMMAND, M_CMDDATA, M_INSTNUM = range(7)
-M_WAVE, M_WAVETBL, M_PULSE, M_PULSEDIR, M_ARPCOUNT, M_VIBCOUNT, M_SONGPTR = range(7)
-M_SONGLO, M_SONGHI, M_PATTPTR, M_PATTNUM, M_TICK, M_TEMPO, M_NEXT = range(7)
+# Musicroutine 11.x channel variables, by playroutine label (one byte per channel).
+_M_VARS = tuple(
+    "mt_chn" + var
+    for var in (
+        "note",
+        "freqlo",
+        "freqhi",
+        "newnote",
+        "command",
+        "cmddata",
+        "instnum",
+        "wave",
+        "wavetbl",
+        "pulse",
+        "pulsedir",
+        "arpcount",
+        "vibcount",
+        "songptr",
+        "songadrlo",
+        "songadrhi",
+        "pattptr",
+        "pattnum",
+        "tick",
+        "tempo",
+        "next",
+    )
+)
+(
+    M_NOTE,
+    M_FREQLO,
+    M_FREQHI,
+    M_NEWNOTE,
+    M_COMMAND,
+    M_CMDDATA,
+    M_INSTNUM,
+    M_WAVE,
+    M_WAVETBL,
+    M_PULSE,
+    M_PULSEDIR,
+    M_ARPCOUNT,
+    M_VIBCOUNT,
+    M_SONGPTR,
+    M_SONGLO,
+    M_SONGHI,
+    M_PATTPTR,
+    M_PATTNUM,
+    M_TICK,
+    M_TEMPO,
+    M_NEXT,
+) = _M_VARS
 _M_TIMINGMARK = 0xC0
 _M_CHANNEL_GUARD = 0x100
 _M_SFX_INIT_STEPS = 3
 
 
 class _Player11(Gt1Player):
-    """The V1.25 musicroutines 11.1..11.5 (``PLAYER1.S``..``PLAYER5.S``)."""
+    """Musicroutine 11.x: the V1.25 ``PLAYER1.S``..``PLAYER5.S`` and earlier builds."""
 
     def _setup(self, tables: dict) -> None:
         lab, name = self._lab, self._song.player
-        self._note = lab["mt_chnnote"]
-        self._wave = lab["mt_chnwave"]
-        self._song_blk = lab["mt_chnsongadrlo"]
+        self._var = {var: lab[var] for var in _M_VARS}
         self._playflag = lab["playflag"] + 1
         self._cutoff = lab["mt_filtcutoff"] + 1
         self._cutoffadd = lab["mt_filtcutoffadd"] + 1
@@ -498,34 +549,36 @@ class _Player11(Gt1Player):
         self._hrtimer = lab.get("mt_hrtimer")
         self._sfx = name in MUSICROUTINE11_SFX
         self._timing = name in MUSICROUTINE11_TIMING
+        self._stub = self._song.ref.stub_init
+        self._endsong = name in ORDERLIST_ENDSONG
+        self._pulse_always = name in PULSE_ALWAYS
+        self._init_wave = name in INIT_WAVE
+        self._init_gate = name in INIT_GATE
+        self._dir_reset = name in PULSEDIR_RESET
 
-    def _a(self, var: int, x: int) -> int:
-        return self._mem[self._note + var + x]
+    def _g(self, var: str, x: int) -> int:
+        return self._mem[self._var[var] + x]
 
-    def _seta(self, var: int, x: int, value: int) -> None:
-        self._mem[self._note + var + x] = value & 0xFF
-
-    def _b(self, var: int, x: int) -> int:
-        return self._mem[self._wave + var + x]
-
-    def _setb(self, var: int, x: int, value: int) -> None:
-        self._mem[self._wave + var + x] = value & 0xFF
-
-    def _c(self, var: int, x: int) -> int:
-        return self._mem[self._song_blk + var + x]
-
-    def _setc(self, var: int, x: int, value: int) -> None:
-        self._mem[self._song_blk + var + x] = value & 0xFF
+    def _s(self, var: str, x: int, value: int) -> None:
+        self._mem[self._var[var] + x] = value & 0xFF
 
     def _song_init(self, subtune: int) -> None:
-        self._wr(self._playflag, subtune)
+        self._wr(self._playflag, subtune + self._stub)
 
     def _frame(self) -> None:
         mem = self._mem
-        if mem[self._playflag] < 0x80:
-            self._start()
-            return
-        cutoff = (mem[self._cutoff] + mem[self._cutoffadd]) & 0xFF
+        song = mem[self._playflag]
+        if self._stub:
+            carry, pos = song >> 7, song << 1 & 0xFF
+            if pos:
+                self._start((pos + song + carry) & 0xFF)
+                return
+        else:
+            carry = 0
+            if song < 0x80:
+                self._start(((song << 1) + song + (song >> 7)) & 0xFF)
+                return
+        cutoff = (mem[self._cutoff] + mem[self._cutoffadd] + carry) & 0xFF
         mem[self._cutoff] = cutoff
         self._sid(0x16, cutoff)
         self._sid(0x17, mem[self._ctrl])
@@ -533,29 +586,31 @@ class _Player11(Gt1Player):
         x = 0
         for _ in range(_M_CHANNEL_GUARD):
             self._channel(x)
-            x = self._c(M_NEXT, x)
+            x = self._g(M_NEXT, x)
             if not x:
                 return
         raise GoatTrackerError("GT1 channel chain does not end")
 
-    def _start(self) -> None:
-        song = self._mem[self._playflag]
-        pos = ((song << 1) + song + (song >> 7)) & 0xFF
+    def _start(self, pos: int) -> None:
         x = 0
         for _ in range(_M_CHANNEL_GUARD):
-            self._setc(M_SONGLO, x, self._rd(self._songlo + pos))
-            self._setc(M_SONGHI, x, self._rd(self._songhi + pos))
+            self._s(M_SONGLO, x, self._rd(self._songlo + pos))
+            self._s(M_SONGHI, x, self._rd(self._songhi + pos))
             pos = (pos + 1) & 0xFF
-            self._setb(M_SONGPTR, x, 0)
-            self._setb(M_WAVETBL, x, 0)
-            self._setb(M_PULSEDIR, x, 0)
-            self._sid(0x04 + x, 0)
-            self._setc(M_TICK, x, 5)
-            self._setc(M_TEMPO, x, 5)
-            self._seta(M_NEWNOTE, x, 5)
-            self._setc(M_PATTPTR, x, _ENDPATT)
-            self._mem[self._playflag] = 0xFF
-            x = self._c(M_NEXT, x)
+            self._s(M_SONGPTR, x, 0)
+            self._s(M_WAVETBL, x, 0)
+            if self._init_wave:
+                self._s(M_WAVE, x, _TESTBIT)
+            else:
+                self._s(M_PULSEDIR, x, 0)
+            self._sid(0x04 + x, _TESTBIT if self._init_gate else 0)
+            self._s(M_TICK, x, 5)
+            self._s(M_TEMPO, x, 5)
+            self._s(M_NEWNOTE, x, 5)
+            self._s(M_PATTPTR, x, _ENDPATT)
+            if not self._stub:
+                self._mem[self._playflag] = 0xFF
+            x = self._g(M_NEXT, x)
             if not x:
                 break
         else:
@@ -563,62 +618,65 @@ class _Player11(Gt1Player):
         self._sid(0x15, 0)
         self._mem[self._ctrl] = 0
         self._mem[self._cutoffadd] = 0
+        if self._stub:
+            self._mem[self._playflag] = 0
 
     def _channel(self, x: int) -> None:
-        tick = self._c(M_TICK, x)
+        tick = self._g(M_TICK, x)
         if not tick:
             self._newnotes(x)
             return
         if tick >= 0x80:
-            tick = self._c(M_TEMPO, x)
-        self._setc(M_TICK, x, tick - 1)
-        if self._c(M_PATTPTR, x) == _ENDPATT:
+            tick = self._g(M_TEMPO, x)
+        self._s(M_TICK, x, tick - 1)
+        if self._g(M_PATTPTR, x) == _ENDPATT:
             self._nextpatt(x)
         else:
             self._effects(x, 0)
 
     def _nextpatt(self, x: int) -> None:
-        base = self._c(M_SONGLO, x) | self._c(M_SONGHI, x) << 8
-        pos = self._b(M_SONGPTR, x)
+        base = self._g(M_SONGLO, x) | self._g(M_SONGHI, x) << 8
+        pos = self._g(M_SONGPTR, x)
         acc = self._rd(base + pos)
         if self._sfx:
             if acc == _LOOPSONG:
-                self._setb(M_SONGPTR, x, self._rd(base + ((pos + 1) & 0xFF)))
+                self._s(M_SONGPTR, x, self._rd(base + ((pos + 1) & 0xFF)))
             else:
-                self._setc(M_PATTNUM, x, acc)
-                self._setc(M_PATTPTR, x, self._c(M_PATTPTR, x) + 1)
-                self._setb(M_SONGPTR, x, pos + 1)
+                self._s(M_PATTNUM, x, acc)
+                self._s(M_PATTPTR, x, self._g(M_PATTPTR, x) + 1)
+                self._s(M_SONGPTR, x, pos + 1)
             self._effects(x, 1)
             return
-        self._setc(M_PATTPTR, x, self._c(M_PATTPTR, x) + 1)
-        if acc == _LOOPSONG:
-            pos = self._rd(base + ((pos + 1) & 0xFF))
-            acc = self._rd(base + pos)
-        self._setc(M_PATTNUM, x, acc)
-        self._setb(M_SONGPTR, x, pos + 1)
-        if self._a(M_NEWNOTE, x):
+        self._s(M_PATTPTR, x, self._g(M_PATTPTR, x) + 1)
+        if not (self._endsong and acc == _ENDSONG):
+            if acc == _LOOPSONG:
+                pos = 0 if self._endsong else self._rd(base + ((pos + 1) & 0xFF))
+                acc = self._rd(base + pos)
+            self._s(M_PATTNUM, x, acc)
+            self._s(M_SONGPTR, x, pos + 1)
+        if self._g(M_NEWNOTE, x):
             self._pulseok2(x)
         else:
             self._newnoteinit(x)
 
     def _effects(self, x: int, carry: int) -> None:
-        ins = self._a(M_INSTNUM, x)
-        if not self._a(M_NEWNOTE, x):
+        ins = self._g(M_INSTNUM, x)
+        if not self._g(M_NEWNOTE, x):
             self._newnoteinit(x)
             return
         if self._sfx:
-            if self._a(M_NOTE, x) >= 0x80:
+            if self._g(M_NOTE, x) >= 0x80:
                 self._dosfx(x)
                 return
             if carry:
                 self._pulseok2(x)
                 return
-        direction = self._b(M_PULSEDIR, x)
+        direction = self._g(M_PULSEDIR, x)
         if direction >= 0x80:
-            self._setb(M_PULSEDIR, x, direction & 0x7F)
+            self._s(M_PULSEDIR, x, 0 if self._dir_reset else direction & 0x7F)
             first = self._ins + 7 + ins
             wave = self._rd(self._wavetbl + self._rd(first))
-            self._setb(M_WAVE, x, wave)
+            self._s(M_WAVE, x, wave)
             self._sid(0x04 + x, wave)
             self._sid(0x05 + x, self._rd(self._ins + ins))
             self._sid(0x06 + x, self._rd(self._ins + 1 + ins))
@@ -627,7 +685,7 @@ class _Player11(Gt1Player):
                 self._skipwave(x, ins)
                 return
             direction = 0
-        pulse = self._b(M_PULSE, x)
+        pulse = self._g(M_PULSE, x)
         speed = self._rd(self._ins + 3 + ins)
         if direction & 1:
             pulse -= speed
@@ -637,25 +695,25 @@ class _Player11(Gt1Player):
             pulse += speed
             pulse = (pulse & 0xFF) + (pulse >> 8)
             flip = (pulse & 0x0F) >= self._rd(self._ins + 5 + ins)
-        self._setb(M_PULSE, x, pulse)
+        self._s(M_PULSE, x, pulse)
         if not self._sfx:
             self._sid(0x02 + x, pulse)
             self._sid(0x03 + x, pulse)
         if flip:
-            self._setb(M_PULSEDIR, x, 0 if direction & 1 else 1)
+            self._s(M_PULSEDIR, x, 0 if direction & 1 else 1)
         self._pulseok2(x)
 
     def _pulseok2(self, x: int) -> None:
-        ptr = self._b(M_WAVETBL, x)
+        ptr = self._g(M_WAVETBL, x)
         if ptr:
             wave = self._rd(self._wavetbl + ptr)
             if wave:
-                self._setb(M_WAVE, x, wave)
+                self._s(M_WAVE, x, wave)
                 self._sid(0x04 + x, wave)
             self._skipwave(x, ptr)
             return
-        command = self._a(M_COMMAND, x)
-        param = self._a(M_CMDDATA, x)
+        command = self._g(M_COMMAND, x)
+        param = self._g(M_CMDDATA, x)
         if command == 0:
             self._arpeggio(x)
         elif command == 1:
@@ -672,62 +730,62 @@ class _Player11(Gt1Player):
     def _skipwave(self, x: int, ptr: int) -> None:
         note = self._rd(self._notetbl + ptr)
         if note < 0x80:
-            note += self._a(M_NOTE, x)
+            note += self._g(M_NOTE, x)
         note &= 0x7F
         if self._rd(self._wavetbl + ptr + 1) == 0xFF:
             loop = self._rd(self._notetbl + ptr + 1)
             if loop:
-                instnum = self._a(M_INSTNUM, x)
+                instnum = self._g(M_INSTNUM, x)
                 total = loop + self._rd(self._ins + 7 + instnum) + 1
                 loop = ((total & 0xFF) + 0xFE + (total >> 8)) & 0xFF
                 if not loop:
                     loop = (instnum + 1) & 0xFF
         else:
             loop = (ptr + 1) & 0xFF
-        self._setb(M_WAVETBL, x, loop)
+        self._s(M_WAVETBL, x, loop)
         self._arpfreq(x, note)
 
     def _arpeggio(self, x: int) -> None:
-        param = self._a(M_CMDDATA, x)
-        if not param or (param >= 0x80 and self._c(M_TICK, x) & 1):
+        param = self._g(M_CMDDATA, x)
+        if not param or (param >= 0x80 and self._g(M_TICK, x) & 1):
             self._loadpulse(x)
             return
-        count, note = self._b(M_ARPCOUNT, x), self._a(M_NOTE, x)
+        count, note = self._g(M_ARPCOUNT, x), self._g(M_NOTE, x)
         if count >= 0x80:
             note, count = ((param & 0x70) >> 4) + note, 1
         elif count:
             note, count = (param & 0x0F) + note, 0
         else:
             count = 0xFF
-        self._setb(M_ARPCOUNT, x, count)
+        self._s(M_ARPCOUNT, x, count)
         self._arpfreq(x, note & 0xFF)
 
     def _arpfreq(self, x: int, note: int) -> None:
         low, high = self._rd(self._freqlo + note), self._rd(self._freqhi + note)
-        self._seta(M_FREQLO, x, low)
+        self._s(M_FREQLO, x, low)
         self._sid(0x00 + x, low)
-        self._seta(M_FREQHI, x, high)
+        self._s(M_FREQHI, x, high)
         self._sid(0x01 + x, high)
         self._loadpulse(x)
 
     def _loadpulse(self, x: int) -> None:
         if self._sfx:
-            self._sid(0x02 + x, self._b(M_PULSE, x))
-            self._sid(0x03 + x, self._b(M_PULSE, x))
+            self._sid(0x02 + x, self._g(M_PULSE, x))
+            self._sid(0x03 + x, self._g(M_PULSE, x))
 
     def _freqstep(self, x: int, speed: int, down: int) -> None:
-        low, high = self._a(M_FREQLO, x), self._a(M_FREQHI, x)
+        low, high = self._g(M_FREQLO, x), self._g(M_FREQHI, x)
         self._sid(0x00 + x, low)
         self._sid(0x01 + x, high)
         low = low - speed if down else low + speed
-        self._seta(M_FREQLO, x, low)
-        self._seta(M_FREQHI, x, high - (low < 0) if down else high + (low >> 8))
+        self._s(M_FREQLO, x, low)
+        self._s(M_FREQHI, x, high - (low < 0) if down else high + (low >> 8))
         self._loadpulse(x)
 
     def _toneporta(self, x: int, param: int) -> None:
-        note = self._a(M_NOTE, x)
+        note = self._g(M_NOTE, x)
         speed, down = (param << 1) & 0xFF, param >> 7
-        here = self._a(M_FREQHI, x) << 8 | self._a(M_FREQLO, x)
+        here = self._g(M_FREQHI, x) << 8 | self._g(M_FREQLO, x)
         there = self._rd(self._freqhi + note) << 8 | self._rd(self._freqlo + note)
         if (here > there) if down else (here < there):
             self._freqstep(x, speed, down)
@@ -735,30 +793,30 @@ class _Player11(Gt1Player):
             self._arpfreq(x, note)
 
     def _vibrato(self, x: int, param: int) -> None:
-        count = self._b(M_VIBCOUNT, x)
+        count = self._g(M_VIBCOUNT, x)
         if count < 0x80 and count >= param & 0x0E:
             count ^= 0xFF
         else:
             count = (count + 2) & 0xFF
-        self._setb(M_VIBCOUNT, x, count)
+        self._s(M_VIBCOUNT, x, count)
         self._freqstep(x, param, count & 1)
 
     def _newnotes(self, x: int) -> None:
-        self._setc(M_TICK, x, 0xFF)
-        patt = self._c(M_PATTNUM, x)
+        self._s(M_TICK, x, 0xFF)
+        patt = self._g(M_PATTNUM, x)
         base = self._rd(self._pattlo + patt) | self._rd(self._patthi + patt) << 8
-        pos = self._c(M_PATTPTR, x)
+        pos = self._g(M_PATTPTR, x)
         acc = self._rd(base + pos)
         pos = (pos + 1) & 0xFF
         if acc >= _PACKEDREST:
-            count = (self._a(M_NEWNOTE, x) + 1) & 0xFF
-            self._seta(M_NEWNOTE, x, count)
+            count = (self._g(M_NEWNOTE, x) + 1) & 0xFF
+            self._s(M_NEWNOTE, x, count)
             if count < 0x80:
-                self._seta(M_NEWNOTE, x, acc)
+                self._s(M_NEWNOTE, x, acc)
             elif count == 0xFF:
-                self._setc(M_PATTPTR, x, pos)
-                self._seta(M_NEWNOTE, x, 1)
-            command = self._a(M_COMMAND, x)
+                self._s(M_PATTPTR, x, pos)
+                self._s(M_NEWNOTE, x, 1)
+            command = self._g(M_COMMAND, x)
             if command >= 0x80:
                 raise GoatTrackerError("GT1 command byte has bit 7 set")
             self._tick0(x, command)
@@ -767,98 +825,99 @@ class _Player11(Gt1Player):
             note = acc
             fx = self._rd(base + pos)
             if fx & 0xF8:
-                self._seta(M_INSTNUM, x, fx & 0xF8)
-            self._seta(M_COMMAND, x, fx & 7)
+                self._s(M_INSTNUM, x, fx & 0xF8)
+            self._s(M_COMMAND, x, fx & 7)
             pos = (pos + 1) & 0xFF
-            self._seta(M_CMDDATA, x, self._rd(base + pos))
+            self._s(M_CMDDATA, x, self._rd(base + pos))
             pos = (pos + 1) & 0xFF
         else:
             note = acc - _NOCMD
-        self._setc(M_PATTPTR, x, _ENDPATT if self._rd(base + pos) == _ENDPATT else pos)
-        command = self._a(M_COMMAND, x)
-        if not (self._sfx and self._a(M_NOTE, x) >= 0x80) and note <= _KEYOFF:
+        self._s(M_PATTPTR, x, _ENDPATT if self._rd(base + pos) == _ENDPATT else pos)
+        command = self._g(M_COMMAND, x)
+        if not (self._sfx and self._g(M_NOTE, x) >= 0x80) and note <= _KEYOFF:
             if note < _KEYOFF:
-                self._seta(M_NOTE, x, note)
+                self._s(M_NOTE, x, note)
                 if command == _CMD_TONEPORTA:
                     self._tick0(x, command)
                     return
                 if self._hrtimer is not None:
-                    self._setb(M_ARPCOUNT, x, self._mem[self._hrtimer])
-                self._seta(M_NEWNOTE, x, 0)
+                    self._s(M_ARPCOUNT, x, self._mem[self._hrtimer])
+                self._s(M_NEWNOTE, x, 0)
                 self._sid(0x05 + x, 0)
                 self._sid(0x06 + x, 0)
-            self._sid(0x04 + x, self._b(M_WAVE, x) & 0xFE)
+            self._sid(0x04 + x, self._g(M_WAVE, x) & 0xFE)
         self._tick0(x, command)
 
     def _tick0(self, x: int, command: int) -> None:
-        param = self._a(M_CMDDATA, x)
+        param = self._g(M_CMDDATA, x)
         mem = self._mem
         if command == 2:
             mem[self._cutoffadd] = param
         elif command == _CMD_TONEPORTA:
-            self._setb(M_VIBCOUNT, x, 0xFE)
+            self._s(M_VIBCOUNT, x, 0xFE)
         elif command == 5:
             mem[self._ctrl] = param
         elif command == _CMD_SETSUSTAIN:
             if not self._sfx:
                 self._sid(0x06 + x, param)
-            elif self._a(M_NOTE, x) < 0x80:
+            elif self._g(M_NOTE, x) < 0x80:
                 self._sid(0x06 + x, param)
                 return
         elif command == 7:
             if param < 0x80:
                 for chn in (0, 7, 14):
-                    self._setc(M_TEMPO, chn, param)
+                    self._s(M_TEMPO, chn, param)
             elif not (self._timing and param >= _M_TIMINGMARK):
-                self._setc(M_TEMPO, x, param & 0x7F)
-        if self._sfx and self._a(M_NOTE, x) >= 0x80:
+                self._s(M_TEMPO, x, param & 0x7F)
+        if self._sfx and self._g(M_NOTE, x) >= 0x80:
             self._dosfx(x)
 
     def _newnoteinit(self, x: int) -> None:
-        if self._hrtimer is not None and self._b(M_ARPCOUNT, x):
-            self._setb(M_ARPCOUNT, x, self._b(M_ARPCOUNT, x) - 1)
+        if self._hrtimer is not None and self._g(M_ARPCOUNT, x):
+            self._s(M_ARPCOUNT, x, self._g(M_ARPCOUNT, x) - 1)
             return
-        self._seta(M_NEWNOTE, x, 1)
-        self._setb(M_ARPCOUNT, x, 0xFE)
-        self._setb(M_VIBCOUNT, x, 0xFE)
-        ins = self._a(M_INSTNUM, x)
+        self._s(M_NEWNOTE, x, 1)
+        self._s(M_ARPCOUNT, x, 0xFE)
+        self._s(M_VIBCOUNT, x, 0xFE)
+        ins = self._g(M_INSTNUM, x)
         filt = self._rd(self._ins + 6 + ins)
         if filt:
             self._mem[self._cutoff] = filt
             self._mem[self._type] = (filt << 4) & 0xFF
         pulse = self._rd(self._ins + 2 + ins)
-        if pulse:
-            self._setb(M_PULSE, x, pulse)
+        if pulse or self._pulse_always:
+            self._s(M_PULSE, x, pulse)
             self._sid(0x02 + x, pulse)
             self._sid(0x03 + x, pulse)
-            self._setb(M_PULSEDIR, x, 0x80)
+        if self._dir_reset:
+            self._s(M_PULSEDIR, x, 0xFE)
         else:
-            self._setb(M_PULSEDIR, x, self._b(M_PULSEDIR, x) | 0x80)
+            self._s(M_PULSEDIR, x, 0x80 if pulse else self._g(M_PULSEDIR, x) | 0x80)
 
     def _dosfx(self, x: int) -> None:
-        step = self._a(M_NOTE, x) & 0x7F
-        base = self._a(M_FREQLO, x) | self._a(M_FREQHI, x) << 8
+        step = self._g(M_NOTE, x) & 0x7F
+        base = self._g(M_FREQLO, x) | self._g(M_FREQHI, x) << 8
         if step < _M_SFX_INIT_STEPS:
-            self._seta(M_NOTE, x, self._a(M_NOTE, x) + 1)
-            self._setb(M_PULSEDIR, x, 0)
-            self._setb(M_WAVETBL, x, 0)
-            self._setb(M_WAVE, x, 0)
+            self._s(M_NOTE, x, self._g(M_NOTE, x) + 1)
+            self._s(M_PULSEDIR, x, 0)
+            self._s(M_WAVETBL, x, 0)
+            self._s(M_WAVE, x, 0)
             self._sfx_hardrestart(x)
             return
-        delay = self._b(M_WAVE, x)
+        delay = self._g(M_WAVE, x)
         if delay:
             step = (step + 1) & 0xFF
             delay = (delay + 1) & 0xFF
-            self._setb(M_WAVE, x, delay)
+            self._s(M_WAVE, x, delay)
             if delay:
                 return
         acc = self._rd(base + step)
         if not acc:
-            self._seta(M_NOTE, x, 0)
+            self._s(M_NOTE, x, 0)
             self._sfx_hardrestart(x)
             return
         if acc >= 0xE0:
-            self._setb(M_WAVE, x, acc)
+            self._s(M_WAVE, x, acc)
             return
         note = acc & 0x7F
         self._sid(0x00 + x, self._rd(self._freqlo + note))
@@ -868,7 +927,7 @@ class _Player11(Gt1Player):
         if wave and wave < 0x82:
             self._sid(0x04 + x, wave)
             step = (step + 1) & 0xFF
-        self._seta(M_NOTE, x, step | 0x80)
+        self._s(M_NOTE, x, step | 0x80)
         self._sid(0x05 + x, self._rd(base))
         self._sid(0x06 + x, self._rd(base + 1))
         pulse = self._rd(base + 2)

@@ -1,0 +1,73 @@
+"""Register GoatTracker with the generic ``pysidtracker`` command-line tool.
+
+``goattracker1`` (:class:`~pygoattracker.gt1.Gt1SidParser`) and ``goattracker2``
+(:class:`~pygoattracker.sid.GoatTrackerSidParser`) on the ``pysidtracker.formats``
+entry-point group make ``pysidtracker info|reglog|wav`` play packed GoatTracker tunes.
+"""
+
+from __future__ import annotations
+
+from typing import Iterable, Sequence
+
+from pysidtracker import MemPlayer, SidFormat
+
+from pygoattracker.gt1 import DecompiledGt1, Gt1SidParser
+from pygoattracker.sid import DecompiledSid, GoatTrackerSidParser
+
+_GT2_OPTIONS = ("simplepulse", "nowavedelay", "live_vibrato")
+
+
+def _player(model) -> MemPlayer:
+    """A fresh player of the decompiled model's subtune."""
+    return model.player()
+
+
+def _metadata(model) -> Sequence:
+    """name/author/released/load/init/play, read from the tune's PSID header."""
+    header = model.header
+    load = header.real_load_address
+    init = header.init_address or load
+    return (
+        header.name,
+        header.author,
+        header.released,
+        load,
+        init,
+        header.play_address or init,
+    )
+
+
+def _describe_gt2(model: DecompiledSid) -> Iterable[str]:
+    """Extra ``info`` lines for a GoatTracker 2 tune."""
+    song, info = model.song, model.info
+    yield f"subtunes: {len(song.subtunes)}"
+    yield f"patterns: {len(song.patterns)}"
+    yield f"instruments: {len(song.instruments)}"
+    options = [name for name in _GT2_OPTIONS if getattr(info, name)]
+    yield f"options:  {' '.join(options) or 'none'}"
+
+
+def _describe_gt1(model: DecompiledGt1) -> Iterable[str]:
+    """Extra ``info`` lines for a GoatTracker V1.x tune."""
+    song = model.song
+    yield f"playroutine: {song.player}"
+    yield f"subtunes: {len(song.orderlists)}"
+    yield f"patterns: {len(song.patterns)}"
+    yield f"instruments: {len(song.instruments)}"
+
+
+GOATTRACKER1 = SidFormat(
+    name="goattracker1",
+    parser=Gt1SidParser(),
+    player=_player,
+    describe=_describe_gt1,
+    metadata=_metadata,
+)
+
+GOATTRACKER2 = SidFormat(
+    name="goattracker2",
+    parser=GoatTrackerSidParser(),
+    player=_player,
+    describe=_describe_gt2,
+    metadata=_metadata,
+)

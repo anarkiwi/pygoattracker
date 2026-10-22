@@ -11,7 +11,13 @@ from pygoattracker.errors import (
     SngParseError,
     SngValidationError,
 )
-from pygoattracker.gt1 import Gt1Instrument, Gt1Song, decompile_gt1
+from pygoattracker.gt1 import (
+    DecompiledGt1,
+    Gt1Instrument,
+    Gt1SidParser,
+    Gt1Song,
+    decompile_gt1,
+)
 from pygoattracker.gt1player import Gt1Player
 from pygoattracker.gt1sng import Gt1Sng, parse_gts1, relocate, write_gts1
 from pygoattracker.ninja import (
@@ -59,15 +65,17 @@ from pygoattracker.writer import build_sng, validate_song, write_sng
 from pygoattracker.packed import PackedLayout, PlayerBuild, PlayerState
 from pygoattracker.typed import TypedSong
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "ConversionError",
+    "DecompiledGt1",
     "DecompiledSid",
     "GoatTrackerError",
     "GoatTrackerSidParser",
     "Gt1Instrument",
     "Gt1Player",
+    "Gt1SidParser",
     "Gt1Sng",
     "Gt1Song",
     "Instrument",

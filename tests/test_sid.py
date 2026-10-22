@@ -225,6 +225,15 @@ def test_decode_packed_pattern_grammar():
     assert rows[1].note == REST and rows[2].note == REST
 
 
+def test_load_image_lays_the_tune_over_power_on_ram(packed):
+    from pysidtracker.poweron import power_on_ram
+
+    image = sid._load_image(packed)
+    ram = power_on_ram()
+    assert image.mem[: image.load] == ram[: image.load]
+    assert image.mem[image.end :] == ram[image.end :]
+
+
 def test_decode_orderlist_repeat_and_transpose():
     # transpose +3, pattern 5 repeated 3 extra times, endmark + restart 1.
     mem = bytearray([0xF3, 0x05, 0xD3, 0xFF, 0x01])
@@ -502,6 +511,32 @@ def test_chain_layout_reads_tables_from_code():
     assert sol["tstart"] == insad + 3
     assert (sol["wlen"], sol["plen"], sol["flen"], sol["slen"]) == (1, 0, 0, 0)
     assert (sol["pulse"], sol["filt"], sol["vib"], sol["gate"]) == (0, 0, 0, 0)
+
+
+def test_chain_layout_asks_the_player_about_a_lone_table():
+    # One table after the wave table: a pulse or a filter table tile alike.
+    mem = bytearray(0x60)
+    insad = LOAD + 0x30
+    wavetbl = insad + 4  # ad, sr, waveptr and the lone pointer column
+    lone = wavetbl + 2
+    for i, (left, right) in enumerate(((wavetbl, wavetbl + 1), (lone, lone + 1))):
+        mem[i * 12 : i * 12 + 12] = (
+            b"\xb9" + _le(left) + b"\xc9\xff\xc8\x98\x90\x00\xb9" + _le(right - 1)
+        )
+    mem[0x30:0x34] = bytes([0x09, 0x00, 0x01, 0x01])
+    mem[0x34:0x38] = bytes([0xFF, 0x00, 0xFF, 0x00])
+    image = _img_from_data(bytes(mem))
+    eps = (set(), set(), set(), set())
+    asked = []
+
+    def confirm(sol, tables):
+        asked.append((sol["pulse"], sol["filt"], tables))
+        return sol["filt"] == 1
+
+    sol = sid._chain_layout(image, image.mem, insad, 1, lone + 2, eps, confirm)
+    assert (sol["pulse"], sol["filt"], sol["flen"]) == (0, 1, 1)
+    assert asked[0][:2] == (0, 1)
+    assert sid._chain_layout(image, image.mem, insad, 1, lone + 2, eps)["filt"] == 1
 
 
 def test_chain_layout_returns_none_without_table_idiom():

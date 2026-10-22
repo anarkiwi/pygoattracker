@@ -148,9 +148,13 @@ def _tempo(cmd, packing):
 
 
 def pattern_rows(mem, pos):
-    """One packed pattern at ``pos``: typed rows, and the address past its end mark."""
+    """One packed pattern at ``pos``: typed rows, and the address past its end mark.
+
+    ``mt_rest`` checks for the end mark only after a row, so a pattern has at
+    least one.
+    """
     rows = []
-    while mem[pos]:
+    while mem[pos] or not rows:
         ins = cmd = None
         b = mem[pos]
         if b < _FX:

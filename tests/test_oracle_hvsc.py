@@ -91,9 +91,9 @@ TUNES = {
         1,
         33.528,
     ),
-    # unoptimized packing keeps the wave-delay code without delay rows.
+    # NOWAVEDELAY build whose wavetable bytes read as delays.
     "goat_city": ("DEMOS/G-L/Goat_City.sid", 1, 45.986),
-    # the same, plus a $00 pulse step: its time wraps to 256 modulations.
+    # wave-delay code without delay rows; a $00 pulse step wraps to 256 steps.
     "2_hours_not_enough": ("DEMOS/0-9/2_Hours_NOT_Enough.sid", 1, 59.0),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),

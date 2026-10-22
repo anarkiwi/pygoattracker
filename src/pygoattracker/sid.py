@@ -44,12 +44,12 @@ from pygoattracker.packed import (
     PlayerBuild,
     PlayerState,
     decode,
+    orderlist_bytes,
     pack,
     player_span,
-    read_build,
-    read_state,
 )
 from pygoattracker.player import Player
+from pygoattracker.probe import Bench, confirms, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.model import (
     Orderlist,
@@ -447,7 +447,7 @@ def _executed_length(mem, start, entry_points, limit=constants.MAX_TABLELEN):
     return max(reached), True
 
 
-def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
+def _solve_layout(mem, region_start, region_end, num_instr, eps, confirm=None):
     """Return the unique valid (flags, table lengths) tiling of the region."""
     region_len = region_end - region_start
     solutions = []
@@ -471,17 +471,16 @@ def _solve_layout(mem, region_start, region_end, num_instr, eps, build=None):
                         solutions.append(sol)
     if not solutions:
         raise SidParseError("could not segment packed instruments/tables")
-    # vib-vs-gate can be ambiguous (same K, same tiling): the player's code says
-    # which pair it reads, else a FIXEDPARAMS-suppressible pair is the vibrato's.
-    build = build or PlayerBuild()
-    solutions.sort(
-        key=lambda s: (
-            build.insvib is not None and s["vib"] != build.insvib,
-            build.gatecol is not None and s["gate"] != build.gatecol,
-            s["gate"],
+    # Several tilings can fit: the player is asked which it plays, gate columns
+    # (the stronger test) first, else the last as the vibrato's. Only the tables
+    # the tilings disagree on are planted.
+    solutions.sort(key=lambda s: -s["gate"])
+    if len(solutions) > 1 and confirm is not None:
+        tables = frozenset(
+            k for k in ("pulse", "filt") if len({s[k] for s in solutions}) > 1
         )
-    )
-    return solutions[0]
+        return next((s for s in solutions if confirm(s, tables)), solutions[-1])
+    return solutions[-1]
 
 
 def _try_layout(
@@ -745,17 +744,14 @@ def _chain_valid(mem, arrays, eps, wtbl, wlen, pulse, plen, filt, flen, vib, sle
 
 
 def _detect_nowavedelay(wave_left):
-    """greloc clears NOWAVEDELAY when a wavetable delay row (0x01-0x0F) exists.
-
-    Only a guess where the build states no NOWAVEDELAY: unoptimized packing
-    keeps the delay code without delay rows.
-    """
+    """greloc's optimized packing: NOWAVEDELAY unless a wavetable delay row
+    (0x01-0x0F) exists. Only where the player cannot be run."""
     return not any(0x01 <= b <= 0x0F for b in wave_left)
 
 
 def _detect_simplepulse(pulse_left):
-    """SIMPLEPULSE forces set-pulse rows to a 0x80 marker; the un-optimized
-    player keeps the original 0x81-0xFE left byte."""
+    """greloc's optimized packing: SIMPLEPULSE forces set-pulse rows to a 0x80
+    marker. Only where the player cannot be run."""
     return not any(0x81 <= b <= 0xFE for b in pulse_left)
 
 
@@ -771,17 +767,17 @@ def _freq_table(mem, addr, firstnote, length):
     return tuple(table)
 
 
-def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build):
-    """The typed song, the editor-form :class:`Song` it states, and the info."""
+def _packed_layout(sol, anchor, songs, order_addrs, where) -> PackedLayout:
+    """The :class:`PackedLayout` of a region tiling ``sol``."""
     addr, firstnote, length = anchor
     songtbl, patt_lo, patt_addrs = where
     tstart, wlen, plen, flen = sol["tstart"], sol["wlen"], sol["plen"], sol["flen"]
-    lay = PackedLayout(
+    return PackedLayout(
         freq_addr=addr,
         firstnote=firstnote,
         notes=length,
         songtbl=songtbl,
-        songs=len(orderlists),
+        songs=songs,
         order_addrs=tuple(order_addrs),
         patt_lo=patt_lo,
         patt_addrs=tuple(patt_addrs),
@@ -799,13 +795,21 @@ def _build_song(mem, header, sol, anchor, orderlists, order_addrs, where, build)
         zeros=sol["zeros"],
         gate_flags=any(v & 0xC0 for v in sol["arrays"].get("gatetimer", ())),
     )
+
+
+def _build_song(mem, header, lay, anchor, orderlists, build):
+    """The typed song, the editor-form :class:`Song` it states, and the info."""
+    addr, firstnote, length = anchor
+    tstart, wlen, plen = lay.tstart, lay.wlen, lay.plen
     pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
     nowavedelay = (
         _detect_nowavedelay(mem[tstart : tstart + wlen])
         if build.wavedelay is None
         else not build.wavedelay
     )
-    simplepulse = _detect_simplepulse(pleft)
+    simplepulse = (
+        _detect_simplepulse(pleft) if build.simplepulse is None else build.simplepulse
+    )
     subtunes = [
         Subtune(channels=orderlists[s * 3 : s * 3 + 3])
         for s in range(len(orderlists) // 3)
@@ -936,30 +940,6 @@ def _entered_anchor(image, candidates, subtune):
         span = player_span(image, anchor[0])
         if span.start is not None and span.start <= target < anchor[0]:
             return anchor
-    return None
-
-
-def _wrapper_flush(image, subtune):
-    """Zero-page ghost the entered play wrapper flushes to the chip, or None.
-
-    A wrapper-selected build copies a zero-page ghost to the SID
-    (``ldx #24; lda ghost,x; sta $d400,x``) instead of the player writing the
-    chip directly. The ghost starts all-zero, so the first frame is muted.
-    """
-    target = _play_target(image, subtune)
-    mem = image.mem
-    for _ in range(4):
-        if mem[target] == 0x4C:  # JMP on to the wrapper (or the next hop)
-            target = mem[target + 1] | (mem[target + 2] << 8)
-            continue
-        break
-    hi = min(target + 0x40, image.end)
-    for spec in (
-        "A2 18 B5 {g} 9D 00 D4 CA 10",
-        "A2 00 B5 {g} 9D 00 D4 E8 E0 19 D0",
-    ):
-        for m in find_code_all(image, spec, start=target, end=hi):
-            return m.captures["g"]
     return None
 
 
@@ -1099,8 +1079,6 @@ def _decompile(
     image, header, dataend, anchor, subtune, songtbl, songs, patt_lo
 ) -> DecompiledSid:
     mem = image.mem
-    code = player_span(image, anchor[0])
-    build = read_build(code)
     all_addrs = [
         mem[songtbl + i] | (mem[songtbl + 3 * songs + i] << 8) for i in range(3 * songs)
     ]
@@ -1133,6 +1111,17 @@ def _decompile(
         patt_addrs.append(pos)
         rows, pos = decode_packed_pattern(mem, pos)
         patterns.append(rows)
+    sizes = tuple(b - a for a, b in zip(patt_addrs, patt_addrs[1:] + [pos]))
+    orders = tuple(len(orderlist_bytes(o)) for o in orderlists)
+    where = (songtbl, patt_lo, patt_addrs)
+    # An interrupt-driven tune (no play address) runs greloc's ``jmp mt_play``.
+    base = player_span(image, anchor[0]).start
+    play = header.play_address or (None if base is None else base + 3)
+
+    def bench(sol):
+        lay = _packed_layout(sol, anchor, len(orderlists), order_addrs, where)
+        return Bench(image, lay, sizes, orders, subtune, play, (base, anchor[0]))
+
     region_start = patt_lo + 2 * npat
     region_end = order_start
     if not region_start < region_end:
@@ -1142,17 +1131,23 @@ def _decompile(
     # Exact-fit tiling first (established path); if no flag combination tiles the
     # region, read the table bases directly from the player's table-access code.
     try:
-        layout = _solve_layout(mem, region_start, region_end, num_instr, eps, build)
+        layout = _solve_layout(
+            mem,
+            region_start,
+            region_end,
+            num_instr,
+            eps,
+            lambda s, tables: confirms(bench(s), tables),
+        )
     except SidParseError:
         layout = _chain_layout(image, mem, region_start, num_instr, region_end, eps)
         if layout is None:
             raise
-    where = (songtbl, patt_lo, patt_addrs)
-    song, info, typed = _build_song(
-        mem, header, layout, anchor, orderlists, order_addrs, where, build
-    )
-    info.state = read_state(code, build)
-    info.wrapper_flush = _wrapper_flush(image, subtune) is not None
+    probe = bench(layout)
+    build = measure(probe)
+    song, info, typed = _build_song(mem, header, probe.lay, anchor, orderlists, build)
+    info.state = state(probe, build)
+    info.wrapper_flush = build.wrapper
     return DecompiledSid(song, info, header, subtune, typed, image)
 
 

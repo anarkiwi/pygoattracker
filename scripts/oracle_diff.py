@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pysidtracker import is_ntsc, resolve_tune, survey
+from pysidtracker import gridcmp, is_ntsc, resolve_tune, survey
 
 from pygoattracker import gt1, sid
 from pygoattracker.gt1player import Gt1Player
@@ -72,35 +72,18 @@ def main(argv=None):
         print(f"RENDER FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    result = survey.compare_grids(oracle, lib)
     print(f"tune : {path}")
     print(
         f"song : {args.song}   clock {clock}   oracle {len(oracle)} lib {len(lib)} frames"
     )
-    print(
-        f"verdict: {result.get('verdict')}  first_diff {result.get('first_diff')}  "
-        f"diff_frames {result.get('diff_frames')}"
-    )
-    print(f"regs : {result.get('diff_regs')}")
-
-    lead = int(result.get("lead", 0))
-    n = min(len(oracle), len(lib))
-    if result.get("first_diff") in ("", None):
-        print("\n(no differences)")
-        return
-    a = oracle
-    b = lib[max(0, lead) :]
-    first = int(result["first_diff"])
-    lo, hi = max(0, first - 2), min(n, first + 6)
-    frames = [f for f in range(lo, hi) if f < len(a) and f < len(b)]
-    print("\nframe  " + "  ".join(f"{f!s:>5}" for f in frames))
-    for r, name in enumerate(survey.REG_NAMES):
-        orow = [a[f][r] for f in frames]
-        brow = [b[f][r] for f in frames]
-        if all(o == b for o, b in zip(orow, brow)):
-            continue
-        cells = [f"{o}/{b}" if o != b else f"{o!s}" for o, b in zip(orow, brow)]
-        print(f"{name:>10} " + "  ".join(c.rjust(5) for c in cells))
+    verdict = gridcmp.verdict_lead(oracle, lib)
+    print(gridcmp.lead_report(verdict))
+    if not verdict.ok and verdict.first is not None:
+        print(
+            gridcmp.window_report(
+                *gridcmp.aligned(oracle, lib, verdict.lead), verdict.first
+            )
+        )
 
 
 if __name__ == "__main__":

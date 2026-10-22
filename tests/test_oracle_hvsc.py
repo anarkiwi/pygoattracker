@@ -101,6 +101,11 @@ TUNES = {
     "lily_lander": ("GAMES/G-L/Lily_Lander.sid", 1, 53.906),
     # greloc's packed tables tile two ways; the player plays the gate columns.
     "greaties_tune_3": ("MUSICIANS/R/Roly/Greaties_tune_3.sid", 1, 34.475),
+    # the song the player's own song-table load selects: a wrapper-entered
+    # player's entry, past the header's count.
+    "captain_ishtar_5": ("MUSICIANS/B/Bayliss_Richard/Captain_Ishtar.sid", 5, 6.744),
+    "cruiser_x_79_4": ("MUSICIANS/B/Bayliss_Richard/Cruiser-X_79.sid", 4, 7.745),
+    "trance_sector_12": ("MUSICIANS/B/Bayliss_Richard/Trance_Sector.sid", 12, 9),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

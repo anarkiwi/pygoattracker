@@ -9,9 +9,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pysidtracker import registers as reg
-from pysidtracker.emu import observe_data_access
+from pysidtracker.codescan import find_code_all
+from pysidtracker.emu import observe_data_access, set_iomap, wire_mpu
 from pysidtracker.image import SidImage
-from pysidtracker.oracle import boot_flat
+from pysidtracker.oracle import DRIVER_VOLUME, boot_flat
+from pysidtracker.poweron import power_on_ram, psid_init_bank, psid_play_bank
 from vagrant_moses import memmap as mm
 from vagrant_moses.cpu import run_to_rts
 
@@ -50,6 +52,8 @@ _CAP = 256
 _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
+_INIT_CYCLES = 8_000_000
+_LDA_ABS_Y = 0xB9
 
 
 class ProbeMiss(Exception):
@@ -61,6 +65,44 @@ def _call(mpu, mem, play):
     run_to_rts(mpu, mem, play, 0, _CYCLES)
     if mpu.processorCycles - start > _CYCLES:
         raise ProbeMiss("play call did not return")
+
+
+def song_read(image: SidImage, subtune: int, pattern):
+    """``(after, match, address)``: the first song-table load the tune makes for
+    ``subtune``, else None.
+
+    The image boots as :func:`~pysidtracker.oracle.boot_flat` boots it, and its
+    init, then the two play calls in which ``player.s`` starts a song
+    (``mt_initsongnum``'s reset, then tick 0's ``mt_sequencer``), run watched; the
+    load is the first ``lda abs,y`` read whose instruction is a ``pattern`` match
+    (an ``lda songtbllo,y``, ``lo`` capturing the table) in the memory init left,
+    ``after``, which holds the player even when init installs it.
+    """
+    h = image.header
+    init = h.init_address or h.real_load_address
+    subject = power_on_ram()
+    subject[image.load : image.load + len(image.image)] = image.image
+    subject[_MODEVOL + mm.SID_BASE] = DRIVER_VOLUME
+    subject[1] = psid_init_bank(init)
+    mpu, mem = wire_mpu(subject, True, reg.sid_model_for_flags(h.flags))
+    reads = []
+
+    def read(addr):
+        if subject[mpu.pc] == _LDA_ABS_Y:
+            reads.append((mpu.pc, addr))
+
+    observe_data_access(mpu, read)
+    run_to_rts(mpu, mem, init, subtune, _INIT_CYCLES)
+    after = SidImage(bytearray(subject), 0, len(subject), h, image.image, b"")
+    if h.play_address:
+        set_iomap(mpu, psid_play_bank(h.play_address))
+        for _ in range(2):
+            try:
+                _call(mpu, mem, h.play_address)
+            except ProbeMiss:
+                break
+    loads = {m.addr: m for m in find_code_all(after, pattern)}
+    return next(((after, loads[pc], addr) for pc, addr in reads if pc in loads), None)
 
 
 @dataclass

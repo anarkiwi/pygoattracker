@@ -1,6 +1,7 @@
-"""Tally ``results.csv`` verdicts over named key lists.
+"""Tally ``results.csv`` verdicts over named key lists, or against a baseline.
 
 python scripts/survey_tally.py results.csv regress.txt guard.txt [--min]
+python scripts/survey_tally.py results.csv --base baseline/results.csv
 """
 
 import argparse
@@ -20,13 +21,42 @@ def tally(rows, keys):
     return verdicts, near
 
 
+def transitions(base, rows):
+    """``(before, after)`` verdict counts over the keys of ``rows``, and the keys
+    exact in ``base`` but not in ``rows``."""
+    moves = Counter(
+        (base[k]["verdict"] if k in base else "missing", r["verdict"])
+        for k, r in rows.items()
+    )
+    lost = sorted(
+        k
+        for k, r in rows.items()
+        if k in base and base[k]["verdict"] == "exact" and r["verdict"] != "exact"
+    )
+    return moves, lost
+
+
+def _read(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        return {r["key"]: r for r in csv.DictReader(f)}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("results")
-    ap.add_argument("keylists", nargs="+")
+    ap.add_argument("keylists", nargs="*")
+    ap.add_argument("--base", help="baseline results.csv to compare verdicts with")
     a = ap.parse_args(argv)
-    with open(a.results, newline="", encoding="utf-8") as f:
-        rows = {r["key"]: r for r in csv.DictReader(f)}
+    rows = _read(a.results)
+    if a.base:
+        base = _read(a.base)
+        moves, lost = transitions(base, rows)
+        print("| before | after | subtunes |\n| --- | --- | ---: |")
+        for (before, after), n in sorted(moves.items()):
+            print(f"| {before} | {after} | {n:,} |")
+        print(f"exact -> non-exact: {len(lost)}")
+        for k in lost:
+            print(f"  {k} {rows[k]['path']} {rows[k]['song']} {rows[k]['verdict']}")
     for path in a.keylists:
         keys = Path(path).read_text("utf-8").split()
         verdicts, near = tally(rows, keys)

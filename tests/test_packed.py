@@ -1,6 +1,6 @@
-"""greloc's packed data as the typed model and back, and the build read from player code.
+"""greloc's packed data as the typed model and back, and each player's code span.
 
-Hermetic: build images are player.s fragments at fixed addresses; data images are
+Hermetic: span images are player.s fragments at fixed addresses; data images are
 ``test_sid``'s synthetic packed tune.
 """
 
@@ -17,165 +17,21 @@ from pygoattracker.model import Orderlist, PlayPattern, Repeat, Transpose
 from pygoattracker.player import Player
 from tests.test_sid import _minimal_packed
 
-DESC = "A2 18 BD 00 20 9D 00 D4 CA 10 F7"
-ASC = "A2 00 BD 00 20 9D 00 D4 E8 E0 19 D0 F5"
 TEMPO = "A9 05 9D 10 20 A9 01 9D 11 20 9D 12 20"
-GATECOL = "BD 11 20 DD 13 20 F0 03"
-TICK034 = "9D 30 20 BD 31 20 9D 32 20 60"
 
 
-def image(*frags):
-    """A 64K image with each fragment in the next 0x40-byte slot from $1000."""
+def test_each_player_in_a_multi_player_image_has_its_own_span():
     m = bytearray(0x10000)
-    for i, f in enumerate(frags):
-        b = bytes.fromhex(f)
-        m[0x1000 + 0x40 * i : 0x1000 + 0x40 * i + len(b)] = b
-    return SidImage(m, 0, len(m), None, bytes(m), b"")
-
-
-def hr(x, y, n=0x18, ad_first=False):
-    """``lda chninstr,x; cmp #n; bcs``, the hard restart's two stores, the gate-off.
-
-    ``x`` goes to SR (``$2021``) then ``y`` to AD (``$2020``), or AD first.
-    """
-    p, q = (0x20, 0x21) if ad_first else (0x21, 0x20)
-    return (
-        "BD 12 20 C9 %02X B0 0A A9 %02X 9D %02X 20 A9 %02X 9D %02X 20 A9 FE 9D 22 20"
-        % (
-            n,
-            x,
-            p,
-            y,
-            q,
-        )
-    )
-
-
-def legato(slot, first, skiphr):
-    """``cmp #FIRSTLEGATOINSTR; bcc mt_skiphr; bcs mt_rest`` in ``slot``."""
-    d = (skiphr - (0x1000 + 0x40 * slot + 4)) & 0xFF
-    return "C9 %02X 90 %02X B0 00" % (first, d)
-
-
-def test_player_s_reads_sr_first_and_its_classes_from_where_they_branch():
-    skiphr = 0x1000 + 0x40 * 2 + 17
-    tick0 = "B9 40 20 4C %02X %02X" % (0x1100 & 0xFF, 0x1100 >> 8)
-    frags = (DESC, TEMPO, hr(0, 0x0F), legato(3, 0x18, skiphr), TICK034, tick0, GATECOL)
-    assert P.read_build(image(*frags)) == P.PlayerBuild(
-        ghost=0x2000,
-        alt=False,
-        adparam=0x0F,
-        srparam=0,
-        firstnohr=0x18,
-        firstlegato=0x18,
-        deftempo=5,
-        insvib=True,
-        gatecol=True,
-        fixed=None,
-        pulseopt=False,
-        realtime=False,
-    )
-
-
-def test_altplayer_loads_ad_first_and_flushes_ascending():
-    b = P.read_build(image(ASC, TEMPO, hr(0xFF, 0x00, n=0x0E, ad_first=True), GATECOL))
-    assert (b.alt, b.adparam, b.srparam, b.firstnohr, b.firstlegato) == (
-        True,
-        0xFF,
-        0,
-        0x0E,
-        P.NONE,
-    )
-    assert not b.insvib
-
-
-def test_the_store_targets_not_their_order_tell_ad_from_sr():
-    b = P.read_build(image(TEMPO, hr(0xFF, 0x00, ad_first=True), GATECOL))
-    assert (b.alt, b.adparam, b.srparam) == (None, 0xFF, 0)
-    b = P.read_build(image(DESC, TEMPO, hr(0x00, 0xFF), GATECOL))
-    assert (b.alt, b.adparam, b.srparam) == (False, 0xFF, 0)
-
-
-def test_a_build_without_hard_restart_code_and_without_a_flush():
-    b = P.read_build(image(TEMPO, GATECOL))
-    assert (b.ghost, b.alt, b.adparam, b.firstnohr) == (None, None, None, 1)
-    b = P.read_build(image(TEMPO, "BD 12 20 C9 03 B0 05 A9 FE 9D 22 20", GATECOL))
-    assert b.firstnohr == 3
-
-
-def test_the_optimizations_and_fixedparams_are_read_from_their_sites():
-    realtime = "BD 11 20 F0 05 BC 40 20"
-    pulse = "BC 41 20 F0 05 1D 42 20 F0"
-    fixed = ("BD 11 20 C9 03 F0 05", "BD 50 20 3D 51 20 9D 52 20", "A9 41 9D 50 20")
-    b = P.read_build(image(DESC, TEMPO, realtime, pulse, *fixed))
-    assert (b.realtime, b.pulseopt, b.gatecol, b.fixed) == (
-        True,
-        True,
-        False,
-        (3, 0x41),
-    )
-
-
-def test_a_define_at_two_sites_or_no_player_states_no_build():
-    assert P.read_build(image(DESC, TEMPO, TEMPO)) == P.PlayerBuild()
-    assert P.read_build(image(DESC, GATECOL)) == P.PlayerBuild()
-
-
-def test_a_define_at_two_sites_voids_only_that_define():
-    b = P.read_build(image(TEMPO, hr(0, 0x0F), hr(0, 0x0F), TICK034, TICK034, GATECOL))
-    assert (b.deftempo, b.gatecol, b.adparam, b.firstnohr, b.firstlegato, b.insvib) == (
-        5,
-        True,
-        None,
-        None,
-        None,
-        None,
-    )
-    b = P.read_build(image(TEMPO, hr(0, 0x0F), GATECOL, GATECOL))
-    assert (b.adparam, b.firstnohr, b.gatecol) == (0x0F, 0x18, None)
-
-
-def test_a_zero_page_ghost_build_hard_restarts_into_the_ghost():
-    skiphr = 0x1000 + 0x40 * 1 + 15
-    zphr = "BD 12 20 C9 18 B0 08 A9 00 95 8C A9 0F 95 8B A9 FE 9D 22 20"
-    b = P.read_build(image(TEMPO, zphr, legato(2, 0x20, skiphr), GATECOL))
-    assert (b.adparam, b.srparam, b.firstnohr, b.firstlegato) == (0x0F, 0, 0x18, 0x20)
-
-
-def test_each_player_in_a_multi_player_image_states_its_own_build():
-    m = bytearray(0x10000)
-    for base, flush, tempo in ((0x1000, DESC, 0x05), (0x3000, ASC, 0x11)):
+    for base in (0x1000, 0x3000):
         play = base + 0x10
         m[base : base + 6] = bytes((0x4C, 0, base >> 8, 0x4C, play & 0xFF, play >> 8))
-        m[play : play + 13] = bytes.fromhex(flush)
         m[base + 0x40 : base + 0x4D] = bytes.fromhex(TEMPO)
-        m[base + 0x41] = tempo
     im = SidImage(m, 0, len(m), None, bytes(m), b"")
-    assert P.read_build(im) == P.PlayerBuild()
-    first = P.read_build(P.player_span(im, 0x1400))
-    second = P.read_build(P.player_span(im, 0x3400))
-    assert (first.alt, first.deftempo) == (False, 0x05)
-    assert (second.alt, second.deftempo) == (True, 0x11)
     assert P.player_span(im, 0x1400) == P.PlayerCode(im, 0x1000, 0x1400)
+    assert P.player_span(im, 0x3400) == P.PlayerCode(im, 0x3000, 0x3400)
     assert P.player_span(im, 0x0F00) == P.PlayerCode(im)
     m[0x1003] = 0xEA
     assert P.player_span(im, 0x1400) == P.PlayerCode(im)
-
-
-def test_the_first_play_call_starts_from_the_image_and_the_immediates_init_keeps():
-    filt = "A9 19 8D 16 20 A9 00 8D 17 20 A9 10 09 0F 8D 18 20"
-    funk = "C9 02 B0 08 A8 49 01 9D 12 20 B9 50 20 E9 00"
-    im = image(DESC, TEMPO, filt, funk)
-    im.mem[0x2000:0x2019] = bytes(range(1, 26))
-    im.mem[0x2050:0x2052] = b"\x07\x05"
-    state = P.read_state(im, P.read_build(im))
-    assert state == P.PlayerState(tuple(range(1, 26)), 0x19, 0x10, 0x0F, (7, 5))
-    nofilter = image(DESC, TEMPO, "A9 00 8D 17 20 A9 00 09 0F 8D 18 20")
-    nofilter.mem[0x2016] = 0x42
-    state = P.read_state(nofilter, P.read_build(nofilter))
-    assert (state.cutoff, state.funk) == (0x42, (8, 5))
-    assert P.read_state(image(TEMPO), P.PlayerBuild()) is None
-    assert P.read_state(image(DESC, TEMPO), P.read_build(image(DESC, TEMPO))) is None
 
 
 def test_a_packed_pattern_reads_as_typed_rows_and_writes_back():

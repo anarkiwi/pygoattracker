@@ -179,12 +179,11 @@ _VARIANTS = {
     ),
     # tables the executed-row tiling could not segment.
     "DEMOS/A-F/Aristillus.sid": None,
-    # a song table its init writes; orderlists outside the image.
+    # a song table its init writes.
     "DEMOS/UNKNOWN/Joelbitar.sid": None,
-    "GAMES/A-F/Deathflood.sid": None,
-    # patterns past the image's end.
-    "DEMOS/A-F/BM1K.sid": None,
 }
+# Orderlists and empty patterns outside the image, in the power-on RAM there.
+_OUTSIDE = {"GAMES/A-F/Deathflood.sid": 0xC3A2, "DEMOS/A-F/BM1K.sid": 0x3206}
 
 
 @pytest.mark.parametrize("rel,cols", _VARIANTS.items())
@@ -196,6 +195,16 @@ def test_a_packer_variant_reads_as_its_player_reads_it(rel, cols):
     assert d.repack() == []
     if cols is not None:
         assert d.info.layout.cols == cols
+
+
+@pytest.mark.parametrize("rel,addr", _OUTSIDE.items())
+def test_song_data_past_the_image_is_read_where_the_player_reads_it(rel, addr):
+    path = resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
+    if path is None:
+        pytest.skip(f"{rel} unavailable (local or mirror)")
+    d = sid.decompile_sid(path.read_bytes())
+    lay = d.info.layout
+    assert d.image.end <= addr and addr in lay.order_addrs + lay.patt_addrs
 
 
 def test_a_goattracker_2_0_player_is_named():

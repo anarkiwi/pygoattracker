@@ -63,6 +63,10 @@ WAV rendering, NinjaTracker 2, and the command line,
 `.sid` decompilation notes, and [docs/oracle-testing.md](docs/oracle-testing.md)
 for the byte-exact oracle tests.
 
+Installed, it also registers the `goattracker1` and `goattracker2` formats with
+the `pysidtracker` CLI (`pysidtracker info|reglog|wav tune.sid`); see
+[docs/usage.md](docs/usage.md#pysidtracker-command-line).
+
 ## Development
 
 ```bash

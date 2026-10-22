@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pygoattracker"
-version = "0.6.0"
+version = "0.7.0"
 description = "Pure-Python reader, writer, and player for GoatTracker 2 (.SNG) songs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,6 +38,10 @@ dev = [
 
 [project.scripts]
 pygoattracker = "pygoattracker.cli:main"
+
+[project.entry-points."pysidtracker.formats"]
+goattracker1 = "pygoattracker.formats:GOATTRACKER1"
+goattracker2 = "pygoattracker.formats:GOATTRACKER2"
 
 [project.urls]
 Homepage = "https://github.com/anarkiwi/pygoattracker"

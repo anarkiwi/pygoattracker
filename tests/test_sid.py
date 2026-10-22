@@ -17,7 +17,7 @@ import numpy as np
 import pysidtracker
 import pytest
 
-from pysidtracker import PlayroutineKind, SidError
+from pysidtracker import PlayroutineKind, SidError, SidImage
 
 from pygoattracker import constants
 from pygoattracker import sid
@@ -55,8 +55,19 @@ def _psid(
     return bytes(header) + struct.pack("<H", LOAD) + data
 
 
+def _patttbl_fetch(lo: int, hi: int) -> bytes:
+    """The packed player's pattern-fetch idiom reading pattern pointers lo/hi."""
+    return bytes(
+        [0xB9, lo & 0xFF, lo >> 8, 0x85, 0xFC, 0xB9, hi & 0xFF, hi >> 8, 0x85, 0xFD]
+        + [0xBC, 0x00, 0x10, 0xB1, 0xFC, 0xC9, 0x40]
+    )
+
+
 def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1, declared=1) -> bytes:
     """One subtune, one instrument, a 2-row wavetable, two 1-row patterns.
+
+    The image opens with the player's pattern-fetch idiom so the parser
+    recognizes it as a GoatTracker 2 packed tune.
 
     ``trailer`` appends bytes the pattern-count scan must ignore; ``freq_lo``
     retunes the low column; ``songs`` sets the PSID header count; ``declared``
@@ -65,7 +76,7 @@ def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1, declared=1) -> 
     note_c4 = constants.note_value("C-4")
     mem = bytearray(0x100)
     freqlen = 12
-    pos = 0
+    pos = len(_patttbl_fetch(0, 0))
 
     def emit(chunk):
         nonlocal pos
@@ -98,6 +109,8 @@ def _minimal_packed(trailer: bytes = b"", freq_lo=None, songs=1, declared=1) -> 
     for i, addr in enumerate((patt0, patt1)):
         mem[patttbllo + i] = (LOAD + addr) & 0xFF
         mem[patttblhi + i] = (LOAD + addr) >> 8
+    fetch = _patttbl_fetch(LOAD + patttbllo, LOAD + patttblhi)
+    mem[: len(fetch)] = fetch
     return _psid(bytes(mem[:pos]) + trailer, songs=songs)
 
 
@@ -288,9 +301,26 @@ def test_parser_detects_direct_load(packed):
     assert detection.anchor  # the frequency-table anchor tuple
 
 
-def test_parser_parse_returns_song(packed):
-    song = sid.GoatTrackerSidParser().parse(packed)
-    assert len(song.patterns) == 2
+def test_parser_parse_returns_decompiled_sid(packed):
+    decoded = sid.GoatTrackerSidParser().parse(packed)
+    assert isinstance(decoded, sid.DecompiledSid)
+    assert len(decoded.song.patterns) == 2
+    assert decoded.player().render_grid(8) == sid.decompile_sid(
+        packed
+    ).player().render_grid(8)
+
+
+def test_parser_recognizes_packed_player(packed):
+    image = SidImage.from_sid(packed)
+    assert sid.GoatTrackerSidParser().recognize(image) == sid._recognize(image)
+    assert sid.GoatTrackerSidParser().recognize(image) is not None
+
+
+def test_parser_ignores_bare_frequency_table():
+    data = bytes(constants.FREQ_LO[:12]) + bytes(constants.FREQ_HI[:12])
+    image = SidImage.from_sid(_psid(data))
+    assert sid._recognize(image) is not None
+    assert sid.GoatTrackerSidParser().recognize(image) is None
 
 
 # --- finetuned frequency table (stock high column, retuned low column) --------
@@ -303,8 +333,6 @@ def _retuned_low():
 
 
 def test_finetuned_freqtable_split_anchor_misses():
-    from pysidtracker import SidImage
-
     image = SidImage.from_sid(_minimal_packed(freq_lo=_retuned_low()))
     # exact both-column match fails on the retuned low bytes ...
     assert (
@@ -399,8 +427,6 @@ def test_layout_candidates_ignores_foreign_player_idiom():
 
 
 def _img_from_data(data: bytes):
-    from pysidtracker import SidImage
-
     return SidImage.from_sid(_psid(data))
 
 

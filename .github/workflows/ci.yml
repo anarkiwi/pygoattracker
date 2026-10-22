@@ -28,11 +28,11 @@ jobs:
       - name: Cache HVSC tunes
         # HVSC corpus tunes are copyright and never committed; the corpus
         # decompile test fetches them from the mirror into a gitignored cache.
-        # Cache that dir across runs, keyed on the sample list + fetch script.
+        # Cache that dir across runs, keyed on the sample list.
         uses: actions/cache@v6
         with:
           path: tests/.tunecache
-          key: hvsc-tunes-${{ hashFiles('tests/data/hvsc_goattracker_sample.txt', 'scripts/fetch_tunes.py') }}
+          key: hvsc-tunes-${{ hashFiles('tests/data/hvsc_goattracker_sample.txt') }}
       - name: pytest + coverage (> 85%)
         run: pytest --cov=pygoattracker --cov-report=term-missing --cov-fail-under=85
 

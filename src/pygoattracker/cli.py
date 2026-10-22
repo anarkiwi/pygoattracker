@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pysidtracker import run_cli, seconds_to_frames
+from pysidtracker import render_player_wav, run_cli, seconds_to_frames
 
 from pygoattracker import audio, constants, convert, ninja, reglog
 from pygoattracker.errors import GoatTrackerError
@@ -73,35 +73,18 @@ def _reglog(args) -> None:
     print(f"wrote {args.output}")
 
 
-def _render_gt1_wav(
-    song: Gt1Song, output, subtune: int, seconds: float, model: str
-) -> None:
-    from pysidtracker import audio as ptaudio
-
-    try:
-        device = ptaudio.resolve_device(None, model, None)
-    except ValueError as exc:
-        raise GoatTrackerError(str(exc)) from exc
-    player = Gt1Player(song, subtune=subtune)
-    frame_iter = player.iter_frames(
-        max_frames=seconds_to_frames(
-            seconds, constants.PAL_CYCLES_PER_FRAME, constants.PAL_CLOCK_HZ
-        )
-    )
-    samples = ptaudio.render_samples(
-        frame_iter,
-        model=model,
-        cycles_per_frame=constants.PAL_CYCLES_PER_FRAME,
-        clock_frequency=constants.PAL_CLOCK_HZ,
-        device=device,
-    )
-    ptaudio.write_wav(output, samples, float(device.sampling_frequency))
-
-
 def _wav(args) -> None:
     song = read_sng(args.song)
     if isinstance(song, Gt1Song):
-        _render_gt1_wav(song, args.output, args.subtune, args.seconds, args.model)
+        try:
+            render_player_wav(
+                Gt1Player(song, subtune=args.subtune),
+                args.output,
+                seconds=args.seconds,
+                model=args.model,
+            )
+        except ValueError as exc:
+            raise GoatTrackerError(str(exc)) from exc
         print(f"wrote {args.output}")
         return
     audio.render_wav(

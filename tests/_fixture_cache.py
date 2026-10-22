@@ -35,12 +35,19 @@ GT1_ARCHIVES = {
     "goattrk093.zip": (
         "2034f37e1a14c261bdb08028e8aa7fc8fa81922f9ebe76fc3cf6b87aa1425327"
     ),
+    "goattracker_v1.4b.zip": (
+        "815c1519da43f3428b6129d3184163c9c9286191210e1e5e4b74c606c1a3356e"
+    ),
 }
-# goattrk093.zip is not on the cadaver tools mirror; it ships in CSDb 152697.
+# goattrk093.zip and the V1.4b release are not on the cadaver tools mirror; they
+# ship in CSDb 152697 and 7582.
 _GT1_ARCHIVE_URLS = {
     "goattrk.zip": f"{_GT1_URL}/goattrk.zip",
     "goatold.zip": f"{_GT1_URL}/goatold.zip",
     "goattrk093.zip": "https://csdb.dk/getinternalfile.php/154230/goattrk093.zip",
+    "goattracker_v1.4b.zip": (
+        "https://csdb.dk/getinternalfile.php/143294/goattracker_v1.4b.zip"
+    ),
 }
 
 # GoatTracker V1.25 editor example songs (musicroutine 11.x layout).

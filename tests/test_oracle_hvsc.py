@@ -140,6 +140,14 @@ TUNES = {
     # a retuned table whose low column the code indexes apart from the
     # high-column anchor: the note table read at the code's own bases.
     "frogger_rags": ("MUSICIANS/D/DJ_Space/Frogger_Rags.sid", 1, 158.366),
+    # GT1 V1.4b playroutines: standard, 1-frame hard restart, multispeed.
+    "gt1_14b_asynkro_theme": ("DEMOS/A-F/Asynkro_Theme.sid", 1, 54),
+    "gt1_14b_hr1_sprogs": ("MUSICIANS/S/Sack/Sprogs.sid", 1, 45.967),
+    "gt1_14b_multi_suomen_kunnia": (
+        "MUSICIANS/M/Mankeli/Suomen_Kunnia_on_Kyseessae.sid",
+        1,
+        26,
+    ),
 }
 
 

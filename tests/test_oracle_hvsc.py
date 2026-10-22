@@ -99,7 +99,7 @@ TUNES = {
     "opin_joskus": ("DEMOS/M-R/Opin_Joskus.sid", 1, 123.0),
     # a ghost-register build seen flushing all 25 registers each call.
     "lily_lander": ("GAMES/G-L/Lily_Lander.sid", 1, 53.906),
-    # greloc's packed tables tile two ways; the player plays the gate columns.
+    # gate and vibrato columns of one width, told apart by what the player does.
     "greaties_tune_3": ("MUSICIANS/R/Roly/Greaties_tune_3.sid", 1, 34.475),
     # the song the player's own song-table load selects: a wrapper-entered
     # player's entry, past the header's count.
@@ -114,6 +114,26 @@ TUNES = {
     # an empty pattern past the image end, read from the power-on RAM there.
     "hose_it_out": ("MUSICIANS/N/Narciso/Hose_It_Out.sid", 1, 38.804),
     "legend_of_zelda_preview": ("GAMES/G-L/Legend_of_Zelda_Preview.sid", 1, 18.534),
+    # tables the executed-row tiling could not segment.
+    "aristillus": ("DEMOS/A-F/Aristillus.sid", 1, 104.002),
+    # song tables away from the frequency table.
+    "shortcut": ("DEMOS/S-Z/Shortcut.sid", 1, 137.259),
+    # high song/pattern columns first, instrument columns reordered.
+    "z303r": ("MUSICIANS/X/Xiny6581/Z303R.sid", 1, 30.664),
+    # the vibrato delay column apart from its parameter.
+    "mannschaftsairbus": ("MUSICIANS/D/Dalezy/Mannschaftsairbus.sid", 1, 199.524),
+    # greloc's speed zero rows with no speed effect seen.
+    "howdy_hackers": ("MUSICIANS/D/Dalezy/Howdy_Hackers.sid", 1, 40.859),
+    # a song table its init writes.
+    "joelbitar_3": ("DEMOS/UNKNOWN/Joelbitar.sid", 3, 50.0),
+    # orderlists outside the loaded image.
+    "deathflood_5": ("GAMES/A-F/Deathflood.sid", 5, 126.406),
+    # instrument 1 has no wave program.
+    "zelda_great_sea": (
+        "MUSICIANS/N/Nordischsound/Zelda_Wind_Waker-Great_Sea.sid",
+        1,
+        67.035,
+    ),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

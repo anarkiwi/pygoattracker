@@ -36,7 +36,7 @@ byte-exact over the whole song:
 | `2_Hours_NOT_Enough` | unoptimized packing keeps the wave-delay code with no delay rows; a `$00` pulse-table step (its time wraps to 256 modulations) |
 | `Opin_Joskus` | SIMPLEPULSE measured by running the player, not inferred from the pulse table |
 | `Lily_Lander` | ghost-register build detected from the player's 25-register flush |
-| `Greaties_tune_3` | two tilings of the instrument/table region; the player is seen to play the gate columns |
+| `Greaties_tune_3` | gate and vibrato columns of one width, told apart by what the player does with each |
 | `Captain_Ishtar` 5, `Cruiser-X_79` 4, `Trance_Sector` 12 | the song the player's own song-table load selects: a wrapper-entered player's entry past the header's count |
 | `Blast_em_All`, `An_UFO_Attack_from_Space` | one pulse-or-filter table, code-located: the player is seen to play it as pulse |
 | `Peep_Show` | the pulse optimization measured from a set row landing on the gate timer's fetch call |

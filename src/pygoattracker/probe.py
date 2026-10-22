@@ -1,4 +1,4 @@
-"""The packed player's build, measured by running it.
+"""The packed player's build, read from what it does when run.
 
 A :class:`Bench` plants chosen song data at the decoded layout, boots the image's own
 6502 player on jennings and reads back its SID writes; each define of
@@ -9,16 +9,16 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pysidtracker import registers as reg
-from pysidtracker.codescan import find_code_all
 from pysidtracker.emu import observe_data_access, set_iomap, wire_mpu
 from pysidtracker.image import SidImage
-from pysidtracker.oracle import DRIVER_VOLUME, boot_flat
+from pysidtracker.oracle import DRIVER_VOLUME as _DRIVER_VOLUME
+from pysidtracker.oracle import SID_VOLUME as _VOLUME
 from pysidtracker.poweron import power_on_ram, psid_init_bank, psid_play_bank
 from vagrant_moses import memmap as mm
 from vagrant_moses.cpu import run_to_rts
 
 from pygoattracker import constants as C
-from pygoattracker.packed import NONE, PlayerBuild, PlayerState, _columns, pattern_bytes
+from pygoattracker.packed import NONE, PlayerBuild, PlayerState, columns, pattern_bytes
 from pygoattracker.typed import (
     DoNothing,
     Note,
@@ -52,8 +52,8 @@ _CAP = 256
 _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
-_INIT_CYCLES = 8_000_000
-_LDA_ABS_Y = 0xB9
+_BOOT_CYCLES = 8_000_000
+_VIDEO = 0x02A6  # KERNAL PAL/NTSC flag: 1 PAL
 
 
 class ProbeMiss(Exception):
@@ -67,42 +67,25 @@ def _call(mpu, mem, play):
         raise ProbeMiss("play call did not return")
 
 
-def song_read(image: SidImage, subtune: int, pattern):
-    """``(after, match, address)``: the first song-table load the tune makes for
-    ``subtune``, else None.
-
-    The image boots as :func:`~pysidtracker.oracle.boot_flat` boots it, and its
-    init, then the two play calls in which ``player.s`` starts a song
-    (``mt_initsongnum``'s reset, then tick 0's ``mt_sequencer``), run watched; the
-    load is the first ``lda abs,y`` read whose instruction is a ``pattern`` match
-    (an ``lda songtbllo,y``, ``lo`` capturing the table) in the memory init left,
-    ``after``, which holds the player even when init installs it.
-    """
+def boot(image, subtune=0, buf=None):
+    """``(subject, mpu, mem, play)``: ``image`` after its init, booted as
+    :func:`~pysidtracker.oracle.boot_flat` with the KERNAL's PAL/NTSC flag the PSID
+    driver sets, and ``buf``'s ``{address: byte}`` planted in RAM, where an init
+    that copies song data put it."""
     h = image.header
-    init = h.init_address or h.real_load_address
     subject = power_on_ram()
     subject[image.load : image.load + len(image.image)] = image.image
-    subject[_MODEVOL + mm.SID_BASE] = DRIVER_VOLUME
+    subject[_VOLUME] = _DRIVER_VOLUME
+    subject[_VIDEO] = int(not (h.version >= 2 and (h.flags >> 2) & 3 == 2))
+    init = h.init_address or h.real_load_address
     subject[1] = psid_init_bank(init)
     mpu, mem = wire_mpu(subject, True, reg.sid_model_for_flags(h.flags))
-    reads = []
-
-    def read(addr):
-        if subject[mpu.pc] == _LDA_ABS_Y:
-            reads.append((mpu.pc, addr))
-
-    observe_data_access(mpu, read)
-    run_to_rts(mpu, mem, init, subtune, _INIT_CYCLES)
-    after = SidImage(bytearray(subject), 0, len(subject), h, image.image, b"")
-    if h.play_address:
-        set_iomap(mpu, psid_play_bank(h.play_address))
-        for _ in range(2):
-            try:
-                _call(mpu, mem, h.play_address)
-            except ProbeMiss:
-                break
-    loads = {m.addr: m for m in find_code_all(after, pattern)}
-    return next(((after, loads[pc], addr) for pc, addr in reads if pc in loads), None)
+    run_to_rts(mpu, mem, init, subtune, _BOOT_CYCLES)
+    play = h.play_address or init
+    set_iomap(mpu, psid_play_bank(play))
+    for addr, value in (buf or {}).items():
+        subject[addr] = value
+    return subject, mpu, mem, play
 
 
 @dataclass
@@ -112,7 +95,8 @@ class Bench:
     ``patt_sizes`` and ``order_sizes`` are the packed patterns' and orderlists'
     byte lengths, the room planted rows have; ``play`` overrides the header's play
     address;
-    ``span`` is the ``[start, end)`` of the player's own code.
+    ``span`` is the ``[start, end)`` of the player's own code; ``song`` the player's
+    own song, whose first channel a planted voice must replace.
     """
 
     image: SidImage
@@ -122,6 +106,7 @@ class Bench:
     subtune: int = 0
     play: int | None = None
     span: tuple = (None, None)
+    song: int | None = None
     _slots: list = field(init=False)
 
     def __post_init__(self):
@@ -166,17 +151,15 @@ class Bench:
             yield slot, pattern_bytes(rows[:n])
             rows = rows[n:]
 
-    def plant(self, voices, instruments=None, tables=None) -> bytearray:
-        """The image with ``voices`` (row sequences), ``instruments`` (``{number:
-        {column: byte}}`` over :data:`_BASE`) and ``tables`` (``{name: ((left,
-        right), ...)}``) planted; every channel of every song plays a voice."""
-        lay, im = self.lay, self.image
-        buf = bytearray(im.image)
+    def plant(self, voices, instruments=None, tables=None) -> dict:
+        """``{address: byte}`` planting ``voices`` (row sequences), ``instruments``
+        (``{number: {column: byte}}`` over :data:`_BASE`) and ``tables`` (``{name:
+        ((left, right), ...)}``); each channel whose orderlist holds one plays a voice,
+        which the played song's first must."""
+        lay, buf = self.lay, {}
 
         def put(addr, data):
-            if not im.load <= addr <= im.load + len(buf) - len(data):
-                raise ProbeMiss(f"${addr:04X} outside the image")
-            buf[addr - im.load : addr - im.load + len(data)] = data
+            buf.update(zip(range(addr, addr + len(data)), data))
 
         free = iter(self._slots)
         orders = []
@@ -188,10 +171,11 @@ class Bench:
             orders.append(bytes(order + [C.LOOPSONG, 0]))
         for k, addr in enumerate(lay.order_addrs):
             order = orders[k % 3 % len(orders)]
-            if len(order) > self.order_sizes[k]:
+            if len(order) <= self.order_sizes[k]:
+                put(addr, order)
+            elif k == 3 * (self.song or 0):
                 raise ProbeMiss("orderlist too short")
-            put(addr, order)
-        cols = _columns(lay)
+        cols = columns(lay)
         for num, over in (instruments or {}).items():
             if not 1 <= num <= lay.num_instr:
                 raise ProbeMiss(f"no instrument {num}")
@@ -200,7 +184,7 @@ class Bench:
                 addr = lay.ins_start + j * lay.num_instr + num - 1
                 value = want[name]
                 if name == "gate" and lay.gate_flags:
-                    value |= im.mem[addr] & 0xC0
+                    value |= self.image.mem[addr] & 0xC0
                 put(addr, bytes((value,)))
         spans = self._tables()
         for name, rows in (tables or {}).items():
@@ -212,14 +196,8 @@ class Bench:
         return buf
 
     def boot(self, buf=None):
-        """``(subject, mpu, mem, play)``: the image after its init, with the bytes
-        ``buf`` plants over it in RAM, where an init that copies song data put it."""
-        im = self.image
-        subject, mpu, mem, play = boot_flat(im, self.subtune)
-        if buf is not None:
-            new = np.frombuffer(bytes(buf), np.uint8)
-            for i in np.flatnonzero(new != np.frombuffer(im.image, np.uint8)):
-                subject[im.load + int(i)] = int(new[i])
+        """``(subject, mpu, mem, play)``: :func:`boot` of the image and ``buf``."""
+        subject, mpu, mem, play = boot(self.image, self.subtune, buf)
         return subject, mpu, mem, play if self.play is None else self.play
 
     def frames(self, buf=None, cap=_CAP, writes=None):
@@ -507,48 +485,6 @@ def _ghost(bench):
         return base.pop(), regs == order, False
     first = [w[3] for w in log.calls[0] if w[0] == _MODEVOL]
     return None, None, bool(first) and not first[-1] & 0x0F
-
-
-def confirms(bench: Bench, tables=frozenset(("pulse", "filt"))) -> bool:
-    """Whether the player plays a song planted at the layout as planted: four
-    evenly spaced notes each holding its frequency, two waveforms read alike, the
-    pulse and filter programs of ``tables``, and two gate timers and first
-    waveforms where the layout has those columns."""
-    lay = bench.lay
-    filt = "filt" in tables
-    gates = ((1, 0x21), (2, 0x41)) if lay.gate else ((None, None),) * 2
-    delays = set()
-    for (gate, first), wave in zip(gates, (0x51, 0x21)):
-        over = {} if gate is None else {"gate": gate, "first": first}
-        try:
-            run = _melody(
-                bench, wave=((wave, 0x80), (C.TABLEJUMP, 0)), filt=filt, **over
-            )
-        except ProbeMiss:
-            return False
-        gaps = set(np.diff(run.notes[:4]))
-        if len(run.notes) < 4 or len(gaps) != 1 or gaps.pop() < 2:
-            return False
-        delays.add(_wavedelay(run, wave))
-        pulse = "pulse" in tables and lay.pulse and lay.plen >= len(_SETPULSE)
-        if pulse and _simplepulse(run) is None:
-            return False
-        if (
-            filt
-            and lay.filt
-            and lay.flen >= len(_FILTER)
-            and _FILTCTRL not in run.grid[:, _RESFILT]
-        ):
-            return False
-        if gate is None:
-            continue
-        if run.grid[run.notes[0] - 1, _CTRL] != first:
-            return False
-        span = run.grid[run.notes[0] : run.notes[1] - 1, _CTRL]
-        off = np.flatnonzero(span & 1 == 0)
-        if off.size and len(span) - int(off[0]) != gate:
-            return False
-    return len(delays) == 1 and None not in delays
 
 
 def _shown(probe, *args, default=None):

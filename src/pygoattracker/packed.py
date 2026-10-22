@@ -65,6 +65,9 @@ class PackedLayout:
     slen: int
     zeros: int
     gate_flags: bool = False  # the gate column keeps the hard-restart/legato bits
+    songtbl_hi: int | None = None  # None: right after the low column
+    patt_hi: int | None = None
+    cols: tuple | None = None  # column names in memory order; None: greloc's
 
 
 @dataclass(frozen=True)
@@ -233,7 +236,10 @@ def _filter_typed(left, right):
     return filter_row(left, right)
 
 
-def _columns(lay):
+def columns(lay):
+    """The instrument columns of ``lay`` in memory order, greloc's unless it names them."""
+    if lay.cols is not None:
+        return list(lay.cols)
     names = ["ad", "sr", "wave"] + ["pulse"] * lay.pulse + ["filt"] * lay.filt
     return names + ["vib", "vibdelay"] * lay.vib + ["gate", "first"] * lay.gate
 
@@ -261,7 +267,7 @@ def _instrument(i, col, build, fixed, flags):
 
 def decode(mem, lay, build, header, orderlists, nowavedelay, simplepulse) -> TypedSong:
     """The packed song data at ``lay`` as a :class:`TypedSong`."""
-    n, cols = lay.num_instr, _columns(lay)
+    n, cols = lay.num_instr, columns(lay)
     base = lay.ins_start
     arrays = {k: mem[base + j * n : base + (j + 1) * n] for j, k in enumerate(cols)}
     instruments = tuple(
@@ -339,7 +345,7 @@ def _instrument_bytes(ins, lay):
         "gate": raw.gateoff_timer & (0x3F | flags),
         "first": raw.first_wave,
     }
-    return [col[k] for k in _columns(lay)]
+    return [col[k] for k in columns(lay)]
 
 
 def pack(song: TypedSong, info) -> list[tuple[int, bytes]]:
@@ -349,15 +355,19 @@ def pack(song: TypedSong, info) -> list[tuple[int, bytes]]:
     """
     lay, nowavedelay = info.layout, info.nowavedelay
 
-    def split(addrs):
-        return bytes(a & 0xFF for a in addrs) + bytes(a >> 8 for a in addrs)
+    def split(lo, hi, addrs):
+        hi = lo + len(addrs) if hi is None else hi
+        return [
+            (lo, bytes(a & 0xFF for a in addrs)),
+            (hi, bytes(a >> 8 for a in addrs)),
+        ]
 
     def pairs(rows, f):
         p = [f(r) for r in rows]
         return bytes(a for a, _ in p) + bytes(b for _, b in p)
 
     ins = [_instrument_bytes(i, lay) for i in song.instruments]
-    columns = bytes(row[j] for j in range(len(_columns(lay))) for row in ins)
+    cells = bytes(row[j] for j in range(len(columns(lay))) for row in ins)
     rows0 = [song.speed0] if song.speed0 else []
     st = [speed_bytes(r) for r in rows0 + list(song.speedtable)]
     out = [
@@ -365,9 +375,9 @@ def pack(song: TypedSong, info) -> list[tuple[int, bytes]]:
             lay.freq_addr,
             bytes(f & 0xFF for f in song.freq) + bytes(f >> 8 for f in song.freq),
         ),
-        (lay.songtbl, split(lay.order_addrs)),
-        (lay.patt_lo, split(lay.patt_addrs)),
-        (lay.ins_start, columns),
+        *split(lay.songtbl, lay.songtbl_hi, lay.order_addrs),
+        *split(lay.patt_lo, lay.patt_hi, lay.patt_addrs),
+        (lay.ins_start, cells),
         (
             lay.tstart,
             pairs(song.wavetable, lambda r: _wave_packed(*wave_bytes(r), nowavedelay)),

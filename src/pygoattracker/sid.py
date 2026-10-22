@@ -21,7 +21,7 @@ Images that are crunched or relocated on init are unpacked first by
 running the init routine in a 6502 emulator (:mod:`jennings`).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from pysidtracker import (
     BaseSidParser,
@@ -30,7 +30,6 @@ from pysidtracker import (
     SidHeader,
     SidImage,
     detect_playroutine,
-    find_code_all,
     find_code_first,
     read_bytes,
     trace_init,
@@ -40,34 +39,28 @@ from pysidtracker.poweron import power_on_ram
 
 from pygoattracker import constants
 from pygoattracker.errors import SidParseError
+from pygoattracker.observe import instrument_layout, song_tables
 from pygoattracker.packed import (
     PackedLayout,
     PlayerBuild,
     PlayerState,
+    columns,
     decode,
-    orderlist_bytes,
     pack,
+    pattern_rows,
     player_span,
 )
 from pygoattracker.player import Player
-from pygoattracker.probe import Bench, confirms, measure, song_read, state
+from pygoattracker.probe import Bench, ProbeMiss, boot, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.model import (
     Orderlist,
     PlayPattern,
     Repeat,
-    Row,
     Song,
     Subtune,
     Transpose,
 )
-
-# Packed pattern grammar (player.s / gcommon.h).
-_FX = 0x40
-_FXONLY = 0x50
-_PNOTE = 0x60
-_FIRSTPACKEDREST = 0xC0
-_PENDMARK = 0x00
 
 # Packed orderlist grammar (shares .SNG encoding except repeats trail
 # their pattern instead of prefixing it).
@@ -76,33 +69,10 @@ _TRANSDOWN = 0xE0
 _TRANSUP = 0xF0
 _LOOPSONG = 0xFF
 
-# ---------------------------------------------------------------------------
-# Relocation-invariant player-code fingerprints.
-#
-# gt2reloc bakes every table's absolute base into the playroutine as
-# ``LDA table,Y`` (opcode ``B9``) operands, and relocates the player as one
-# block, so those operands move with the tune. We locate each table by its
-# access idiom in ``player.s`` and read the captured base directly -- version
-# tolerant, because the opcode skeleton is stable across gt2reloc/player
-# revisions even as the code around it shifts. See docs/format.md.
-#
-# Sequencer (``mt_sequencer``) and new-note fetch (``mt_getnewnote``) share one
-# skeleton -- ``lda tbllo,y; sta zp; lda tblhi,y; sta zp; ldy chn,x;
-# lda (zp),y; cmp #k`` -- disambiguated by the terminal compare: ``#LOOPSONG``
-# ($FF) for the song(order)-table, ``#FX`` ($40) for the pattern-pointer table.
-_P_SONGTBL = CodePattern("B9 {lo:w} 85 ?? B9 {hi:w} 85 ?? BC ?? ?? B1 ?? C9 FF")
+# The packed player's pattern fetch, ``lda patttbllo,y; sta zp; lda patttblhi,y;
+# sta zp; ldy chn,x; lda (zp),y; cmp #FX``: :meth:`GoatTrackerSidParser.recognize`
+# tells a GoatTracker image by it, the frequency table being common to most trackers.
 _P_PATTTBL = CodePattern("B9 {lo:w} 85 ?? B9 {hi:w} 85 ?? BC ?? ?? B1 ?? C9 40")
-# ``lda ADSRtbl-1,y; sta ...`` newnote load pair -> instrument count = sr - ad.
-_P_ADSR = CodePattern("B9 {sr:w} 9D 06 D4 B9 {ad:w} 9D 05 D4")
-# Table "nextstep" idiom shared by wave/pulse/filter execution:
-# ``lda lefttbl,y; cmp #LOOPx($FF); iny; tya; bcc; ...; lda righttbl-1,y``.
-_P_TABLEPAIR = CodePattern("B9 {left:w} C9 FF C8 98 90 ?? B9 {right:w}")
-_P_WAVE = CodePattern("B9 {w:w} C9 FF C8 98")  # lda wavetbl,y (start of tables)
-_P_WEXEC = CodePattern("BC ?? ?? F0 ?? B9 {w:w}")  # lda wavetbl-1,y (waveexec)
-# ``ldy chninstr,x; lda insgatetimer-1,y; sta chngatetimer,x`` -> gate present.
-_P_GATE = CodePattern("BC ?? ?? B9 {g:w} 9D ?? ?? BD")
-# ``lda inspulseptr-1,y; beq skippulse; sta chnpulseptr,x; lda #0`` -> pulse.
-_P_PULSEPTR = CodePattern("B9 {v:w} F0 ?? 9D ?? ?? A9 00")
 
 
 @dataclass
@@ -139,6 +109,7 @@ class DecompiledSid:
     subtune: int = 0
     typed: TypedSong | None = None
     image: SidImage | None = field(default=None, repr=False)
+    memory: bytes | None = field(default=None, repr=False)
 
     def player(self) -> Player:
         """A :class:`Player` of this subtune configured as the image's own player.
@@ -166,12 +137,14 @@ class DecompiledSid:
         )
 
     def repack(self) -> list[tuple[int, bytes, bytes]]:
-        """``(address, packed, image)`` for each piece :func:`pack` writes that the image
-        does not hold: empty where the typed song re-encodes to the image's own bytes.
+        """``(address, packed, held)`` for each piece :func:`pack` writes that the memory
+        the player read the song from does not hold: empty where the typed song
+        re-encodes to its own bytes.
         """
+        mem = self.image.mem if self.memory is None else self.memory
         out = []
         for addr, data in pack(self.typed, self.info):
-            have = bytes(self.image.mem[addr : addr + len(data)])
+            have = bytes(mem[addr : addr + len(data)])
             if have != data:
                 out.append((addr, data, have))
         return out
@@ -254,97 +227,6 @@ def _recognize(image: SidImage):
     return _find_freq_hi_anchor(image)
 
 
-def decode_packed_pattern(mem, addr):
-    """Decode one packed pattern at ``addr`` into a list of :class:`Row`.
-
-    Mirrors the packpattern grammar in ``greloc.c``: an optional instrument
-    byte (< ``FX``), then an FX/FXONLY byte (updating the running command),
-    then a note byte or a packed-rest run; ``0x00`` ends the pattern. The
-    active command persists across rows until changed, so it is filled onto
-    every reconstructed row.
-    """
-    pos = addr
-    command = 0
-    data = 0
-    rows = []
-    while True:
-        byte = mem[pos]
-        if byte == _PENDMARK:
-            pos += 1
-            break
-        instrument = 0
-        if byte < _FX:
-            instrument = byte
-            pos += 1
-            byte = mem[pos]
-        if byte >= _FIRSTPACKEDREST:
-            run = 0x100 - byte
-            pos += 1
-            for _ in range(run):
-                rows.append(
-                    Row(note=constants.REST, instrument=0, command=command, data=data)
-                )
-            continue
-        if byte < _PNOTE:
-            command = byte & 0x0F
-            is_rest = byte >= _FXONLY
-            pos += 1
-            if command:
-                data = mem[pos]
-                pos += 1
-            if is_rest:
-                rows.append(
-                    Row(
-                        note=constants.REST,
-                        instrument=instrument,
-                        command=command,
-                        data=data,
-                    )
-                )
-                continue
-            note = mem[pos]
-            pos += 1
-        else:
-            note = byte
-            pos += 1
-        rows.append(Row(note=note, instrument=instrument, command=command, data=data))
-    return rows, pos
-
-
-def _count_patterns(mem, patt_lo, first_patt, order_start):
-    """Number of patterns, taken from the pattern-pointer table.
-
-    greloc stores a ``patttbllo``/``patttblhi`` pointer array at ``patt_lo``
-    with one entry per pattern; the patterns themselves are contiguous
-    starting at ``first_patt`` (just past the orderlists). This bounds the
-    pattern block exactly -- unlike the file end, which may have author info
-    or other bytes trailing the patterns, or (for a decrunched image) no
-    marker at all. Returns the largest pattern count whose pointer table
-    matches the sequentially decoded pattern start addresses, or ``None``.
-    """
-    best = None
-    for npat in range(1, constants.MAX_PATT + 1):
-        if patt_lo + 2 * npat >= order_start:
-            break
-        if (mem[patt_lo] | (mem[patt_lo + npat] << 8)) != first_patt:
-            continue
-        pos = first_patt
-        ok = True
-        for i in range(npat):
-            addr = mem[patt_lo + i] | (mem[patt_lo + npat + i] << 8)
-            if addr != pos:
-                ok = False
-                break
-            try:
-                _, pos = decode_packed_pattern(mem, pos)
-            except IndexError:
-                ok = False
-                break
-        if ok:
-            best = npat
-    return best
-
-
 def decode_packed_orderlist(mem, addr):
     """Decode a packed orderlist at ``addr`` into an :class:`Orderlist`.
 
@@ -385,402 +267,6 @@ def decode_packed_orderlist(mem, addr):
     return Orderlist(entries=entries, restart=restart), pos + 2
 
 
-# ---------------------------------------------------------------------------
-# Instrument/table segmentation and reverse transforms.
-#
-# The packed instrument arrays and the four tables sit contiguously between
-# the pattern-pointer table and the first orderlist, with no length markers.
-# The layout is a deterministic function of greloc's build flags, which are
-# baked into the player *code* (as assembler defines), not the song data. We
-# recover the layout by trying every flag combination and keeping the one
-# whose instrument arrays + tables tile the region exactly, with every
-# instrument table pointer in range and the (directly indexed) speed table
-# length equal to the highest speed pointer used.
-# ---------------------------------------------------------------------------
-
-# Pattern command numbers that index a table (its data byte is an entry point).
-_CMD_SETWAVEPTR = 0x08
-_CMD_SETPULSEPTR = 0x09
-_CMD_SETFILTERPTR = 0x0A
-_SPEED_CMDS = (0x01, 0x02, 0x03, 0x04, 0x0E)  # porta/toneporta/vibrato/funktempo
-
-
-def _pattern_features(patterns):
-    """Collect max instrument and per-table entry points from patterns."""
-    maxinstr = 1
-    wave, pulse, filt, speed = set(), set(), set(), set()
-    for rows in patterns:
-        for row in rows:
-            if row.instrument > maxinstr:
-                maxinstr = row.instrument
-            cmd, data = row.command, row.data
-            if not data:
-                continue
-            if cmd == _CMD_SETWAVEPTR:
-                wave.add(data)
-            elif cmd == _CMD_SETPULSEPTR:
-                pulse.add(data)
-            elif cmd == _CMD_SETFILTERPTR:
-                filt.add(data)
-            elif cmd in _SPEED_CMDS:
-                speed.add(data)
-    return maxinstr, wave, pulse, filt, speed
-
-
-def _executed_length(mem, start, entry_points, limit=constants.MAX_TABLELEN):
-    """Highest 1-based row reached by executing a jump-terminated table.
-
-    wave/pulse/filter programs advance row-by-row until a ``0xFF`` jump row;
-    the physical table is the union of all program spans. Returns
-    ``(length, ok)`` where ``ok`` is False if execution ran off the rails
-    (signals a wrong segmentation hypothesis).
-    """
-    entry_points = {e for e in entry_points if e}  # 0 = unused pointer
-    if not entry_points:
-        return 0, True
-    reached = set()
-    for entry in entry_points:
-        ptr = entry
-        for _ in range(limit + 1):
-            if ptr < 1 or ptr > limit:
-                return 0, False
-            reached.add(ptr)
-            if mem[start + ptr - 1] == 0xFF:  # jump row ends the program
-                break
-            ptr += 1
-        else:
-            return 0, False
-    return max(reached), True
-
-
-def _solve_layout(mem, region_start, region_end, num_instr, eps, confirm=None):
-    """Return the unique valid (flags, table lengths) tiling of the region."""
-    region_len = region_end - region_start
-    solutions = []
-    for pulse in (0, 1):
-        for filt in (0, 1):
-            for vib in (0, 1):
-                for gate in (0, 1):
-                    sol = _try_layout(
-                        mem,
-                        region_start,
-                        region_end,
-                        region_len,
-                        num_instr,
-                        pulse,
-                        filt,
-                        vib,
-                        gate,
-                        eps,
-                    )
-                    if sol is not None:
-                        solutions.append(sol)
-    if not solutions:
-        raise SidParseError("could not segment packed instruments/tables")
-    # Several tilings can fit: the player is asked which it plays, gate columns
-    # (the stronger test) first, else the last as the vibrato's. Only the tables
-    # the tilings disagree on are planted.
-    solutions.sort(key=lambda s: -s["gate"])
-    if len(solutions) > 1 and confirm is not None:
-        tables = frozenset(
-            k for k in ("pulse", "filt") if len({s[k] for s in solutions}) > 1
-        )
-        return next((s for s in solutions if confirm(s, tables)), solutions[-1])
-    return solutions[-1]
-
-
-def _try_layout(
-    mem, region_start, region_end, region_len, num_instr, pulse, filt, vib, gate, eps
-):
-    wave_eps, pulse_eps, filt_eps, speed_eps = eps
-    off = region_start
-    arrays = {}
-    for name in ("ad", "sr", "waveptr"):
-        arrays[name] = mem[off : off + num_instr]
-        off += num_instr
-    if pulse:
-        arrays["pulseptr"] = mem[off : off + num_instr]
-        off += num_instr
-    if filt:
-        arrays["filtptr"] = mem[off : off + num_instr]
-        off += num_instr
-    if vib:
-        arrays["vibparam"] = mem[off : off + num_instr]
-        off += num_instr
-        arrays["vibdelay"] = mem[off : off + num_instr]
-        off += num_instr
-    if gate:
-        arrays["gatetimer"] = mem[off : off + num_instr]
-        off += num_instr
-        arrays["firstwave"] = mem[off : off + num_instr]
-        off += num_instr
-    tstart = off
-    if tstart >= region_end:
-        return None
-    wlen, ok = _executed_length(mem, tstart, set(arrays["waveptr"]) | wave_eps)
-    if not ok or wlen == 0 or max(arrays["waveptr"], default=0) > wlen:
-        return None
-    ppos = tstart + 2 * wlen
-    plen = 0
-    if pulse:
-        plen, ok = _executed_length(mem, ppos, set(arrays["pulseptr"]) | pulse_eps)
-        if not ok or max(arrays["pulseptr"], default=0) > plen:
-            return None
-    fpos = ppos + 2 * plen
-    flen = 0
-    if filt:
-        flen, ok = _executed_length(mem, fpos, set(arrays["filtptr"]) | filt_eps)
-        if not ok or max(arrays["filtptr"], default=0) > flen:
-            return None
-    speed_refs = set(speed_eps)
-    if vib:
-        speed_refs |= set(arrays["vibparam"])
-    speed_refs.discard(0)
-    slen = max(speed_refs, default=0)
-    # Speed table has a leading zero-pad byte per column when it is executed.
-    for zeros in (0, 1):
-        total = (
-            (3 + pulse + filt + 2 * vib + 2 * gate) * num_instr
-            + 2 * wlen
-            + 2 * plen
-            + 2 * flen
-            + 2 * slen
-            + 2 * zeros
-        )
-        if total == region_len:
-            return {
-                "arrays": arrays,
-                "pulse": pulse,
-                "filt": filt,
-                "vib": vib,
-                "gate": gate,
-                "tstart": tstart,
-                "wlen": wlen,
-                "plen": plen,
-                "flen": flen,
-                "slen": slen,
-                "zeros": zeros,
-            }
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Code-scan layout: read the instrument/table geometry from the player code.
-#
-# The four wave/pulse/filter tables sit contiguously after the instrument
-# arrays. Each is reached by ``player.s``'s "nextstep" idiom (:data:`_P_TABLEPAIR`)
-# whose two ``LDA table,Y`` operands give the left column and (right-1) column
-# bases. Because the three tables abut (``right = left + len``; next table's
-# ``left = this.left + 2*len``), the located pairs form a self-validating
-# *chain*: wave (always present), then pulse and/or filter. The instrument
-# region ``[insad, wavetbl)`` is then ``instruments * K`` bytes, and
-# ``K = 3 + pulse + filt + 2*vib + 2*gate`` pins the remaining flags (gate is
-# read from :data:`_P_GATE`; vib follows from K). This is the primary path for
-# tunes the exact-fit tiling (:func:`_solve_layout`) cannot segment; it is
-# validated by the same executable-consistency checks tiling uses, so a
-# spurious chain is rejected rather than silently accepted.
-# ---------------------------------------------------------------------------
-
-
-def _chain_tables(image, insad, order_start):
-    """Return ``(wavetbl, chain)`` located from the player's table-access code.
-
-    ``chain`` is the list of ``(left, right)`` column bases for the jump-
-    terminated tables (wave, then pulse/filter) in memory order, or ``None`` if
-    no wave table access is found in ``[insad, order_start)``.
-    """
-    pairs = sorted(
-        {
-            (m.captures["left"], m.captures["right"] + 1)
-            for m in find_code_all(image, _P_TABLEPAIR)
-            if insad < m.captures["left"] < order_start
-        }
-    )
-    if not pairs:
-        return None
-    wave_cands = {m.captures["w"] for m in find_code_all(image, _P_WAVE)}
-    wave_cands |= {m.captures["w"] + 1 for m in find_code_all(image, _P_WEXEC)}
-    wave_cands = {w for w in wave_cands if insad < w < order_start}
-    start = None
-    for left, right in pairs:
-        if left in wave_cands:
-            start = (left, right)
-            break
-    if start is None:
-        start = pairs[0]
-    by_left = dict(pairs)
-    chain = [start]
-    cur = start
-    while len(chain) < 3:
-        nxt = cur[0] + 2 * (cur[1] - cur[0])
-        if nxt not in by_left:
-            break
-        cur = (nxt, by_left[nxt])
-        chain.append(cur)
-    return start[0], chain
-
-
-def _chain_layout(image, mem, insad, num_instr, order_start, eps, confirm=None):
-    """Locate the instrument/table layout from player code (see section note).
-
-    Returns a solution dict compatible with :func:`_build_song`, or ``None`` if
-    the code-located geometry is inconsistent (caller falls back to tiling). A
-    lone pulse-or-filter table tiles alike either way, so the player is asked
-    (``confirm``) which it plays, as :func:`_solve_layout` asks; the stated
-    ``lda inspulseptr-1,y`` orders the readings.
-    """
-    located = _chain_tables(image, insad, order_start)
-    if located is None:
-        return None
-    wtbl, chain = located
-    wlen = chain[0][1] - chain[0][0]
-    if wlen <= 0:
-        return None
-    if num_instr <= 0 or (wtbl - insad) % num_instr:
-        return None
-    k = (wtbl - insad) // num_instr
-    gate = (
-        1
-        if any(
-            insad < m.captures["g"] + 1 < wtbl for m in find_code_all(image, _P_GATE)
-        )
-        else 0
-    )
-    lens = [c[1] - c[0] for c in chain[1:3]]
-    if len(lens) == 2:
-        readings = [(1, 1, *lens)]
-    elif lens:
-        readings = [(1, 0, lens[0], 0), (0, 1, 0, lens[0])]
-        if not any(
-            insad < m.captures["v"] + 1 < wtbl
-            for m in find_code_all(image, _P_PULSEPTR)
-        ):
-            readings.reverse()
-    else:
-        readings = [(0, 0, 0, 0)]
-    sols = [
-        sol
-        for reading in readings
-        if (
-            sol := _chain_geometry(
-                mem, insad, num_instr, order_start, eps, wtbl, wlen, k, gate, *reading
-            )
-        )
-        is not None
-    ]
-    if len(sols) > 1 and confirm is not None:
-        return next((sol for sol in sols if confirm(sol, _LONE)), sols[0])
-    return sols[0] if sols else None
-
-
-_LONE = frozenset(("pulse", "filt"))
-
-
-def _chain_geometry(
-    mem,
-    insad,
-    num_instr,
-    order_start,
-    eps,
-    wtbl,
-    wlen,
-    k,
-    gate,
-    pulse,
-    filt,
-    plen,
-    flen,
-):
-    """The :func:`_chain_layout` solution for one pulse/filter reading, or None."""
-    rem = k - 3 - pulse - filt - 2 * gate
-    if rem < 0 or rem % 2:
-        return None
-    vib = rem // 2
-    if vib not in (0, 1) or k != 3 + pulse + filt + 2 * vib + 2 * gate:
-        return None
-    speedstart = wtbl + 2 * wlen + 2 * plen + 2 * flen
-    remaining = order_start - speedstart
-    if remaining < 0 or remaining % 2:
-        return None
-    if remaining == 0:
-        slen, zeros = 0, 0
-    else:
-        zeros, slen = 1, (remaining - 2) // 2
-        if slen < 0:
-            return None
-    off = insad
-    arrays = {}
-    for name in ("ad", "sr", "waveptr"):
-        arrays[name] = mem[off : off + num_instr]
-        off += num_instr
-    if pulse:
-        arrays["pulseptr"] = mem[off : off + num_instr]
-        off += num_instr
-    if filt:
-        arrays["filtptr"] = mem[off : off + num_instr]
-        off += num_instr
-    if vib:
-        arrays["vibparam"] = mem[off : off + num_instr]
-        off += num_instr
-        arrays["vibdelay"] = mem[off : off + num_instr]
-        off += num_instr
-    if gate:
-        arrays["gatetimer"] = mem[off : off + num_instr]
-        off += num_instr
-        arrays["firstwave"] = mem[off : off + num_instr]
-        off += num_instr
-    if off != wtbl:
-        return None
-    if not _chain_valid(
-        mem, arrays, eps, wtbl, wlen, pulse, plen, filt, flen, vib, slen
-    ):
-        return None
-    return {
-        "arrays": arrays,
-        "pulse": pulse,
-        "filt": filt,
-        "vib": vib,
-        "gate": gate,
-        "tstart": wtbl,
-        "wlen": wlen,
-        "plen": plen,
-        "flen": flen,
-        "slen": slen,
-        "zeros": zeros,
-    }
-
-
-def _chain_valid(mem, arrays, eps, wtbl, wlen, pulse, plen, filt, flen, vib, slen):
-    """Executable-consistency check for a code-located layout (as tiling uses)."""
-    wave_eps, pulse_eps, filt_eps, speed_eps = eps
-    wl, ok = _executed_length(mem, wtbl, set(arrays["waveptr"]) | wave_eps)
-    if not ok or wl != wlen or max(arrays["waveptr"], default=0) > wlen:
-        return False
-    if pulse:
-        pl, ok = _executed_length(
-            mem, wtbl + 2 * wlen, set(arrays["pulseptr"]) | pulse_eps
-        )
-        if not ok or pl != plen or max(arrays["pulseptr"], default=0) > plen:
-            return False
-    if filt:
-        fl, ok = _executed_length(
-            mem, wtbl + 2 * wlen + 2 * plen, set(arrays["filtptr"]) | filt_eps
-        )
-        if not ok or fl != flen or max(arrays["filtptr"], default=0) > flen:
-            return False
-    speed_refs = set(speed_eps)
-    if vib:
-        speed_refs |= set(arrays["vibparam"])
-    speed_refs.discard(0)
-    return max(speed_refs, default=0) <= slen
-
-
-# ---------------------------------------------------------------------------
-# Reverse the packed table byte transforms to the editor form the model and
-# the (editor) Player expect.
-# ---------------------------------------------------------------------------
-
-
 def _detect_nowavedelay(wave_left):
     """greloc's optimized packing: NOWAVEDELAY unless a wavetable delay row
     (0x01-0x0F) exists. Only where the player cannot be run."""
@@ -793,71 +279,19 @@ def _detect_simplepulse(pulse_left):
     return not any(0x81 <= b <= 0xFE for b in pulse_left)
 
 
-# mt_wavenote: ``tay``, the vibrato reset unless NOVIB, then ``lda mt_freqtbllo-FIRSTNOTE,y``
-# and ``lda mt_freqtblhi-FIRSTNOTE,y``, each stored to the channel's frequency (or its ZP ghost).
-_WAVENOTE = tuple(
-    f"A8 {reset}B9 {{lo:w}} {store} B9 {{hi:w}} {store[:2]}"
-    for reset in ("A9 00 9D ?? ?? ", "")
-    for store in ("9D {s:w}", "95 ??")
-)
-
-
-def _code_freq_bases(mem, start, end):
-    """``(lo, hi)``: the bases mt_wavenote indexes by note in the player code in
-    ``[start, end)``, or None. An SFX note load (``lda mt_freqtbllo-$80,y``)
-    stores to the SID, not to a channel."""
-    found = {
-        (m.captures["lo"], m.captures["hi"])
-        for pattern in _WAVENOTE
-        for m in find_code_all(mem, pattern, start=start, end=end)
-        if not 0xD400 <= m.captures.get("s", 0) < 0xD800
-    }
-    return found.pop() if len(found) == 1 else None
-
-
 def _freq_table(mem, addr, firstnote, length, bases=None):
     """128-entry note-frequency table the packed player reads, reproducing its
-    out-of-range overruns into adjacent memory: by the code's own table bases
-    where they are found, else from the frequency-table anchor."""
+    out-of-range overruns into adjacent memory: by the bases its note loads index
+    where they are seen, else from the frequency-table anchor."""
     lo, hi = bases or (addr - firstnote, addr + length - firstnote)
     return tuple(
         (mem[(hi + n) & 0xFFFF] << 8) | mem[(lo + n) & 0xFFFF] for n in range(128)
     )
 
 
-def _packed_layout(sol, anchor, songs, order_addrs, where) -> PackedLayout:
-    """The :class:`PackedLayout` of a region tiling ``sol``."""
-    addr, firstnote, length = anchor
-    songtbl, patt_lo, patt_addrs = where
-    tstart, wlen, plen, flen = sol["tstart"], sol["wlen"], sol["plen"], sol["flen"]
-    return PackedLayout(
-        freq_addr=addr,
-        firstnote=firstnote,
-        notes=length,
-        songtbl=songtbl,
-        songs=songs,
-        order_addrs=tuple(order_addrs),
-        patt_lo=patt_lo,
-        patt_addrs=tuple(patt_addrs),
-        ins_start=tstart - len(next(iter(sol["arrays"].values()))) * len(sol["arrays"]),
-        num_instr=len(next(iter(sol["arrays"].values()))),
-        pulse=bool(sol["pulse"]),
-        filt=bool(sol["filt"]),
-        vib=bool(sol["vib"]),
-        gate=bool(sol["gate"]),
-        tstart=tstart,
-        wlen=wlen,
-        plen=plen,
-        flen=flen,
-        slen=sol["slen"],
-        zeros=sol["zeros"],
-        gate_flags=any(v & 0xC0 for v in sol["arrays"].get("gatetimer", ())),
-    )
-
-
 def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
     """The typed song, the editor-form :class:`Song` it states, and the info;
-    ``bases`` the code's frequency-table bases (:func:`_code_freq_bases`)."""
+    ``bases`` the frequency-table bases the player's note loads index."""
     addr, firstnote, length = anchor
     tstart, wlen, plen = lay.tstart, lay.wlen, lay.plen
     pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
@@ -930,19 +364,9 @@ def _all_anchors(image):
     return kept
 
 
-def _finish(decoded, song, measured):
-    """``decoded`` narrowed to the selected song, else a clean ``SidParseError``.
-
-    Unmeasured, the tune's own init and play loaded no recognised song table,
-    so the song plays from a routine the decoder does not know.
-    """
-    count = len(decoded.song.subtunes)
-    if not 0 <= song < count:
-        if not measured:
-            raise SidParseError(
-                f"no GoatTracker song table read: the tune's init and play load "
-                f"none for subtune {song}, and the player decodes {count} subtune(s)"
-            )
+def _finish(decoded, song):
+    """``decoded`` narrowed to the selected song, else a clean ``SidParseError``."""
+    if not 0 <= song < len(decoded.song.subtunes):
         raise SidParseError(
             f"no such subtune: the song selects subtune {song}, "
             f"but the player decodes {count} subtune(s)"
@@ -951,60 +375,26 @@ def _finish(decoded, song, measured):
     return decoded
 
 
-def _measured_song(image, subtune):
-    """``(image, anchor, song, table)`` from the song-table load the tune's own
-    init and play make for ``subtune`` (:func:`~pygoattracker.probe.song_read`),
-    else None.
-
-    The loading player is the anchor above its ``lda songtbllo,y``; ``song`` is
-    the entry it indexes and ``table`` its ``(songtbllo, songs)``. The player
-    decodes from ``image`` unless init installed it (the load is not in the
-    loaded image), then from the memory init left.
-    """
-    seen = song_read(image, subtune, _P_SONGTBL)
-    if seen is None:
-        return None
-    after, match, addr = seen
-    lo, hi = match.captures["lo"], match.captures["hi"]
-    if match not in find_code_all(image, _P_SONGTBL):
-        image = after
-    anchor = next((a for a in _all_anchors(image) if a[0] > match.addr), None)
-    if anchor is None or hi <= lo or (hi - lo) % 3:
-        return None
-    return image, anchor, (addr - lo) // 3, (lo, (hi - lo) // 3)
-
-
-def _select_song(image, default_anchor, subtune):
-    """Decompile the player the tune's own init/play enters, for ``subtune``.
-
-    The song-table load the player makes (:func:`_measured_song`) fixes the
-    player, its song and its table; without one, the default anchor's player
-    and the header song.
-    """
-    measured = _measured_song(image, subtune)
-    if measured is None:
-        decoded = _decompile_any_songs(
-            image, image.header, image.end, default_anchor, subtune
-        )
-        return _finish(decoded, subtune, False)
-    image, anchor, song, table = measured
-    decoded = _decompile_any_songs(image, image.header, image.end, anchor, song, table)
-    return _finish(decoded, song, True)
-
-
 def decompile_sid(src, subtune=0) -> DecompiledSid:
     """Decompile a packed GoatTracker ``.sid`` into a :class:`DecompiledSid`.
 
     ``src`` may be a path, ``bytes``, or a binary file object. Crunched images
-    are unpacked via shared playroutine detection (emulated init); each header
-    song is resolved through the player's own init to its module and subtune.
+    are unpacked via shared playroutine detection (emulated init); the song data
+    is where the player the header song runs reads it (:mod:`pygoattracker.observe`).
     """
     raw = read_bytes(src)
     image = _load_image(raw)
     detection = detect_playroutine(image, _recognize, subtune=subtune)
     if detection.anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
-    decoded = _select_song(image, detection.anchor, subtune)
+    try:
+        decoded = _decompile(image, image.header, detection.anchor, subtune)
+    except (IndexError, ValueError) as exc:
+        raise SidParseError(f"malformed packed GoatTracker data: {exc}") from exc
+    except KeyError as exc:
+        raise SidParseError(f"malformed packed GoatTracker data: byte {exc}") from exc
+    except ProbeMiss as exc:
+        raise SidParseError(f"the song data does not hold a probe: {exc}") from exc
     decoded.info.init_regs = init_regs(_load_image(raw), subtune)
     return decoded
 
@@ -1022,168 +412,62 @@ def init_regs(image, subtune=0) -> tuple:
     )
 
 
-def _candidate_song_counts(header):
-    """Subtune counts to try, most-trusted first.
-
-    The PSID ``songs`` field is preferred but is not reliable: gt2reloc emits a
-    song(order)-table sized to the GoatTracker song's subtune count, which some
-    tunes leave larger than the exported PSID ``songs`` value (and a few PSIDs
-    advertise an implausible count). The true count is fixed by the packed
-    layout, so fall back to scanning ``1..MAX_SONGS`` and take the first count
-    whose whole structure decodes.
-    """
-    counts = []
-    if 1 <= header.songs <= constants.MAX_SONGS:
-        counts.append(header.songs)
-    counts.extend(n for n in range(1, constants.MAX_SONGS + 1) if n not in counts)
-    return counts
-
-
-def _layout_candidates(image, header, anchor, table=None):
-    """``(songtbl, songs, patt_lo)`` hypotheses to try, most-trusted first.
-
-    A measured ``table`` (``(songtbl, songs)``, the player's own) comes first,
-    then the stock layout (songtbl right after the frequency table) at the header
-    count, then the in-span :data:`_P_SONGTBL` sequencer signature
-    (the player's stated base and count), then every stock candidate count.
-    """
-    addr, _firstnote, length = anchor
-    songtbl0 = addr + 2 * length
-    out = []
-    seen = set()
-
-    def add(cand):
-        if cand not in seen:
-            seen.add(cand)
-            out.append(cand)
-
-    if table is not None:
-        add((table[0], table[1], table[0] + 6 * table[1]))
-    if 1 <= header.songs <= constants.MAX_SONGS:
-        add((songtbl0, header.songs, songtbl0 + 6 * header.songs))
-    low = player_span(image, addr).start
-    low = low if low is not None else image.load
-    for match in find_code_all(image, _P_SONGTBL):
-        if not low <= match.addr < addr:
-            continue
-        lo, hi = match.captures["lo"], match.captures["hi"]
-        if hi <= lo or (hi - lo) % 3:
-            continue
-        n = (hi - lo) // 3
-        if 1 <= n <= constants.MAX_SONGS:
-            add((lo, n, lo + 6 * n))
-    for n in _candidate_song_counts(header):
-        add((songtbl0, n, songtbl0 + 6 * n))
-    return out
-
-
-def _decompile_any_songs(
-    image, header, dataend, anchor, subtune, table=None
-) -> DecompiledSid:
-    """Decompile trying each layout hypothesis until one decodes.
-
-    Candidates (see :func:`_layout_candidates`) are tried most-trusted first. On
-    total failure the reported error is the one from the trusted (stock layout,
-    ``header.songs``) attempt, falling back to the first-tried candidate: a later
-    candidate's error (e.g. ``orderlist pointer out of range``) misattributes
-    the real cause of the failure.
-    """
-    primary_exc = None
-    first_exc = None
-    for songtbl, songs, patt_lo in _layout_candidates(image, header, anchor, table):
-        try:
-            return _decompile(
-                image, header, dataend, anchor, subtune, songtbl, songs, patt_lo
-            )
-        except (SidParseError, IndexError, ValueError) as exc:
-            if first_exc is None:
-                first_exc = exc
-            if primary_exc is None and songs == header.songs:
-                primary_exc = exc
-    exc = primary_exc if primary_exc is not None else first_exc
-    if exc is None:
-        raise SidParseError("empty subtune search")
-    if isinstance(exc, (IndexError, ValueError)):
-        raise SidParseError(f"malformed packed GoatTracker data: {exc}") from exc
-    raise exc
-
-
-def _decompile(
-    image, header, dataend, anchor, subtune, songtbl, songs, patt_lo
-) -> DecompiledSid:
-    mem = image.mem
-    all_addrs = [
-        mem[songtbl + i] | (mem[songtbl + 3 * songs + i] << 8) for i in range(3 * songs)
-    ]
-    # A player may declare more songs than it fills, so take the valid prefix.
-    i = 0
-    while i < len(all_addrs) and 0 < all_addrs[i] < dataend:
-        i += 1
-    if not i or i % 3:
-        raise SidParseError("orderlist pointer out of range")
-    order_addrs = all_addrs[:i]
-    orderlists = []
-    order_end = 0
-    order_start = min(order_addrs)
-    for base in order_addrs:
-        olist, nxt = decode_packed_orderlist(mem, base)
-        orderlists.append(olist)
-        order_end = max(order_end, nxt)
-    # Cheap necessary condition: pattern 0 starts right after the orderlists, so
-    # patttbllo[0] must equal the low byte of that address. This rejects a wrong
-    # subtune count in O(1) before the O(patterns) scan below (the count search
-    # in decompile_sid tries many candidates against packed/unrelated data).
-    if mem[patt_lo] != (order_end & 0xFF):
-        raise SidParseError("could not locate pattern-pointer table")
-    npat = _count_patterns(mem, patt_lo, order_end, order_start)
-    if npat is None:
-        raise SidParseError("could not locate pattern-pointer table")
-    patterns, patt_addrs = [], []
-    pos = order_end
-    for _ in range(npat):
-        patt_addrs.append(pos)
-        rows, pos = decode_packed_pattern(mem, pos)
-        patterns.append(rows)
-    sizes = tuple(b - a for a, b in zip(patt_addrs, patt_addrs[1:] + [pos]))
-    orders = tuple(len(orderlist_bytes(o)) for o in orderlists)
-    where = (songtbl, patt_lo, patt_addrs)
-    # An interrupt-driven tune (no play address) runs greloc's ``jmp mt_play``.
+def _decompile(image, header, anchor, subtune) -> DecompiledSid:
+    """The song data the player the tune's init selects reads, decompiled."""
     base = player_span(image, anchor[0]).start
     play = header.play_address or (None if base is None else base + 3)
+    booted = boot(image, subtune)
+    mem = bytes(booted[0])
+    after = SidImage(bytearray(mem), 0, len(mem), header, image.image, b"")
+    t = song_tables((*booted[:3], play or booted[3]))
 
-    def bench(sol):
-        lay = _packed_layout(sol, anchor, len(orderlists), order_addrs, where)
-        return Bench(image, lay, sizes, orders, subtune, play, (base, anchor[0]))
+    def pointers(lo, hi, n):
+        return [mem[lo + i] | mem[hi + i] << 8 for i in range(n)]
 
-    region_start = patt_lo + 2 * npat
-    region_end = order_start
-    if not region_start < region_end:
-        raise SidParseError("bad packed layout (instrument/table region empty)")
-    num_instr = max((r.instrument for rows in patterns for r in rows), default=1)
-    eps = _pattern_features(patterns)[1:]
-    # Exact-fit tiling first (established path); if no flag combination tiles the
-    # region, read the table bases directly from the player's table-access code.
-
-    def check(sol, tables):
-        return confirms(bench(sol), tables)
-
-    try:
-        layout = _solve_layout(mem, region_start, region_end, num_instr, eps, check)
-    except SidParseError:
-        layout = _chain_layout(
-            image, mem, region_start, num_instr, region_end, eps, check
-        )
-        if layout is None:
-            raise
-    probe = bench(layout)
-    build = measure(probe)
-    bases = None if base is None else _code_freq_bases(mem, base, anchor[0])
-    song, info, typed = _build_song(
-        mem, header, probe.lay, anchor, orderlists, build, bases
+    order_addrs = pointers(t.song_lo, t.song_hi, 3 * t.songs)
+    patt_addrs = pointers(t.patt_lo, t.patt_hi, t.patterns)
+    orderlists, orders = [], []
+    for addr in order_addrs:
+        olist, nxt = decode_packed_orderlist(mem, addr)
+        orderlists.append(olist)
+        orders.append(nxt - addr)
+    sizes = tuple(pattern_rows(mem, a)[1] - a for a in patt_addrs)
+    lay = PackedLayout(
+        *anchor,
+        songtbl=t.song_lo,
+        songs=t.songs,
+        order_addrs=tuple(order_addrs),
+        patt_lo=t.patt_lo,
+        patt_addrs=tuple(patt_addrs),
+        **dict.fromkeys(("ins_start", "num_instr", "tstart", "wlen", "plen"), 0),
+        **dict.fromkeys(("flen", "slen", "zeros"), 0),
+        **dict.fromkeys(("pulse", "filt", "vib", "gate"), False),
+        songtbl_hi=t.song_hi,
+        patt_hi=t.patt_hi,
     )
+
+    def bench(lay):
+        span = (player_span(after, lay.freq_addr).start, lay.freq_addr)
+        return Bench(image, lay, sizes, tuple(orders), subtune, play, span, t.song)
+
+    tables = (t.song_lo, t.song_hi, t.patt_lo, t.patt_hi)
+    fields = instrument_layout(bench(lay), _all_anchors(after), tables)
+    anchor, bases = fields.pop("anchor") or anchor, fields.pop("bases")
+    lay = replace(lay, freq_addr=anchor[0], firstnote=anchor[1], notes=anchor[2])
+    lay = replace(lay, **fields)
+    gate = columns(lay).index("gate") if lay.gate else None
+    if gate is not None:
+        col = lay.ins_start + gate * lay.num_instr
+        lay = replace(
+            lay, gate_flags=any(v & 0xC0 for v in mem[col : col + lay.num_instr])
+        )
+    probe = bench(lay)
+    build = measure(probe)
+    song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)
     info.wrapper_flush = build.wrapper
-    return DecompiledSid(song, info, header, subtune, typed, image)
+    decoded = DecompiledSid(song, info, header, subtune, typed, image, mem)
+    return _finish(decoded, t.song)
 
 
 def read_sid(src, subtune=0) -> Song:

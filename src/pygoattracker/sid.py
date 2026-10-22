@@ -756,16 +756,36 @@ def _detect_simplepulse(pulse_left):
     return not any(0x81 <= b <= 0xFE for b in pulse_left)
 
 
-def _freq_table(mem, addr, firstnote, length):
-    """128-entry note-frequency table read from the image, reproducing the
-    packed player's out-of-range overruns into adjacent memory."""
-    table = []
-    for note in range(128):
-        off = note - firstnote
-        lo = mem[(addr + off) & 0xFFFF]
-        hi = mem[(addr + length + off) & 0xFFFF]
-        table.append((hi << 8) | lo)
-    return tuple(table)
+# mt_wavenote: ``tay``, the vibrato reset unless NOVIB, then ``lda mt_freqtbllo-FIRSTNOTE,y``
+# and ``lda mt_freqtblhi-FIRSTNOTE,y``, each stored to the channel's frequency (or its ZP ghost).
+_WAVENOTE = tuple(
+    f"A8 {reset}B9 {{lo:w}} {store} B9 {{hi:w}} {store[:2]}"
+    for reset in ("A9 00 9D ?? ?? ", "")
+    for store in ("9D {s:w}", "95 ??")
+)
+
+
+def _code_freq_bases(mem, start, end):
+    """``(lo, hi)``: the bases mt_wavenote indexes by note in the player code in
+    ``[start, end)``, or None. An SFX note load (``lda mt_freqtbllo-$80,y``)
+    stores to the SID, not to a channel."""
+    found = {
+        (m.captures["lo"], m.captures["hi"])
+        for pattern in _WAVENOTE
+        for m in find_code_all(mem, pattern, start=start, end=end)
+        if not 0xD400 <= m.captures.get("s", 0) < 0xD800
+    }
+    return found.pop() if len(found) == 1 else None
+
+
+def _freq_table(mem, addr, firstnote, length, bases=None):
+    """128-entry note-frequency table the packed player reads, reproducing its
+    out-of-range overruns into adjacent memory: by the code's own table bases
+    where they are found, else from the frequency-table anchor."""
+    lo, hi = bases or (addr - firstnote, addr + length - firstnote)
+    return tuple(
+        (mem[(hi + n) & 0xFFFF] << 8) | mem[(lo + n) & 0xFFFF] for n in range(128)
+    )
 
 
 def _packed_layout(sol, anchor, songs, order_addrs, where) -> PackedLayout:
@@ -798,8 +818,9 @@ def _packed_layout(sol, anchor, songs, order_addrs, where) -> PackedLayout:
     )
 
 
-def _build_song(mem, header, lay, anchor, orderlists, build):
-    """The typed song, the editor-form :class:`Song` it states, and the info."""
+def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
+    """The typed song, the editor-form :class:`Song` it states, and the info;
+    ``bases`` the code's frequency-table bases (:func:`_code_freq_bases`)."""
     addr, firstnote, length = anchor
     tstart, wlen, plen = lay.tstart, lay.wlen, lay.plen
     pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
@@ -825,7 +846,7 @@ def _build_song(mem, header, lay, anchor, orderlists, build):
         firstnote=firstnote,
         lastnote=firstnote + length - 1,
         freq_table=typed.freq,
-        note_read=_freq_table(mem, addr, firstnote, length),
+        note_read=_freq_table(mem, addr, firstnote, length, bases),
         simplepulse=simplepulse,
         live_vibrato=noeffects,
         nowavedelay=nowavedelay,
@@ -1146,7 +1167,10 @@ def _decompile(
             raise
     probe = bench(layout)
     build = measure(probe)
-    song, info, typed = _build_song(mem, header, probe.lay, anchor, orderlists, build)
+    bases = None if base is None else _code_freq_bases(mem, base, anchor[0])
+    song, info, typed = _build_song(
+        mem, header, probe.lay, anchor, orderlists, build, bases
+    )
     info.state = state(probe, build)
     info.wrapper_flush = build.wrapper
     return DecompiledSid(song, info, header, subtune, typed, image)

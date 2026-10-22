@@ -43,6 +43,7 @@ from pysidtracker.testing import resolve_tune
 
 from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
+from pygoattracker.packed import pattern_rows
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
 from pygoattracker.writer import build_sng
@@ -251,7 +252,8 @@ def test_a_song_no_goattracker_player_plays():
 
 def test_hvsc_corpus_round_trips_through_the_typed_model():
     """Every sampled tune re-encodes from its typed song to its own packed bytes,
-    and to the same Song (so the same .sng, where a .sng can hold it)."""
+    or for a pattern spelt outside greloc's grammar to bytes the player reads the
+    same, and to the same Song (so the same .sng, where a .sng can hold it)."""
     present = _present()
     if len(present) < 100:
         pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
@@ -261,7 +263,10 @@ def test_hvsc_corpus_round_trips_through_the_typed_model():
             result = _decompile(path)
         except SidParseError:
             continue
-        assert result.repack() == [], rel
+        patterns = set(result.info.layout.patt_addrs)
+        for addr, packed, held in result.repack():
+            assert addr in patterns, rel
+            assert pattern_rows(packed, 0)[0] == pattern_rows(held, 0)[0], rel
         typed = TypedSong.from_song(result.song, result.info.simplepulse)
         assert typed.to_song() == result.song, rel
         checked += 1

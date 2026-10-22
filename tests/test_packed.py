@@ -108,3 +108,14 @@ def test_the_player_plays_the_typed_song_as_it_plays_the_song():
     a = Player(d.typed, freq_table=d.info.note_read).render_grid(20)
     b = Player(d.song, freq_table=d.info.note_read).render_grid(20)
     assert a == b
+
+
+def test_a_pattern_reads_one_row_before_its_end_mark():
+    # mt_rest checks for the end mark only after a row: a leading 0 is an
+    # instrument byte.
+    rows, end = P.pattern_rows(bytes([0x00, 0x40, 0xFF, 0xFF, 0x00]), 0)
+    assert end == 5
+    assert rows == (
+        T.Row(T.KeyOn(), 0, T.DoNothing()),
+        T.Row(T.Rest(), None, None, 1),
+    )

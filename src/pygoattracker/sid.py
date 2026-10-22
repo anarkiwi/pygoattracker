@@ -36,6 +36,7 @@ from pysidtracker import (
     trace_init,
 )
 from pysidtracker import parse_sid_header as _parse_sid_header
+from pysidtracker.poweron import power_on_ram
 
 from pygoattracker import constants
 from pygoattracker.errors import SidParseError
@@ -189,8 +190,13 @@ def parse_sid_header(raw: bytes) -> SidHeader:
 
 
 def _load_image(raw: bytes) -> SidImage:
-    """Load ``raw`` ``.sid`` bytes into a :class:`~pysidtracker.SidImage`."""
-    return _as_sid_parse_error(SidImage.from_sid, raw)
+    """Load ``raw`` ``.sid`` bytes into a :class:`~pysidtracker.SidImage`, over
+    the power-on RAM the player finds around them."""
+    image = _as_sid_parse_error(SidImage.from_sid, raw)
+    ram = power_on_ram()
+    ram[image.load : image.end] = image.mem[image.load : image.end]
+    image.mem[:] = ram
+    return image
 
 
 _FREQ_MIN_LEN = 8
@@ -614,11 +620,14 @@ def _chain_tables(image, insad, order_start):
     return start[0], chain
 
 
-def _chain_layout(image, mem, insad, num_instr, order_start, eps):
+def _chain_layout(image, mem, insad, num_instr, order_start, eps, confirm=None):
     """Locate the instrument/table layout from player code (see section note).
 
     Returns a solution dict compatible with :func:`_build_song`, or ``None`` if
-    the code-located geometry is inconsistent (caller falls back to tiling).
+    the code-located geometry is inconsistent (caller falls back to tiling). A
+    lone pulse-or-filter table tiles alike either way, so the player is asked
+    (``confirm``) which it plays, as :func:`_solve_layout` asks; the stated
+    ``lda inspulseptr-1,y`` orders the readings.
     """
     located = _chain_tables(image, insad, order_start)
     if located is None:
@@ -637,23 +646,52 @@ def _chain_layout(image, mem, insad, num_instr, order_start, eps):
         )
         else 0
     )
-    extra = len(chain) - 1  # pulse + filter tables present
-    pulse = filt = 0
-    plen = flen = 0
-    if extra >= 2:
-        pulse, filt = 1, 1
-        plen = chain[1][1] - chain[1][0]
-        flen = chain[2][1] - chain[2][0]
-    elif extra == 1:
-        onelen = chain[1][1] - chain[1][0]
-        pulse_present = any(
+    lens = [c[1] - c[0] for c in chain[1:3]]
+    if len(lens) == 2:
+        readings = [(1, 1, *lens)]
+    elif lens:
+        readings = [(1, 0, lens[0], 0), (0, 1, 0, lens[0])]
+        if not any(
             insad < m.captures["v"] + 1 < wtbl
             for m in find_code_all(image, _P_PULSEPTR)
+        ):
+            readings.reverse()
+    else:
+        readings = [(0, 0, 0, 0)]
+    sols = [
+        sol
+        for reading in readings
+        if (
+            sol := _chain_geometry(
+                mem, insad, num_instr, order_start, eps, wtbl, wlen, k, gate, *reading
+            )
         )
-        if pulse_present:
-            pulse, plen = 1, onelen
-        else:
-            filt, flen = 1, onelen
+        is not None
+    ]
+    if len(sols) > 1 and confirm is not None:
+        return next((sol for sol in sols if confirm(sol, _LONE)), sols[0])
+    return sols[0] if sols else None
+
+
+_LONE = frozenset(("pulse", "filt"))
+
+
+def _chain_geometry(
+    mem,
+    insad,
+    num_instr,
+    order_start,
+    eps,
+    wtbl,
+    wlen,
+    k,
+    gate,
+    pulse,
+    filt,
+    plen,
+    flen,
+):
+    """The :func:`_chain_layout` solution for one pulse/filter reading, or None."""
     rem = k - 3 - pulse - filt - 2 * gate
     if rem < 0 or rem % 2:
         return None
@@ -1125,17 +1163,16 @@ def _decompile(
     eps = _pattern_features(patterns)[1:]
     # Exact-fit tiling first (established path); if no flag combination tiles the
     # region, read the table bases directly from the player's table-access code.
+
+    def check(sol, tables):
+        return confirms(bench(sol), tables)
+
     try:
-        layout = _solve_layout(
-            mem,
-            region_start,
-            region_end,
-            num_instr,
-            eps,
-            lambda s, tables: confirms(bench(s), tables),
-        )
+        layout = _solve_layout(mem, region_start, region_end, num_instr, eps, check)
     except SidParseError:
-        layout = _chain_layout(image, mem, region_start, num_instr, region_end, eps)
+        layout = _chain_layout(
+            image, mem, region_start, num_instr, region_end, eps, check
+        )
         if layout is None:
             raise
     probe = bench(layout)

@@ -40,6 +40,8 @@ BUILDS = {
     # a NOPULSEMOD build: the pulse optimization from alternating set rows.
     "MUSICIANS/F/Flotsam/Escherian_Stairwell.sid": dict(pulseopt=False),
     "DEMOS/G-L/Goat_City.sid": dict(wavedelay=False, pulseopt=True, deftempo=5),
+    # a two-row pulse table: the pulse optimization from the gate timer's fetch.
+    "MUSICIANS/M/MCH/Peep_Show.sid": dict(pulseopt=False),
     # writes the SID through its $D420 mirror.
     "DEMOS/A-F/A_Crack_in_the_Facade.sid": dict(wavedelay=False, fixed=(2, 9)),
     # no play address: greloc's ``jmp mt_play`` plays it.

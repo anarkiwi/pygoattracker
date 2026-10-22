@@ -157,3 +157,12 @@ def test_a_held_command_and_a_long_rest_spread_into_editor_rows():
         Row(C.REST, 0, 4, 1),
         Row(C.KEYOFF, 0, 4, 1),
     ]
+
+
+def test_note_bytes_outside_the_editor_s_range():
+    # mt_note keys any byte below REST as a note and gates any byte above it.
+    assert T.note_of(0x00) == T.Note(-C.FIRSTNOTE)
+    assert T.note_byte(T.note_of(0x00)) == 0x00
+    assert T.note_of(0xFF) == T.KeyOn() and T.note_of(0xCE) == T.KeyOff()
+    with pytest.raises(ValueError):
+        T.note_of(0xC5)

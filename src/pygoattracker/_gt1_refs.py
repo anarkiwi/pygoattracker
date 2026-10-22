@@ -36,6 +36,10 @@ PLAYERS = {
             "mt_chnpattnum": 1162,
             "mt_chntick": 1163,
             "mt_chntempo": 1164,
+            "mt_chnpackrest": 1099,
+            "mt_chnrepeat": 1100,
+            "mt_chnsongnum": 1161,
+            "mt_chntrans": 1101,
         },
         "code": bytes.fromhex(
             "4c06104c40108d0b100a69008d741060b8c4c4c7c4d7dde3b31c214d274a4a4a"
@@ -114,6 +118,10 @@ PLAYERS = {
             "mt_chnpattnum": 1161,
             "mt_chntick": 1162,
             "mt_chntempo": 1163,
+            "mt_chnpackrest": 1098,
+            "mt_chnrepeat": 1099,
+            "mt_chnsongnum": 1160,
+            "mt_chntrans": 1100,
         },
         "code": bytes.fromhex(
             "4c06104c40108d0b100a69008d741060b7c3c3c6c3d6dce2b21b204c26494949"
@@ -192,6 +200,10 @@ PLAYERS = {
             "mt_chnpattnum": 1161,
             "mt_chntick": 1162,
             "mt_chntempo": 1163,
+            "mt_chnpackrest": 1098,
+            "mt_chnrepeat": 1099,
+            "mt_chnsongnum": 1160,
+            "mt_chntrans": 1100,
         },
         "code": bytes.fromhex(
             "4c06104c40108d0b100a69008d741060b7c3c3c6c3d6dce2b21b204c26494949"
@@ -271,6 +283,10 @@ PLAYERS = {
             "mt_chnpattnum": 1160,
             "mt_chntick": 1161,
             "mt_chntempo": 1162,
+            "mt_chnpackrest": 1097,
+            "mt_chnrepeat": 1098,
+            "mt_chnsongnum": 1159,
+            "mt_chntrans": 1099,
         },
         "code": bytes.fromhex(
             "4c06104c40108d0b100a69008d741060b4c0c0c3c0d3d9dfaf181d4923464646"
@@ -350,6 +366,10 @@ PLAYERS = {
             "mt_chnpattnum": 1159,
             "mt_chntick": 1160,
             "mt_chntempo": 1161,
+            "mt_chnpackrest": 1096,
+            "mt_chnrepeat": 1097,
+            "mt_chnsongnum": 1158,
+            "mt_chntrans": 1098,
         },
         "code": bytes.fromhex(
             "4c06104c40108d0b100a69008d741060b3bfbfc2bfd2d8deae171c4822454545"
@@ -1313,6 +1333,241 @@ PLAYERS = {
             "7663ba80bc76b47fe0de83daedc7ff8080978a80919da3b780ddbe8080800000"
             "0000000008000000000000080000000000000808000000000000080000000000"
             "0008000000000000000000000000070000000000000e00000000000000"
+        ),
+    },
+    "1.4b": {
+        "family": "1.4",
+        "author": (16, 64),
+        "labels": {
+            "init": 6,
+            "play": 64,
+            "mt_filttime": 563,
+            "mt_filtstep": 559,
+            "mt_filtcutoffadd": 575,
+            "mt_chnloop": 66,
+            "mt_chnwave": 1033,
+            "mt_freqtblhi": 1075,
+            "mt_freqtbllo": 1171,
+            "mt_filtcutoff": 573,
+            "mt_chnnote": 1012,
+            "mt_chnfreqlo": 1013,
+            "mt_chnfreqhi": 1014,
+            "mt_chnnewnote": 1015,
+            "mt_chncommand": 1016,
+            "mt_chncmddata": 1017,
+            "mt_chninstnum": 1018,
+            "mt_chnwavetbl": 1034,
+            "mt_chnpulse": 1035,
+            "mt_chnpulsedir": 1036,
+            "mt_chnarpcount": 1037,
+            "mt_chnsongptr": 1054,
+            "mt_chnpattptr": 1056,
+            "mt_chnpattnum": 1057,
+            "mt_chntick": 1058,
+            "mt_chntempo": 1059,
+            "mt_chnpackrest": 1038,
+            "mt_chnrepeat": 1039,
+            "mt_chnsongnum": 1055,
+            "mt_chntrans": 1060,
+        },
+        "code": bytes.fromhex(
+            "4c06104c40108d0b100a69008d43106052525267526e747f9ba5cdaf4f4f4f00"
+            "0000000000000000000000000000000000000000000000000000000000000000"
+            "a200a90030369d1f14ee4310a9009d09149d24149d0a149d1e149d0e149d0f14"
+            "a9059d22149d2314a9ff9df7139d20148ad0068d15d42015134ce011bc2214d0"
+            "034c50121003bc231488989d2214bd2014c9ff904fbc1f14b9004385fcb90044"
+            "85fdbc1e14b1fcc8c9d0901dc9e09009c9ff900db1fca8b0ece9cf9d0f144ca5"
+            "10e9ef9d24144ca5109d2114bd0f14f004de0f1488989d1e14fe2014bdf71310"
+            "084c5713bdf713302ddef713d002f060a9009d0d14bcfa13b90240f0089d0c14"
+            "290f9d0b14b907409d0a14b90640f0032015134ce011bcfa13b9034029fef030"
+            "85fcbd0c144ab0120a65fc48bd0b1469009d0b14d905404c4a110a38e5fc48bd"
+            "0b14e9009d0b14d904406869009d0c14bc0a14d015bcf813f044a90085fdb917"
+            "108d6811bdf9134c9b13b90041f0039d0914b900423004187df413297f85fcb9"
+            "0141c9ff900fb90142f00cbcfa1379074069fed002c8989d0a14a4fc1036bdf9"
+            "13f03d0abd0d14486901c9069002a9009d0d14684ac901900dd007bdf913290f"
+            "100da9001009bdf91329704a4a4a4a187df413a8b993149df513b933149df613"
+            "bdf5139d00d4bdf6139d01d4bd09149d04d4bdf713d01cbcfa13b900409d05d4"
+            "b90140bcf813c006d003bdf9139d06d4def713bd0c149d02d4bd0b149d03d4e0"
+            "0eb0078a6907aa4c4210a9ff8d4310a900f014a000d0034c1513ce3412a900e9"
+            "008d3e128d16d460fe20149d0e14d008de2214bd0e14f006fe0e144cd512bc21"
+            "14b9004585fcb9004685fdbc2014b1fcc8c960900ac9c0b0cfe95f85feb01985"
+            "feb1fc29f8f0039dfa13b1fc29079df813c8b1fc9df913c8b1fcc9fff001989d"
+            "2014bcf813a5fec95ef022b0287d24149df413c003f01ebcfa13b903404aa902"
+            "9df713b008a9009d05d49d06d4bd091429fe9d0914bcf813b910108de212bdf9"
+            "134c6e13bdf51365fc9df513bdf61365fd9df61360bdf513e5fc9df513bdf613"
+            "e5fd9df61360bdf613d93314d006bdf513d9931460a8b90047f0188d17d4b901"
+            "478d18d4b90247f0068d3e128d16d4a900f009b902478d4012b901478d3412b9"
+            "03478d3012600a26fd0a26fd85fc604ce011bdf71310f8bc0a14f0034c6a11bc"
+            "f813d0eb4c9e11a9009d0d14f0e42015134c5213bcf71310d69d06d44c571330"
+            "0b8d23148d2a148d311410c6c9c0b007297f9d231410bb85ffb0b72046131820"
+            "e4124ce0112046133820f5124ce01185fc290f85febd0d143008c5fe9005f002"
+            "49ff1869029d0d144a90d4b0dcbcf4134820461368f01a200613f00ab00b20e4"
+            "12200613b00b4ce01120f512200613b0f54cd411000000000000080000000000"
+            "0008000000000000080000000000000000000000000000000000000000000000"
+            "0000000000000000000000000000000000000001010101010101010101010202"
+            "02020202020303030303040404040505050606060707080809090a0a0b0c0c0d"
+            "0e0f1011121314151718191b1d1e20222426292b2e3033363a3d4145494d5257"
+            "5c61676d747b828a929ba4aeb8c3cfdbe8f6ff152536495c71879fb7d1ed0a2a"
+            "4a6d92b9e30f3e6fa3db155495db2573c71e7cde47b62ba82bb74be78e3df8bd"
+            "8e6c5750576e96cf1c7bf07b1dd8aea0afdd2d9f38f7e0f63bb15d405ebb5a3f"
+            "70efc1ed7663ba80bc76b47fe0de83daedc7ff"
+        ),
+    },
+    "1.4b-hr1": {
+        "family": "1.4",
+        "author": (16, 64),
+        "labels": {
+            "init": 6,
+            "play": 64,
+            "mt_filttime": 559,
+            "mt_filtstep": 555,
+            "mt_filtcutoffadd": 571,
+            "mt_chnloop": 66,
+            "mt_chnwave": 1029,
+            "mt_freqtblhi": 1071,
+            "mt_freqtbllo": 1167,
+            "mt_filtcutoff": 569,
+            "mt_chnnote": 1008,
+            "mt_chnfreqlo": 1009,
+            "mt_chnfreqhi": 1010,
+            "mt_chnnewnote": 1011,
+            "mt_chncommand": 1012,
+            "mt_chncmddata": 1013,
+            "mt_chninstnum": 1014,
+            "mt_chnwavetbl": 1030,
+            "mt_chnpulse": 1031,
+            "mt_chnpulsedir": 1032,
+            "mt_chnarpcount": 1033,
+            "mt_chnsongptr": 1050,
+            "mt_chnpattptr": 1052,
+            "mt_chnpattnum": 1053,
+            "mt_chntick": 1054,
+            "mt_chntempo": 1055,
+            "mt_chnpackrest": 1034,
+            "mt_chnrepeat": 1035,
+            "mt_chnsongnum": 1051,
+            "mt_chntrans": 1056,
+        },
+        "code": bytes.fromhex(
+            "4c06104c40108d0b100a69008d4310604e4e4e634e6a707b97a1c9ab4b4b4b00"
+            "0000000000000000000000000000000000000000000000000000000000000000"
+            "a200a90030369d1b14ee4310a9009d05149d20149d06149d1a149d0a149d0b14"
+            "a9059d1e149d1f14a9ff9df3139d1c148ad0068d15d42011134cdc11bc1e14d0"
+            "034c4c121003bc1f1488989d1e14bd1c14c9ff904fbc1b14b9004385fcb90044"
+            "85fdbc1a14b1fcc8c9d0901dc9e09009c9ff900db1fca8b0ece9cf9d0b144ca5"
+            "10e9ef9d20144ca5109d1d14bd0b14f004de0b1488989d1a14fe1c14bdf31310"
+            "084c5313bdf3133029a9009d09149df313bcf613b90240f0089d0814290f9d07"
+            "14b907409d0614b90640f0032011134c4c11bcf613b9034029fef03085fcbd08"
+            "144ab0120a65fc48bd071469009d0714d905404c46110a38e5fc48bd0714e900"
+            "9d0714d904406869009d0814bc0614d015bcf413f044a90085fdb917108d6411"
+            "bdf5134c9713b90041f0039d0514b900423004187df013297f85fcb90141c9ff"
+            "900fb90142f00cbcf61379074069fed002c8989d0614a4fc1036bdf513f03d0a"
+            "bd0914486901c9069002a9009d0914684ac901900dd007bdf513290f100da900"
+            "1009bdf51329704a4a4a4a187df013a8b98f149df113b92f149df213bdf1139d"
+            "00d4bdf2139d01d4bd05149d04d4bdf313d01cbcf613b900409d05d4b90140bc"
+            "f413c006d003bdf5139d06d4def313bd08149d02d4bd07149d03d4e00eb0078a"
+            "6907aa4c4210a9ff8d4310a900f014a000d0034c1113ce3012a900e9008d3a12"
+            "8d16d460fe1c149d0a14d008de1e14bd0a14f006fe0a144cd112bc1d14b90045"
+            "85fcb9004685fdbc1c14b1fcc8c960900ac9c0b0cfe95f85feb01985feb1fc29"
+            "f8f0039df613b1fc29079df413c8b1fc9df513c8b1fcc9fff001989d1c14bcf4"
+            "13a5fec95ef022b0287d20149df013c003f01ebcf613b903404aa9029df313b0"
+            "08a9009d05d49d06d4bd051429fe9d0514bcf413b910108dde12bdf5134c6a13"
+            "bdf11365fc9df113bdf21365fd9df21360bdf113e5fc9df113bdf213e5fd9df2"
+            "1360bdf213d92f14d006bdf113d98f1460a8b90047f0188d17d4b901478d18d4"
+            "b90247f0068d3a128d16d4a900f009b902478d3c12b901478d3012b903478d2c"
+            "12600a26fd0a26fd85fc604cdc11bdf31310f8bc0614f0034c6611bcf413d0eb"
+            "4c9a11a9009d0914f0e42011134c4e13bcf31310d69d06d44c5313300b8d1f14"
+            "8d26148d2d1410c6c9c0b007297f9d1f1410bb85ffb0b72042131820e0124cdc"
+            "112042133820f1124cdc1185fc290f85febd09143008c5fe9005f00249ff1869"
+            "029d09144a90d4b0dcbcf0134820421368f01a200213f00ab00b20e012200213"
+            "b00b4cdc1120f112200213b0f54cd01100000000000008000000000000080000"
+            "0000000008000000000000000000000000000000000000000000000000000000"
+            "0000000000000000000000000000000101010101010101010101020202020202"
+            "020303030303040404040505050606060707080809090a0a0b0c0c0d0e0f1011"
+            "121314151718191b1d1e20222426292b2e3033363a3d4145494d52575c61676d"
+            "747b828a929ba4aeb8c3cfdbe8f6ff152536495c71879fb7d1ed0a2a4a6d92b9"
+            "e30f3e6fa3db155495db2573c71e7cde47b62ba82bb74be78e3df8bd8e6c5750"
+            "576e96cf1c7bf07b1dd8aea0afdd2d9f38f7e0f63bb15d405ebb5a3f70efc1ed"
+            "7663ba80bc76b47fe0de83daedc7ff"
+        ),
+    },
+    "1.4b-multi": {
+        "family": "1.4",
+        "author": (16, 64),
+        "labels": {
+            "init": 6,
+            "play": 64,
+            "mt_filttime": 563,
+            "mt_filtstep": 559,
+            "mt_filtcutoffadd": 575,
+            "mt_chnloop": 66,
+            "mt_chnwave": 1034,
+            "mt_freqtblhi": 1076,
+            "mt_freqtbllo": 1172,
+            "mt_filtcutoff": 573,
+            "mt_chnnote": 1013,
+            "mt_hrtimer": 31,
+            "mt_chnfreqlo": 1014,
+            "mt_chnfreqhi": 1015,
+            "mt_chnnewnote": 1016,
+            "mt_chncommand": 1017,
+            "mt_chncmddata": 1018,
+            "mt_chninstnum": 1019,
+            "mt_chnwavetbl": 1035,
+            "mt_chnpulse": 1036,
+            "mt_chnpulsedir": 1037,
+            "mt_chnarpcount": 1038,
+            "mt_chnsongptr": 1055,
+            "mt_chnpattptr": 1057,
+            "mt_chnpattnum": 1058,
+            "mt_chntick": 1059,
+            "mt_chntempo": 1060,
+            "mt_chnpackrest": 1039,
+            "mt_chnrepeat": 1040,
+            "mt_chnsongnum": 1056,
+            "mt_chntrans": 1061,
+        },
+        "code": bytes.fromhex(
+            "4c06104c40108d0b100a69008d43106053535368536f75809ca6ceb050505000"
+            "0000000000000000000000000000000000000000000000000000000000000000"
+            "a200a90030369d2014ee4310a9009d0a149d25149d0b149d1f149d0f149d1014"
+            "a9059d23149d2414a9ff9df8139d21148ad0068d15d42016134ce011bc2314d0"
+            "034c50121003bc241488989d2314bd2114c9ff904fbc2014b9004385fcb90044"
+            "85fdbc1f14b1fcc8c9d0901dc9e09009c9ff900db1fca8b0ece9cf9d10144ca5"
+            "10e9ef9d25144ca5109d2214bd1014f004de101488989d1f14fe2114bdf81310"
+            "084c5813bdf813302ddef813d002f060a9009d0e14bcfb13b90240f0089d0d14"
+            "290f9d0c14b907409d0b14b90640f0032016134ce011bcfb13b9034029fef030"
+            "85fcbd0d144ab0120a65fc48bd0c1469009d0c14d905404c4a110a38e5fc48bd"
+            "0c14e9009d0c14d904406869009d0d14bc0b14d015bcf913f044a90085fdb917"
+            "108d6811bdfa134c9c13b90041f0039d0a14b900423004187df513297f85fcb9"
+            "0141c9ff900fb90142f00cbcfb1379074069fed002c8989d0b14a4fc1036bdfa"
+            "13f03d0abd0e14486901c9069002a9009d0e14684ac901900dd007bdfa13290f"
+            "100da9001009bdfa1329704a4a4a4a187df513a8b994149df613b934149df713"
+            "bdf6139d00d4bdf7139d01d4bd0a149d04d4bdf813d01cbcfb13b900409d05d4"
+            "b90140bcf913c006d003bdfa139d06d4def813bd0d149d02d4bd0c149d03d4e0"
+            "0eb0078a6907aa4c4210a9ff8d4310a900f014a000d0034c1613ce3412a900e9"
+            "008d3e128d16d460fe21149d0f14d008de2314bd0f14f006fe0f144cd612bc22"
+            "14b9004585fcb9004685fdbc2114b1fcc8c960900ac9c0b0cfe95f85feb01985"
+            "feb1fc29f8f0039dfb13b1fc29079df913c8b1fc9dfa13c8b1fcc9fff001989d"
+            "2114bcf913a5fec95ef023b0297d25149df513c003f01fbcfb13b903404aad1f"
+            "109df813b008a9009d05d49d06d4bd0a1429fe9d0a14bcf913b910108de312bd"
+            "fa134c6f13bdf61365fc9df613bdf71365fd9df71360bdf613e5fc9df613bdf7"
+            "13e5fd9df71360bdf713d93414d006bdf613d9941460a8b90047f0188d17d4b9"
+            "01478d18d4b90247f0068d3e128d16d4a900f009b902478d4012b901478d3412"
+            "b903478d3012600a26fd0a26fd85fc604ce011bdf81310f8bc0b14f0034c6a11"
+            "bcf913d0eb4c9e11a9009d0e14f0e42016134c5313bcf81310d69d06d44c5813"
+            "300b8d24148d2b148d321410c6c9c0b007297f9d241410bb85ffb0b720471318"
+            "20e5124ce0112047133820f6124ce01185fc290f85febd0e143008c5fe9005f0"
+            "0249ff1869029d0e144a90d4b0dcbcf5134820471368f01a200713f00ab00b20"
+            "e512200713b00b4ce01120f612200713b0f54cd4110000000000000800000000"
+            "0000080000000000000800000000000000000000000000000000000000000000"
+            "0000000000000000000000000000000000000000010101010101010101010102"
+            "0202020202020303030303040404040505050606060707080809090a0a0b0c0c"
+            "0d0e0f1011121314151718191b1d1e20222426292b2e3033363a3d4145494d52"
+            "575c61676d747b828a929ba4aeb8c3cfdbe8f6ff152536495c71879fb7d1ed0a"
+            "2a4a6d92b9e30f3e6fa3db155495db2573c71e7cde47b62ba82bb74be78e3df8"
+            "bd8e6c5750576e96cf1c7bf07b1dd8aea0afdd2d9f38f7e0f63bb15d405ebb5a"
+            "3f70efc1ed7663ba80bc76b47fe0de83daedc7ff"
         ),
     },
 }

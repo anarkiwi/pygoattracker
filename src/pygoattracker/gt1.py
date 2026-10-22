@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 PLAYER_ORG = 0x1000
 V15 = "1.5"
+V14 = "1.4"
 _AUTHOR = 32
 # Initial tick, gate timer and hard-restart AD/SR the packer writes by default.
 DEFAULT_PARAMS = (4, 2, 0x0F, 0x00)
@@ -39,7 +40,7 @@ _ZP_MODES = frozenset(
 )
 _SMC_STORES = frozenset((0x8D, 0x8E, 0x8C, 0xEE, 0xCE))
 
-# Virtual table pages of the V1.5x players and of musicroutine 11.x.
+# Virtual table pages of the V1.4x/V1.5x players and of musicroutine 11.x.
 _TAGS_15 = {
     0x40: "instad",
     0x41: "wavetbl",
@@ -60,6 +61,8 @@ _TAGS_11 = {
     0x90: "patttblhi",
 }
 
+# V1.4x playroutines that start a note one frame after the hard restart.
+HARDRESTART_1FRAME = frozenset(("1.4b-hr1",))
 # Playroutine variants that differ in behaviour from V1.53.
 FILTER_STEP0 = frozenset(("1.50", "1.50b"))
 ORDERLIST_LOOP_AFTER = frozenset(("1.50",))
@@ -192,6 +195,9 @@ def reference(name: str) -> Reference:
             target = int.from_bytes(code[pos + 1 : pos + 3], "little") - PLAYER_ORG
             if 0 <= target < end:
                 smc.add(target)
+    hrtimer = entry["labels"].get("mt_hrtimer")
+    if author and hrtimer is not None and author[0] <= hrtimer < _AUTHOR:
+        smc.add(hrtimer)
     wild.update(smc | zeropage)
     if author:
         wild.update(range(_AUTHOR, author[1]))
@@ -224,7 +230,7 @@ class Gt1Match:
 
 
 def _tags(ref: Reference) -> dict:
-    return _TAGS_15 if ref.family == V15 else _TAGS_11
+    return _TAGS_11 if ref.family == "11" else _TAGS_15
 
 
 def _match_at(mem, ref: Reference, address: int) -> Gt1Match | None:
@@ -336,7 +342,7 @@ class Gt1Song:
 
     def __post_init__(self):
         if not self.segments:
-            self.segments = SEGMENTS_V15 if self.ref.family == V15 else SEGMENTS_V11
+            self.segments = SEGMENTS_V11 if self.ref.family == "11" else SEGMENTS_V15
 
     @property
     def ref(self) -> Reference:

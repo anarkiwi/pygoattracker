@@ -3,10 +3,11 @@
 GoatTracker V1.x saved a tune by copying one of its playroutines, relocating it
 and appending the song tables (`relocator()` in the editor's `goattrk.c`). This
 library recognizes the playroutine, decompiles the tables into a `Gt1Song` and
-plays it with `Gt1Player`, a native transcription of that playroutine. Two
-playroutine designs are supported: the V1.5x standard playroutine and the
-musicroutine 11.x family (the V1.25 musicroutines 11.1–11.5 and the V0.96–V1.22
-standard playroutines they grew from).
+plays it with `Gt1Player`, a native transcription of that playroutine. Three
+playroutine designs are supported: the V1.5x standard playroutine, the V1.3–V1.4f
+playroutines it was rewritten from, and the musicroutine 11.x family (the V1.25
+musicroutines 11.1–11.5 and the V0.96–V1.22 standard playroutines they grew
+from).
 
 ## Recognition
 
@@ -25,8 +26,8 @@ pattern in which only what the packer or the running tune may change is a
 wildcard: relocated operands, the parameter slots, the author name, the
 operands the routine modifies itself and its zero-page temporaries. A hit is
 accepted only if every code operand moved by the same offset and every operand
-on the same virtual table page (`$40xx`..`$47xx` for V1.5x, `$40xx`..`$90xx`
-for 11.x) names the same table base.
+on the same virtual table page (`$40xx`..`$47xx` for V1.4x and V1.5x,
+`$40xx`..`$90xx` for 11.x) names the same table base.
 
 | playroutine | source | differs from V1.53 by |
 | --- | --- | --- |
@@ -37,6 +38,18 @@ for 11.x) names the same table base.
 | V1.50 | V1.53 edited | as V1.50b, plus the orderlist loop (`$FF`) is read after a pattern number and transposes are `value - $EF` |
 
 V1.51 and V1.52 have identical code and are told apart by the frequency table.
+
+| V1.4x playroutine | source (V1.4b release, CSDb 7582) | features |
+| --- | --- | --- |
+| 1.4b | `goattracker_v1.4b.zip` `SRC/PLAYER1.S` | standard: author info, timing marks |
+| 1.4b-hr1 | `SRC/PLAYER4.S` | standard with the 1-frame hard restart (the note starts the frame after the hard restart) |
+| 1.4b-multi | `SRC/PLAYER3.S` | multispeed: the packer stores the hard restart length at offset `$1F` |
+
+The V1.4x packer is the V1.5x one without the parameter slots: the same author
+block skip and table order (instruments, wavetable, song table, pattern table,
+filtertable, orderlists, patterns). Its filtertable steps hold control,
+resonance/volume (written straight to `$D417`/`$D418`), cutoff (or, for a
+modulation step, the negated cutoff speed) and the next step's offset.
 
 | musicroutine | source | features |
 | --- | --- | --- |
@@ -85,7 +98,8 @@ is decompiled from memory after init.
 
 ## Playback
 
-`Gt1Player` picks the transcription of the song's playroutine and runs it over
+`Gt1Player` picks the transcription of the song's playroutine (V1.5x, V1.4x or
+musicroutine 11.x) and runs it over
 the packed memory image: channel
 variables and self-modified operands live at their packed addresses, and every
 carry, 8-bit wrap and out-of-table read follows the 6502 code. Memory outside
@@ -101,7 +115,8 @@ slide; sidplayfp's PSID driver calls play from its interrupt handler, whose
 init returned with (clear for the packed entry points).
 
 `tests/test_gt1.py` packs synthetic songs that use every command, table feature
-and orderlist command with each playroutine (and a sound effect for 11.2/11.4)
+and orderlist command with each playroutine (the V1.4x multispeed one with a
+hard restart length set) (and a sound effect for 11.2/11.4)
 and checks `Gt1Player` against the packed 6502 playroutine itself, entered as
 the PSID driver enters it, frame for frame.
 

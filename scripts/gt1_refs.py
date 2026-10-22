@@ -2,8 +2,9 @@
 """Regenerate ``src/pygoattracker/_gt1_refs.py`` from the GoatTracker 1.x sources.
 
 Assembles each playroutine with the jennings assembler (``pysidtracker.asm6502``)
-from the fixture-cached V1.53 and V1.25 (musicroutine 11.x) archives; V1.50..V1.52
-are V1.53 with the :data:`VARIANTS` edits and the V0.96..V1.22 standard
+from the fixture-cached V1.53, V1.4b and V1.25 (musicroutine 11.x) archives;
+V1.50..V1.52 are V1.53 with the :data:`VARIANTS` edits, the V1.3..V1.4f
+playroutines are V1.4b with the :data:`V14` edits and the V0.96..V1.22 standard
 playroutines are musicroutine 11.1 with the :data:`PRE125` edits. ``--check``
 exits 1 when the module is stale.
 """
@@ -68,6 +69,10 @@ LABELS = (
     "mt_chntick",
     "mt_chntempo",
     "mt_chnnext",
+    "mt_chnpackrest",
+    "mt_chnrepeat",
+    "mt_chnsongnum",
+    "mt_chntrans",
 )
 
 _PULSE_153 = """                beq mt_skippulse
@@ -291,6 +296,7 @@ _INITEND_103 = """                sta mt_chnpattptr,x
 """
 
 _V153 = ("goattrk.zip", "src/player1.s")
+_V14B = "goattracker_v1.4b.zip"
 _V125 = "goatold.zip"
 _V093 = ("goattrk093.zip", "src/PLAYER.S")
 _PULSE = (_PULSE_153, _PULSE_152)
@@ -332,6 +338,12 @@ PRE125 = {
     "1.16": _PRE121,
     "1.21": _PRE122,
     "1.22": _PRE123,
+}
+# The V1.3..V1.4f playroutine design: name -> (archive, member, author skip, edits).
+V14 = {
+    "1.4b": (_V14B, "SRC/PLAYER1.S", (16, 64), ()),
+    "1.4b-hr1": (_V14B, "SRC/PLAYER4.S", (16, 64), ()),
+    "1.4b-multi": (_V14B, "SRC/PLAYER3.S", (16, 64), ()),
 }
 MUSICROUTINE11 = {
     "11.1": (_V125, "SRC/PLAYER1.S", None),
@@ -489,6 +501,12 @@ def assemble(src: str) -> tuple[bytes, dict]:
     return code, labels
 
 
+def _family(name: str) -> str:
+    if name in VARIANTS:
+        return "1.5"
+    return "1.4" if name in V14 else "11"
+
+
 def build() -> str:
     """Render the generated ``_gt1_refs`` module source."""
     lines = [
@@ -510,12 +528,13 @@ def build() -> str:
     entries.update(
         {name: (_V125, "SRC/PLAYER1.S", None, edits) for name, edits in PRE125.items()}
     )
+    entries.update(V14)
     for name, (archive, member, author, edits) in entries.items():
         code, symbols = assemble(_patched(_source(archive, member), edits))
         labels = {lab: symbols[lab] - 0x1000 for lab in LABELS if lab in symbols}
         lines += [
             f'    "{name}": {{',
-            f'        "family": "{"1.5" if name in VARIANTS else "11"}",',
+            f'        "family": "{_family(name)}",',
             f'        "author": {author!r},',
             f'        "labels": {labels!r},',
             '        "code": bytes.fromhex(',

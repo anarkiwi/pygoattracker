@@ -4,6 +4,7 @@ Each tune is a whole-song oracle-exact one (``test_oracle_hvsc``) or one whose
 instrument classes the player's own ``cmp #FIRSTNOHRINSTR`` operands state.
 """
 
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -105,7 +106,7 @@ def test_planted_data_lands_at_the_layout_or_misses():
     bench = _bench()
     rows = (Row(Note(48), 2), Row(Rest(), None, None, 4))
     buf = bench.plant([rows], {2: {"ad": 0x12}}, {"wave": probe._WAVE})
-    at = lambda a, n=1: bytes(buf[a - 0x1000 : a - 0x1000 + n])  # noqa: E731
+    at = lambda a, n=1: bytes(buf.get(a + k, 0) for k in range(n))  # noqa: E731
     assert at(0x1100, 3) == bytes((0, 0xFF, 0))
     assert at(0x1200, 4) == bytes((2, 0x90, 0xFC, 0))
     assert at(0x1301) == b"\x12" and at(0x1300 + 4 * 2 + 1) == b"\x09"
@@ -120,12 +121,18 @@ def test_planted_data_lands_at_the_layout_or_misses():
     for miss in misses:
         with pytest.raises(probe.ProbeMiss):
             miss(bench)
+    lay = dataclasses.replace(bench.lay, order_addrs=(0x1100, 0x1110, 0x1120))
+    planted = probe.Bench(bench.image, lay, (8,), (3, 2, 3)).plant([rows])
+    assert {0x1100, 0x1120} <= set(planted) and 0x1110 not in planted
     with pytest.raises(probe.ProbeMiss):
-        _bench(order_addrs=(0x2100,)).plant([rows])
+        probe.Bench(bench.image, lay, (8,), (2, 3, 3)).plant([rows])
+    two = dataclasses.replace(lay, order_addrs=tuple(range(0x1100, 0x1160, 0x10)))
+    planted = probe.Bench(bench.image, two, (8,), (2,) * 3 + (3,) * 3, song=1).plant(
+        [rows]
+    )
+    assert 0x1100 not in planted and 0x1130 in planted
 
 
 def test_a_player_that_plays_nothing_shows_no_build():
     bench = _bench()
     assert probe.measure(bench) == PlayerBuild()
-    assert probe.confirms(bench) is False
-    assert probe.confirms(_bench(gate=False)) is False

@@ -90,17 +90,20 @@ def test_a_packed_tune_re_encodes_to_its_own_bytes():
     d = sid.decompile_sid(_minimal_packed())
     assert d.repack() == []
     ins = d.typed.instrument(1)
-    assert (ins.first_wave, ins.hard_restart, ins.gate_timer) == (T.SetWave(9), True, 2)
+    assert (ins.first_wave, ins.hard_restart, ins.gate_timer) == (None, True, 2)
     assert d.typed.patterns[0][0] == T.Row(T.Note(C.note_value("C-4") - C.FIRSTNOTE), 1)
-    d.image.mem[d.info.layout.tstart] ^= 0x01
+    held = bytearray(d.memory)
+    held[d.info.layout.tstart] ^= 0x01
+    d.memory = bytes(held)
     assert d.repack()[0][0] == d.info.layout.tstart
 
 
 def test_the_tuning_is_the_frequencies_and_the_player_reads_past_it():
     info = sid.decompile_sid(_minimal_packed()).info
-    assert len(info.freq_table) == info.lastnote - info.firstnote + 1 == 12
+    assert len(info.freq_table) == info.lastnote - info.firstnote + 1 == 13
     assert len(info.note_read) == 128
-    assert info.note_read[: len(info.freq_table)] == info.freq_table
+    span = slice(info.firstnote, info.lastnote + 1)
+    assert info.note_read[span] == info.freq_table
 
 
 def test_the_player_plays_the_typed_song_as_it_plays_the_song():

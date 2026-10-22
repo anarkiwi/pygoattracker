@@ -95,6 +95,12 @@ TUNES = {
     "goat_city": ("DEMOS/G-L/Goat_City.sid", 1, 45.986),
     # wave-delay code without delay rows; a $00 pulse step wraps to 256 steps.
     "2_hours_not_enough": ("DEMOS/0-9/2_Hours_NOT_Enough.sid", 1, 59.0),
+    # SIMPLEPULSE measured from the player, not inferred from the pulse table.
+    "opin_joskus": ("DEMOS/M-R/Opin_Joskus.sid", 1, 123.0),
+    # a ghost-register build seen flushing all 25 registers each call.
+    "lily_lander": ("GAMES/G-L/Lily_Lander.sid", 1, 53.906),
+    # greloc's packed tables tile two ways; the player plays the gate columns.
+    "greaties_tune_3": ("MUSICIANS/R/Roly/Greaties_tune_3.sid", 1, 34.475),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

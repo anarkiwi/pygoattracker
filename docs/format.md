@@ -35,15 +35,15 @@ playroutine (as produced by `gt2reloc`) followed by the song data.
 wraps this: `parse(data, subtune=k)` returns the `DecompiledSid` of subtune `k`,
 whose `player()` plays it, and `recognize` returns the frequency-table anchor
 only when the image also holds the packed player's pattern-fetch idiom (the
-pattern-pointer idiom below), since the standard frequency table alone appears
+`LDA patttbllo,Y` … `CMP #$40` pattern fetch), since the standard frequency table alone appears
 in most trackers' tunes. `Gt1SidParser` (`goattracker1`) does the same for
 GoatTracker V1.x tunes, returning a `DecompiledGt1`.
 
 The decompiler reads the frequency table, orderlists, packed patterns,
 per-field instrument arrays and the four wave/pulse/filter/speed tables,
-reversing greloc's byte transforms to editor form. Which instrument fields are
-present and the table lengths come from an exact-fit tiling of the
-instrument/table region.
+reversing greloc's byte transforms to editor form. Where each lies, which
+instrument fields are present and the table lengths are read off the player
+itself (below).
 
 ### Measuring the build by running the player
 
@@ -57,60 +57,58 @@ jennings and reads back its SID writes (every `$20` mirror of `$D400-$D7FF`).
 A waveform byte `$51` comes back as `$41` only with `mt_wavexec`'s delay test
 in; a set-pulse row's one byte in both pulse registers is SIMPLEPULSE; the
 envelope between two notes is the hard restart; a bisection over instrument
-numbers finds the class bounds; and so on. Where a tiling is ambiguous
-(vibrato or gate columns), the one whose planted gate timers and first
-waveforms the player plays back is taken. A define the planted song cannot
+numbers finds the class bounds; and so on. A define the planted song cannot
 show is None, and only then are NOWAVEDELAY and SIMPLEPULSE inferred from
 greloc's optimized-packing rules.
 
-### Selecting the song by the player's own song-table load
+### Reading the layout off the player
 
-Which player in the image plays a header song, which of its subtunes, and its
-song table are read from what the tune does, not from the header or an init
-idiom: `pygoattracker.probe.song_read` boots the image as the PSID driver does,
-runs the tune's init with `A = song - 1` and then the two play calls in which
-`player.s` starts a song (`mt_initsongnum`'s reset, then tick 0's
-`mt_sequencer`), and records the first read by an `LDA songtbllo,Y` of the
-song-table idiom below, matched in the memory init leaves (so a player init
-installs or a wrapper that calls play inside init are seen too). The read
-address minus `songtbllo` is the selected entry (`3 · subtune`); the idiom's
-operands are that player's `(songtbllo, songs)`, tried first as its layout. A
-song whose init and play load no GoatTracker song table (another routine in a
-multi-player rip plays it) raises `SidParseError("no GoatTracker song table
-read ...")`; a song whose entry lies past the player's table raises `no such
-subtune`.
+gt2reloc shipped many packer/player revisions, and other packers reorder the
+data: song and pattern tables away from the frequency table or with their high
+columns first, instrument columns in another order, song tables that init
+writes, orderlists or patterns outside the loaded image. None of this is
+searched for in the image. `pygoattracker.observe.Trace` steps the tune's own
+player on jennings and follows every value to the data byte it was loaded from,
+through registers, transfers, RAM and the player's self-modified operands
+(the filter pointer is stored into an `LDY #imm`). An indexed read then states
+which data its index came from, and its operand where the table is:
 
-### Locating tables from the player code
+- **song and pattern tables**: of the pointers `LDA (zp),Y` reads go through,
+  the pattern pointer's index is a byte read through the other, the song
+  pointer. The operands of the reads that loaded each pointer half are the four
+  column bases; they tile one block, which gives the song and pattern counts.
+  The lowest song-table index read is the player's own song for the header song
+  (so a wrapper's or a module's selection is the player's, not a guess).
+- **instrument columns**: a planted note of instrument 1 shows the columns its
+  instrument byte indexes (their spacing is the instrument count) and the one
+  whose value indexes the wavetable that follows them. The frequency table is
+  the one whose bytes reach the frequency registers, and the note table the
+  player indexes is the operand of the loads that put them there unchanged.
+- **what each column is**: planted again with every other column 1, no
+  wavetable and speed commands on the other voices, each is
+  told by what the player does with its byte: AD, SR and the first wave by the
+  SID register they reach; pulse, filter and vibrato pointers by the table they
+  index, the filter's kept globally rather than per voice, the speed table
+  last; the vibrato delay by its copy counting down, the gate timer by pairing
+  with the first wave.
+- **table lengths**: the wave, pulse and filter tables abut, so each starts
+  where the previous ends. The last ends where instrument vibrato or a speed
+  command reads speed row 1's two columns, else where its row 1's right column
+  is read, planted as two set rows. greloc leads the speed columns with a zero row whenever the build
+  has a speed effect, which every packed speed row and instrument vibrato
+  imply, so the speed table fills the rest up to the first orderlist.
 
-gt2reloc shipped many packer/player revisions whose table geometry differs, and
-several do not lay the song data out immediately after the frequency table. The
-absolute base of every table is baked into the playroutine as an `LDA table,Y`
-(`$B9`) operand, and the player relocates as one block, so those operands are
-version-tolerant anchors. `decompile_sid` reads them directly with
-[`pysidtracker`](https://github.com/anarkiwi/pysidtracker)'s masked-opcode
-code-scan (`CodePattern` / `find_code_all`):
+The song data is read from the RAM the player reads after init (booted with
+the KERNAL's PAL/NTSC flag the PSID driver sets, which some inits retune by),
+so the decompiled song is the one the player plays.
 
-- **song(order)-table** — the sequencer idiom `LDA songtbllo,Y; STA zp;
-  LDA songtblhi,Y; STA zp; LDY chn,X; LDA (zp),Y; CMP #$FF` gives the base and
-  subtune count (`songs = (songtblhi - songtbllo) / 3`).
-- **pattern-pointer table** — the same idiom ending `CMP #$40` (new-note fetch).
-- **wave/pulse/filter tables** — the shared "nextstep" idiom `LDA lefttbl,Y;
-  CMP #$FF; INY; TYA; BCC; ...; LDA righttbl-1,Y`. Because the tables abut, the
-  captured pairs form a self-validating chain (wave, then pulse and/or filter);
-  the instrument region size then fixes `K = 3 + pulse + filt + 2·vib + 2·gate`,
-  with gate read from the `insgatetimer` load idiom.
-
-The stock "right after the frequency table" layout and exact-fit tiling are
-tried first (unchanged for tunes that already resolve); the code-scan song-table
-and instrument/table location are the recovery path for revisions they miss.
-A code-located instrument/table layout is accepted only after the same
-executable-consistency checks the tiling uses (jump-terminated tables, in-range
-instrument/pattern pointers).
-
-**Out of scope.** GoatTracker **V1.x** (a distinct earlier format) and a
-residual minority of **V2.x** tunes whose packer stores the song(order)-table in
-a different column geometry (its high column does not hold orderlist-pointer high
-bytes) are not decoded and raise a clean `SidParseError`.
+**Out of scope.** GoatTracker **V1.x** (a distinct earlier format, see
+[gt1.md](gt1.md)). The **GoatTracker 2.0x** precompiled players (2.0–2.06,
+`player1.s`–`player4.s`) put the song and pattern tables after the instrument
+tables and have different instrument and table semantics (no speed table); they
+raise a clean `SidParseError` naming them. So do players whose sequencer does
+not read GoatTracker 2's song and pattern tables (interleaved pointer tables,
+stereo builds whose table geometry is not one block).
 
 Direct-load images decompile with the standard library only. Crunched or
 relocated images have their init routine run in a 6502 emulator first (jennings,

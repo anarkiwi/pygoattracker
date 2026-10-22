@@ -74,7 +74,7 @@ def test_metadata_from_header(formats, gt1_raw, gt2_raw):
         "2026",
         LOAD,
         LOAD,
-        LOAD,
+        LOAD + 3,
     )
     gt1 = formats["goattracker1"]
     assert gt1.model_metadata(gt1.parser.parse(gt1_raw)) == (

@@ -16,26 +16,19 @@ variable (otherwise it fetches from ``$HVSC_MIRROR``)::
     HVSC=/path/to/C64Music pytest tests/test_hvsc_sid.py
 
 Scope. The decompiler targets gt2reloc-*packed* GoatTracker 2 images (the
-``decompile_sid`` path). Empirically every HVSC GoatTracker tune is a
-direct-load image -- none are crunched/relocated, so the emulated-init unpack
-path is never needed for this corpus (it stays covered by the synthetic tests).
-The song(order)-table, pattern-pointer table and wave/pulse/filter/speed table
-bases are located from the player's own table-access code (relocation-invariant
-``LDA table,Y`` operand capture), so gt2reloc/player revisions that move the
-song data off the stock "right after the frequency table" position, or whose
-instrument/table region the exact-fit tiling cannot segment, still decode.
+``decompile_sid`` path). Where the song data lies is read off the player by
+running it (:mod:`pygoattracker.observe`), so packer revisions that move or
+reorder it still decode.
 
 A residual cluster remains *out of scope* and is *excluded* here (the public
 parse raises :class:`SidParseError`, which the test tallies rather than
 asserting against):
 
-  * GoatTracker **V1.x** tunes -- an older player with a different on-image
-    layout after the frequency table.
-  * A minority of **V2.x** tunes whose packer stores the song(order)-table in a
-    different column geometry (its high column does not hold orderlist-pointer
-    high bytes), so the gt2reloc pointer grammar does not apply.
+  * GoatTracker **V1.x** tunes, decoded by :mod:`pygoattracker.gt1` instead.
+  * The **GoatTracker 2.0x** precompiled players, whose song tables follow the
+    instrument tables.
 
-Roughly 79% of the sampled corpus is in scope and must decompile; the remainder
+Most of the sampled corpus is in scope and must decompile; the remainder
 raises a clean ``SidParseError`` (never any other exception).
 """
 
@@ -47,8 +40,9 @@ import pytest
 from pysidtracker import PlayroutineKind
 from pysidtracker.testing import resolve_tune
 
-from pygoattracker import probe, sid
+from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
+from pygoattracker.packed import pattern_rows
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
 from pygoattracker.writer import build_sng
@@ -56,13 +50,9 @@ from tests._fixture_cache import HVSC_CACHE
 
 _SAMPLE_FILE = Path(__file__).parent / "data" / "hvsc_goattracker_sample.txt"
 
-# Fraction of the (present) sample that must decompile: a regression floor for
-# the packed decoder. The committed sample decompiles ~79%; the rest are the
-# documented out-of-scope variants above.
+# Fraction of the (present) sample that must decompile, the rest the documented
+# out-of-scope variants above; and the floor when the whole sample is present.
 _MIN_PASS_RATE = 0.70
-# Exact floor asserted when the whole local sample is present (measured 243/307
-# with the current decoder); guards against regressions the rate alone would
-# let through.
 _FULL_SAMPLE_MIN_PASS = 235
 
 # Representatives, one per decoder capability, that must fully decompile and
@@ -73,16 +63,11 @@ _REPRESENTATIVES = {
     # finetuned frequency table (stock high column, retuned low column): found
     # only by the high-column anchor fallback.
     "DEMOS/A-F/A_Crack_in_the_Facade.sid": dict(subtunes=1, min_patterns=1),
-    # PSID header advertises 1 subtune but the song(order)-table holds 2: the
-    # subtune count is recovered from the packed layout, not trusted from it.
+    # PSID header advertises 1 subtune but the song(order)-table holds 2.
     "DEMOS/G-L/In_High_Spirits.sid": dict(subtunes=2, min_patterns=10),
-    # gt2reloc revision whose song data is NOT right after the frequency table:
-    # the song(order)-table base + subtune count are read from the player's
-    # sequencer code (``mt_songtbllo``/``mt_songtblhi`` operands), not assumed.
+    # gt2reloc revision whose song data is NOT right after the frequency table.
     "DEMOS/M-R/Penumbra.sid": dict(subtunes=1, min_patterns=10),
-    # instrument/table region that the exact-fit tiling cannot segment: the
-    # wave/pulse/filter table bases are located from the player's table-access
-    # code (the "nextstep" chain) and the instrument flags from ``K``.
+    # instrument/table region greloc's executed-row tiling could not segment.
     "DEMOS/M-R/Robots_Can_Dance.sid": dict(subtunes=1, min_patterns=10),
 }
 
@@ -246,36 +231,24 @@ def _tune(rel):
 
 def test_the_song_table_load_selects_the_player_and_its_song():
     """Captain_Future_Preview bundles one-song players; its init enters the
-    second for song 2, whose player loads its own song-table entry 0."""
-    raw = _tune("GAMES/A-F/Captain_Future_Preview.sid")
-    image = sid._load_image(raw)
-    after, match, addr = probe.song_read(image, 1, sid._P_SONGTBL)
-    assert (match.addr, match.captures["lo"], addr) == (0x1BF9, 0x1E3A, 0x1E3A)
-    assert after.mem[match.addr] == 0xB9
-    result = sid.decompile_sid(raw, subtune=1)
+    second for song 2, whose player reads its own song-table entry 0."""
+    result = sid.decompile_sid(_tune("GAMES/A-F/Captain_Future_Preview.sid"), 1)
     assert result.subtune == 0 and len(result.song.subtunes) == 1
     assert result.info.layout.songtbl == 0x1E3A
 
 
-def test_a_song_table_loaded_by_init_itself():
-    """Party_Bit_3SID's init calls play: the load happens inside init."""
-    image = sid._load_image(_tune("MUSICIANS/J/Jellica/Party_Bit_3SID.sid"))
-    _, match, addr = probe.song_read(image, 0, sid._P_SONGTBL)
-    assert addr == match.captures["lo"]
-
-
 def test_a_song_no_goattracker_player_plays():
     """Lord_of_Dragonspire's song 2 is played by another routine: no song table
-    is loaded, and the decoder says so."""
+    is read, and the decoder says so."""
     raw = _tune("MUSICIANS/P/Page_Jason/Lord_of_Dragonspire.sid")
-    assert probe.song_read(sid._load_image(raw), 1, sid._P_SONGTBL) is None
     with pytest.raises(SidParseError, match="no GoatTracker song table read"):
         sid.decompile_sid(raw, subtune=1)
 
 
 def test_hvsc_corpus_round_trips_through_the_typed_model():
     """Every sampled tune re-encodes from its typed song to its own packed bytes,
-    and to the same Song (so the same .sng, where a .sng can hold it)."""
+    or for a pattern spelt outside greloc's grammar to bytes the player reads the
+    same, and to the same Song (so the same .sng, where a .sng can hold it)."""
     present = _present()
     if len(present) < 100:
         pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
@@ -285,7 +258,10 @@ def test_hvsc_corpus_round_trips_through_the_typed_model():
             result = _decompile(path)
         except SidParseError:
             continue
-        assert result.repack() == [], rel
+        patterns = set(result.info.layout.patt_addrs)
+        for addr, packed, held in result.repack():
+            assert addr in patterns, rel
+            assert pattern_rows(packed, 0)[0] == pattern_rows(held, 0)[0], rel
         typed = TypedSong.from_song(result.song, result.info.simplepulse)
         assert typed.to_song() == result.song, rel
         checked += 1

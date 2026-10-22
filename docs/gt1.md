@@ -4,8 +4,9 @@ GoatTracker V1.x saved a tune by copying one of its playroutines, relocating it
 and appending the song tables (`relocator()` in the editor's `goattrk.c`). This
 library recognizes the playroutine, decompiles the tables into a `Gt1Song` and
 plays it with `Gt1Player`, a native transcription of that playroutine. Two
-playroutine designs are supported: the V1.5x standard playroutine and the V1.25
-musicroutines 11.1–11.5.
+playroutine designs are supported: the V1.5x standard playroutine and the
+musicroutine 11.x family (the V1.25 musicroutines 11.1–11.5 and the V0.96–V1.22
+standard playroutines they grew from).
 
 ## Recognition
 
@@ -45,9 +46,29 @@ V1.51 and V1.52 have identical code and are told apart by the frequency table.
 | 11.4 | `SRC/PLAYER4.S` | author info, timing marks, sound effects |
 | 11.5 | `SRC/PLAYER5.S` | author info, timing marks, multispeed hard-restart timer |
 
+The standard playroutines of the editors before V1.25 have no archived source.
+They are 11.1 with the edits that undo, newest first, the playroutine changes
+the V1.25 `README.TXT` version history lists; each edit was read from the
+disassembly of the tunes and checked by assembling the edited source and
+matching it, data block included, against them:
+
+| playroutine | releases | differs from the next newer by |
+| --- | --- | --- |
+| 1.22 | V1.22 | V1.23: a new note resets the pulse direction even when the instrument pulse is `$00` |
+| 1.21 | V1.21 | V1.22: no `clc` before the cutoff slide (the play call's entry carry adds in); song start writes `$08` to `$D404` |
+| 1.16 | V1.16–V1.2 | V1.21: song start sets the channel waveform to `$08` and leaves the pulse direction |
+| 1.15 | V1.15 | V1.16: an instrument pulse of `$00` is loaded like any other |
+| 1.1 | V1.1–V1.14 | V1.15: orderlist `$FE` repeats the last pattern and `$FF` loops to the start, with no restart byte |
+| 1.01 | V1.01–V1.03 | V1.1: no jump table (play at the start, song number + 1 in `playflag`, set by the packer's `tax`/`inx`/`stx`/`rts` init stub before the player) and the V0.93 channel-variable layout (from `goattrk093.zip` `src/PLAYER.S`) |
+| 0.96 | V0.96–V1.0 | V1.01: the V0.93 frequency table |
+
+0.96 and 1.01 have identical code and are told apart by the frequency table.
+
 ## Decompile
 
 `decompile_gt1(data, subtune)` reads the table bases from the matched operands
+(the pre-V1.1 packers point the song table operands one song, three bytes,
+before the table)
 and checks that the tables tile the memory after the player: instruments (8
 bytes each), the wave and note columns, the song table (low then high bytes),
 the pattern table, the filter table (V1.5x only), the orderlists and the packed
@@ -57,7 +78,8 @@ modifies, zero-page operands, channel variables and frequency tables), so
 `Gt1Song.pack()` reproduces the image bytes exactly. A last pattern cut short
 by the end of the file keeps only the loaded bytes.
 
-A header init that is neither the jump table nor the packer's multispeed CIA
+A header init that is neither the packed entry (the jump table, or the packer's
+init stub before a playroutine without one) nor the packer's multispeed CIA
 speed code (an HVSC init stub) is run in the 6502 emulator first, and the song
 is decompiled from memory after init.
 
@@ -70,12 +92,18 @@ carry, 8-bit wrap and out-of-table read follows the 6502 code. Memory outside
 the loaded data holds libsidplayfp's RAM power-on pattern, which a tune reading
 past its data sees on the oracle too. One `render_grid` row is one play call;
 multispeed timing comes from the tune's CIA programming
-(`pysidtracker.cadence.playroutine_cadence`), never from header flags.
+(`pysidtracker.cadence.playroutine_cadence`), never from header flags. The
+musicroutine channel variables are addressed by their playroutine labels, so
+both channel-variable layouts play through one transcription. A playroutine
+without the V1.22 `clc` adds the carry play is entered with to the cutoff
+slide; sidplayfp's PSID driver calls play from its interrupt handler, whose
+`rti` restores the flags its idle loop had after init, so that carry is the one
+init returned with (clear for the packed entry points).
 
 `tests/test_gt1.py` packs synthetic songs that use every command, table feature
 and orderlist command with each playroutine (and a sound effect for 11.2/11.4)
-and checks `Gt1Player` against the packed 6502 playroutine itself, frame for
-frame.
+and checks `Gt1Player` against the packed 6502 playroutine itself, entered as
+the PSID driver enters it, frame for frame.
 
 ## V1.x editor songs
 
@@ -142,7 +170,14 @@ the V1.4b–V1.53 layout; the V0.9x and V1.25 bodies are native only.
 | 11.3 | 42 | 43 | 41 |
 | 11.5 | 15 | 15 | 15 |
 | 11.1 | 12 | 12 | 12 |
-| none of the above | 702 | 843 | 0 |
+| 1.22 | 2 | 2 | 2 |
+| 1.21 | 47 | 70 | 47 |
+| 1.16 | 22 | 27 | 22 |
+| 1.15 | 2 | 2 | 2 |
+| 1.1 | 5 | 5 | 5 |
+| 1.01 | 43 | 53 | 43 |
+| 0.96 | 16 | 22 | 16 |
+| none of the above | 565 | 662 | 0 |
 
-The unmatched tunes embed playroutines with no archived source (V1.3–V1.4f and
-releases before V1.25) or hand-modified players.
+The unmatched tunes embed playroutines with no archived source (V1.3–V1.4f,
+the V1.1–V1.24 playroutines 2–4) or hand-modified players.

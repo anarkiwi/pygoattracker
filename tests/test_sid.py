@@ -605,3 +605,31 @@ def test_player_uses_the_build_s_pulse_and_realtime_optimizations():
     d.info.build = dataclasses.replace(d.info.build, pulseopt=False, realtime=False)
     player = d.player()
     assert (player.optimize_pulse, player.optimize_realtime) == (False, False)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "A8 A9 00 9D 98 13 B9 00 20 9D 9B 13 B9 80 20 9D 9C 13",
+        "A8 B9 00 20 95 10 B9 80 20 95 11",
+    ],
+)
+def test_the_note_table_is_read_where_the_code_indexes_it(code):
+    mem = bytearray(0x10000)
+    sfx = bytes.fromhex("A8 B9 80 1F 9D 00 D4 B9 00 20 9D 01 D4")
+    mem[0x1000 : 0x1000 + len(sfx)] = sfx
+    body = bytes.fromhex(code)
+    mem[0x1100 : 0x1100 + len(body)] = body
+    mem[0x2000:0x2080] = bytes(range(0x80))
+    mem[0x2080:0x2100] = bytes(range(0x80, 0x100))
+    bases = sid._code_freq_bases(
+        mem, 0x1000, 0x1200
+    )  # pylint: disable=protected-access
+    assert bases == (0x2000, 0x2080)
+    table = sid._freq_table(
+        mem, 0x3000, 12, 8, bases
+    )  # pylint: disable=protected-access
+    assert table[0x3E] == (0xBE << 8) | 0x3E
+    assert (
+        sid._code_freq_bases(mem, 0x1000, 0x1100) is None
+    )  # pylint: disable=protected-access

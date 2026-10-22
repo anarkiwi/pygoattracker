@@ -137,6 +137,9 @@ TUNES = {
     "gt1_110_disco_fever": ("MUSICIANS/H/Hoffmann_Michal/Disco_Fever.sid", 1, 80),
     "gt1_121_plaah": ("MUSICIANS/H/Hukka/Plaah.sid", 1, 62),
     "gt1_122_bee": ("MUSICIANS/H/Hukka/Bee.sid", 1, 154),
+    # a retuned table whose low column the code indexes apart from the
+    # high-column anchor: the note table read at the code's own bases.
+    "frogger_rags": ("MUSICIANS/D/DJ_Space/Frogger_Rags.sid", 1, 158.366),
 }
 
 

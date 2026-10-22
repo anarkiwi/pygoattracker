@@ -170,3 +170,18 @@ pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
 pygoattracker nt2 tune.sng tune.nt2 --lenient
 pygoattracker sid2sng tune.sid tune.sng   # decompile a packed GoatTracker .sid
 ```
+
+## pysidtracker command line
+
+Installing pygoattracker registers two formats with the generic
+[`pysidtracker`](https://github.com/anarkiwi/pysidtracker) tools:
+`goattracker2` (GoatTracker 2 packed `.sid`) and `goattracker1` (GoatTracker
+V1.x packed `.sid`). The format is picked by recognizing the tune.
+
+```bash
+pysidtracker info tune.sid                     # metadata, format, subtunes/patterns/instruments
+pysidtracker reglog tune.sid tune.reglog --seconds 30
+pysidtracker wav tune.sid tune.wav --seconds 30
+python -m pysidtracker.whydiff tune.sid --format auto   # first divergence vs the 6502 player
+python -m pysidtracker.survey run HVSC TUNES --work DIR --format goattracker2
+```

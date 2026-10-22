@@ -37,6 +37,7 @@ byte-exact over the whole song:
 | `Opin_Joskus` | SIMPLEPULSE measured by running the player, not inferred from the pulse table |
 | `Lily_Lander` | ghost-register build detected from the player's 25-register flush |
 | `Greaties_tune_3` | two tilings of the instrument/table region; the player is seen to play the gate columns |
+| `Captain_Ishtar` 5, `Cruiser-X_79` 4, `Trance_Sector` 12 | the song the player's own song-table load selects: a wrapper-entered player's entry past the header's count |
 | `Miner_Prophet_preview` | a hard-restart define assembled at two sites |
 | `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |
 | `GoatTracker_example_MW1_title`, `Kaori_360`, `Disco_Fever`, `Plaah`, `Bee` | GoatTracker V0.96, V1.01, V1.1, V1.21, V1.22 standard playroutines (no jump table and packer init stub before V1.1, `$FE`/`$FF` orderlist ends before V1.15) |

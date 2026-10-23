@@ -59,12 +59,12 @@ def test_each_value_is_followed_to_the_byte_it_was_loaded_from():
     trace = _trace()
     reads = {r.addr: r for r in trace.reads}
     bases = {r.base: r for r in trace.reads}
-    assert reads[0x2102][1:] == (0x2100, 0x2102, 0x2000, 2, True, None)
+    assert reads[0x2102][1:] == (0x2100, 0x2102, 0x2000, 2, True, None, 0x2102)
     assert reads[0x2203][3:6] == (0x2000, 2, True)
     assert reads[0x2301][3:6] == (0x2001, 1, True)
     assert bases[0x2400][3:6:2] == (0x2301, False)
     assert reads[0x2900].pointer == ((0x2600, 0x2600), (0x2700, 0x2700))
-    assert (0xD405, 0x2203, True, 0x2200) in trace.sid
+    assert (0xD405, 0x2203, True, 0x2200, 0x2200) in trace.sid
     assert 0x2102 in trace.counted
     assert observe.Store(0x2805, 0x2900, True) in trace.stores
     assert observe.Store(0x0030, 0x2102, False) in trace.stores
@@ -83,13 +83,23 @@ def test_the_note_table_is_where_unchanged_frequencies_are_loaded_from():
     assert sid._freq_table(subject, 0x3000, 12, 8, (0x2000, 0x2080))[0x10] == 0x1234
 
 
+def test_a_copied_byte_keeps_its_origin_and_its_last_load():
+    subject = bytearray(0x10000)
+    code = "A0 00 B9 00 30 99 00 40 B9 00 40 85 50 AD 00 50 85 51 B1 50 60"
+    subject[0x1000 : 0x1000 + 21] = bytes.fromhex(code)
+    trace = observe.Trace(subject, *wire_mpu(subject))
+    trace.call(0x1000)
+    copy = next(r for r in trace.reads if r.base == 0x4000)
+    assert (copy.addr, copy.source) == (0x4000, 0x3000)
+    assert trace.reads[-1].pointer == ((0x3000, 0x4000), (0x5000, 0x5000))
+
+
 def test_the_song_and_pattern_columns_tile_one_block():
     stock = dict(slo=0x100, shi=0x106, plo=0x10C, phi=0x114)
     assert observe._lengths(stock) == (6, 8)
     interleaved = dict(phi=0x100, shi=0x10D, plo=0x110, slo=0x11D)
     assert observe._lengths(interleaved) == (3, 13)
-    with pytest.raises(SidParseError):
-        observe._lengths(dict(slo=0x100, shi=0x103, plo=0x200, phi=0x210))
+    assert observe._lengths(dict(slo=0x100, shi=0x103, plo=0x200, phi=0x210)) is None
 
 
 def test_a_table_s_right_column_is_its_row_1_s_other_read():
@@ -113,6 +123,7 @@ def test_the_tables_and_speed_table_tile_to_the_orderlists():
             observe._tiling(lefts, *args)
     with pytest.raises(SidParseError):
         observe._tiling([0x100, 0x10B], 0x10C, None, 0x120)
+    assert observe._tiling([0x100, 0x10A], None, None, 0x112) == ([5, 4], 0, 0)
 
 
 def test_speed_row_1_is_a_left_and_right_read_ending_the_region():

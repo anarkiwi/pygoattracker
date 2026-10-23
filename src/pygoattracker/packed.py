@@ -105,6 +105,8 @@ class PlayerState:
     first tick writes from the channel and filter variables init leaves as loaded.
     ``init``: the ``(register, value)`` SID writes of a chip-writing build's
     song-init call, which loads the channel registers from those variables.
+    ``lastnote``: each channel's calculated-speed note (``mt_chnlastnote``) init
+    leaves as loaded, empty where the build has none.
     """
 
     registers: tuple
@@ -114,6 +116,7 @@ class PlayerState:
     funk: tuple
     ghost: bool = True
     init: tuple = ()
+    lastnote: tuple = ()
 
 
 class PlayerCode(NamedTuple):

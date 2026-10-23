@@ -78,6 +78,7 @@ class PlayerBuild:
     ``alt``: altplayer.s, whose flush ascends. Below ``firstnohr`` hard restart, below
     ``firstlegato`` gate-off, then legato. None: a define the player does not show.
     ``wrapper``: a play wrapper outside the player flushes its zero-page ghost;
+    ``pulsestep``: the pulse change a +1 modulation speed makes;
     ``funk``: the funk tempo table a ghost build's first play call starts from.
     """
 
@@ -90,6 +91,7 @@ class PlayerBuild:
     deftempo: int | None = None
     fixed: tuple | None = None
     pulseopt: bool | None = None
+    pulsestep: int | None = None
     realtime: bool | None = None
     wavedelay: bool | None = None
     simplepulse: bool | None = None

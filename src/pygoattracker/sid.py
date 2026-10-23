@@ -129,6 +129,7 @@ class DecompiledSid:
             simplepulse=info.simplepulse,
             live_vibrato=info.live_vibrato,
             optimize_pulse=True if build.pulseopt is None else build.pulseopt,
+            pulse_step=build.pulsestep or 1,
             optimize_realtime=True if build.realtime is None else build.realtime,
             state=info.state,
             default_tempo=build.deftempo,

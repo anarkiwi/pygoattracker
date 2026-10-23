@@ -88,7 +88,8 @@ class Player(MemPlayer):
 
     Options match the GoatTracker editor defaults: ``adparam`` is the hard
     restart ADSR parameter, ``optimize_pulse`` and ``optimize_realtime`` are the
-    pulse/realtime command skip optimizations (both enabled in the editor).
+    pulse/realtime command skip optimizations (both enabled in the editor);
+    ``pulse_step`` is the pulse change a +1 modulation speed makes.
     """
 
     MASK_PW_HI = True
@@ -100,6 +101,7 @@ class Player(MemPlayer):
         adparam: int = constants.DEFAULT_ADPARAM,
         optimize_pulse: bool = True,
         optimize_realtime: bool = True,
+        pulse_step: int = 1,
         freq_table=None,
         simplepulse: bool = False,
         live_vibrato: bool = False,
@@ -149,6 +151,7 @@ class Player(MemPlayer):
         self.live_vibrato = live_vibrato
         self.adparam = adparam & 0xFFFF
         self.optimize_pulse = optimize_pulse
+        self.pulse_step = pulse_step
         self.optimize_realtime = optimize_realtime
         self._init_state = state
         # A play-wrapper flush build starts from its all-zero ghost: first frame muted.
@@ -722,7 +725,7 @@ class Player(MemPlayer):
         speed = self._rt(ptbl, chan.pulse_table_ptr)
         if speed >= 0x80:
             speed -= 0x100
-        chan.pulse = (chan.pulse + speed) & 0xFFF
+        chan.pulse = (chan.pulse + speed * self.pulse_step) & 0xFFF
         chan.pulsetime = (chan.pulsetime - 1) & 0xFF
         if not chan.pulsetime:
             chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF

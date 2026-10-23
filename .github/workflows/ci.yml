@@ -25,14 +25,13 @@ jobs:
         run: black --check src/pygoattracker tests scripts
       - name: pylint
         run: pylint src/pygoattracker tests scripts
-      - name: Cache HVSC tunes
-        # HVSC corpus tunes are copyright and never committed; the corpus
-        # decompile test fetches them from the mirror into a gitignored cache.
-        # Cache that dir across runs, keyed on the sample list.
-        uses: actions/cache@v6
+      - name: Cache downloads
+        # HVSC tunes and pinned GoatTracker/NinjaTracker fixtures are copyright
+        # and never committed; pysidtracker's cache action persists them.
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.30.0
         with:
-          path: tests/.tunecache
-          key: hvsc-tunes-${{ hashFiles('tests/data/hvsc_goattracker_sample.txt') }}
+          key: ${{ hashFiles('tests/data/hvsc_goattracker_sample.txt', 'tests/_fixture_cache.py') }}
+          tunes: tests/data/hvsc_goattracker_sample.txt
       - name: pytest + coverage (> 85%)
         run: pytest --cov=pygoattracker --cov-report=term-missing --cov-fail-under=85
 
@@ -52,23 +51,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Pull sidtrace oracle image
-        id: image
-        run: |
-          docker pull anarkiwi/sidtrace:latest
-          digest=$(docker inspect --format '{{index .RepoDigests 0}}' anarkiwi/sidtrace:latest)
-          echo "digest=${digest##*@}" >> "$GITHUB_OUTPUT"
-      - name: Cache HVSC tunes
-        uses: actions/cache@v6
+      - name: Cache tunes and oracle traces
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.30.0
         with:
-          path: tests/.tunecache
-          key: hvsc-${{ hashFiles('tests/test_oracle_hvsc.py') }}
-          restore-keys: hvsc-
-      - name: Cache oracle CSVs
-        uses: actions/cache@v6
-        with:
-          path: .oracle-cache/oracle
-          key: oracle-trace-${{ steps.image.outputs.digest }}-${{ hashFiles('tests/test_oracle_hvsc.py') }}
+          key: ${{ hashFiles('tests/test_oracle_hvsc.py') }}
+          sidtrace: "true"
+          tunes: tests/test_oracle_hvsc.py
       - name: Oracle comparison (never skipped)
         run: pytest -m oracle -n auto
 

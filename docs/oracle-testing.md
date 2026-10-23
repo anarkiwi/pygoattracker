@@ -53,13 +53,14 @@ pytest -m oracle -n auto
 ```
 
 HVSC `.sid` files are copyright works: they are resolved from a local `$HVSC`
-tree or downloaded to `tests/.tunecache` (`$PYSID_TUNECACHE` overrides it), and
-the oracle CSVs cached in `.oracle-cache/oracle` — never committed. The default
+tree or downloaded to pysidtracker's cache `.tunecache` (`$PYSID_TUNECACHE`
+overrides it), and the oracle traces cached in `.tunecache/csv/oracle` — never
+committed. The default
 suite excludes `-m oracle`; a dedicated CI job runs it. To pre-fetch the tunes
 the suite names, and the decompile test's corpus sample:
 
 ```bash
-pysid-tune-fetch --cache tests/.tunecache --tests tests --tests tests/data/hvsc_goattracker_sample.txt
+pysid-tune-fetch --tests tests --tests tests/data/hvsc_goattracker_sample.txt
 ```
 
 ## Whole-HVSC survey

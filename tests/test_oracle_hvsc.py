@@ -13,22 +13,21 @@ every one must render frame-for-frame identically to the deterministic
 whole-HVSC survey compares (``pysidtracker.survey``).
 """
 
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 from pysidtracker import TuneFetchError, is_ntsc, resolve_tune, survey
+from pysidtracker.testing import default_cache
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import oracle_hvsc  # noqa: E402  (after sys.path tweak)
-from tests._fixture_cache import HVSC_CACHE  # noqa: E402
 
-# The sidtrace trace cache (``<dir>/oracle``); ``$PYGOATTRACKER_ORACLE_CACHE``
-# overrides it.
-_WORK = Path(os.environ.get("PYGOATTRACKER_ORACLE_CACHE", ".oracle-cache"))
+# The sidtrace traces live in pysidtracker's oracle-trace cache, which CI keys
+# on the sidtrace image digest.
+_WORK = default_cache("csv")
 
 # ``(HVSC path, song, Songlengths.md5 seconds)`` per play-routine / packed-decode
 # variation, each byte-exact against the sidtrace oracle over the whole song:
@@ -195,7 +194,7 @@ TUNES = {
 @pytest.mark.parametrize("tune", TUNES)
 def test_render_matches_oracle_over_the_whole_song(tune):
     relpath, song, seconds = TUNES[tune]
-    path = resolve_tune(relpath, cache_dir=HVSC_CACHE)
+    path = resolve_tune(relpath)
     if path is None:
         raise TuneFetchError(f"tune {relpath} unavailable (offline, not cached)")
     data = Path(path).read_bytes()

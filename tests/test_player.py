@@ -885,6 +885,29 @@ def test_chip_state_song_init_call_outputs_its_register_loads(song):
     )
 
 
+def test_state_seeds_the_calculated_speed_notes_init_keeps():
+    # A calculated-speed vibrato on rest rows before any note steps by the
+    # interval above the lastnote init leaves, not above note 0.
+    song = basic_song({})
+    vib = song.speedtable.add(0x80, 0x00)
+    for row in range(8):
+        song.patterns[0].rows[row] = Row(command=0x4, data=vib)
+    regs = [0] * constants.SID_REGISTERS
+    regs[0:2] = [C4_FREQ & 0xFF, C4_FREQ >> 8]
+    table = constants.FREQ_TABLE
+    for lastnote, step in ((52, table[53] - table[52]), (None, table[1] - table[0])):
+        kwargs = {} if lastnote is None else {"lastnote": (lastnote, 0, 0)}
+        history = freq_history(song, 30, state=ghost_state(regs, ghost=False, **kwargs))
+        assert max(history) - C4_FREQ == step
+
+
+def test_pulse_width_highs_output_their_nibble(song):
+    regs = [0] * constants.SID_REGISTERS
+    regs[constants.PULSE_HI_REG] = 0x81
+    first = dict(Player(song, state=ghost_state(regs)).play_frame())
+    assert first[constants.PULSE_HI_REG] == 0x01
+
+
 def test_state_seeds_funktempo(song):
     player = Player(song, state=ghost_state(funk=(3, 4)))
     player.play_frame()

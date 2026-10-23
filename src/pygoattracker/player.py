@@ -91,6 +91,8 @@ class Player(MemPlayer):
     pulse/realtime command skip optimizations (both enabled in the editor).
     """
 
+    MASK_PW_HI = True
+
     def __init__(
         self,
         song: Song | TypedSong,
@@ -177,6 +179,7 @@ class Player(MemPlayer):
         ``state`` seeds the same variables, which init leaves as the image loaded,
         and the envelopes a build writing them every tick outputs from its first;
         its song-init call outputs the registers ``state.init`` loads from them.
+        Either seeds the calculated-speed notes ``state.lastnote`` init keeps.
         """
         for reg, value in self._init_regs:
             self._mem[self.SID_BASE + reg] = value
@@ -212,6 +215,8 @@ class Player(MemPlayer):
                 regs = state.registers
                 chan.freq = regs[base + 1] << 8 | regs[base]
                 chan.pulse = regs[base + 3] << 8 | regs[base + 2]
+            for chan, note in zip(self._channels, state.lastnote):
+                chan.lastnote = note
         self._filterctrl = 0
         self._filtertime = 0
         self._filterptr = 0

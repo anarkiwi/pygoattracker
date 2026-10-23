@@ -28,14 +28,15 @@ _LOST |= {k: (A,) for k in ("DCP", "ISC", "SLO", "SRE", "RLA", "RRA", "SAX")}
 _INDEX = {"absx": X, "zpx": X, "indx": X, "absy": Y, "zpy": Y, "indy": Y}
 _ZP = {"zp", "zpx", "zpy", "indx", "indy", "imm", "rel", "impl", "acc"}
 _IO = range(mm.SID_BASE, mm.SID_BASE + 0x400)
-_UNKNOWN = (None, False, None)
+_UNKNOWN = (None, False, None, None)
 _CYCLES = 200_000
 
 
 class Read(NamedTuple):
     """An indexed read of ``addr`` through operand ``base``: the data byte its index
     was loaded from, with what value and whether arithmetic changed it since; for
-    ``(zp),Y`` the ``(byte, operand)`` each half of the pointer was loaded from."""
+    ``(zp),Y`` the ``(byte, operand)`` each half of the pointer was loaded from;
+    the data byte ``addr`` holds a copy of (``addr`` itself where none)."""
 
     pc: int
     base: int
@@ -44,6 +45,7 @@ class Read(NamedTuple):
     value: int
     exact: bool
     pointer: tuple | None = None
+    source: int | None = None
 
 
 class Store(NamedTuple):
@@ -56,10 +58,12 @@ class Store(NamedTuple):
 
 class Trace:
     """A booted player stepped with each register's and RAM byte's data origin: the
-    byte it was loaded from, the load's operand, and whether arithmetic changed it.
+    byte it was first loaded from and that load's operand, whether arithmetic
+    changed it, and the operand of the load that last put it in a register.
 
     ``reads`` holds every indexed read, ``stores`` every store of a traced value,
-    ``sid`` every ``(address, origin, exact, operand)`` written in ``$D400-$D7FF``,
+    ``sid`` every ``(address, origin, exact, operand, last operand)`` written in
+    ``$D400-$D7FF``,
     ``counted``
     the origins of the bytes incremented or decremented in place.
     """
@@ -75,7 +79,7 @@ class Trace:
         observe_data_access(mpu, self._rd.append, lambda a, v: self._wr.append(a))
 
     def _cell(self, addr, base):
-        return self.cells.get(addr, (addr, True, base))
+        return self.cells.get(addr, (addr, True, base, base))
 
     def _step(self):
         mpu, sub, rd, wr, regs = self.mpu, self.subject, self._rd, self._wr, self.regs
@@ -90,13 +94,14 @@ class Trace:
             pointer = None
             if mode == "indy":
                 lo, hi = self._cell(base, base), self._cell((base + 1) & 0xFF, base)
-                pointer = ((lo[0], lo[2]), (hi[0], hi[2]))
-            org, exact, _ = regs[index]
+                pointer = ((lo[0], lo[3]), (hi[0], hi[3]))
+            org, exact, _, _ = regs[index]
             val = self.value[index]
-            self.reads.append(Read(pc, base, rd[-1], org, val, exact, pointer))
+            source = self._cell(rd[-1], base)[0]
+            self.reads.append(Read(pc, base, rd[-1], org, val, exact, pointer, source))
         if name in _LOAD:
             src = self.cells.get(pc + 1, _UNKNOWN) if mode == "imm" else None
-            src = src or self._cell(rd[-1], base)
+            src = src or self._cell(rd[-1], base)[:3] + (base,)
             out = (mpu.a, mpu.x, mpu.y)
             for r in _LOAD[name]:
                 regs[r], self.value[r] = src, out[r]
@@ -113,8 +118,8 @@ class Trace:
                     self.sid.append((addr, *src))
         elif name in _RMW and mode != "acc":
             for addr in wr:
-                org, _, at = self._cell(addr, base)
-                self.cells[addr] = (org, False, at)
+                org, _, at, via = self._cell(addr, base)
+                self.cells[addr] = (org, False, at, via)
                 self.counted.add(org)
         elif name in _ALU:
             regs[A] = regs[A][:1] + (False,) + regs[A][2:]
@@ -124,7 +129,7 @@ class Trace:
             for addr in wr:
                 self.cells[addr] = _UNKNOWN
 
-    def call(self, pc, a=0):
+    def call(self, pc, a=0, cycles=_CYCLES):
         """Run the subroutine at ``pc`` with ``A = a`` to its final RTS."""
         mpu, mem = self.mpu, self.mem
         start_sp = mpu.sp
@@ -135,7 +140,7 @@ class Trace:
         self.regs[A] = _UNKNOWN
         start = mpu.processorCycles
         while mpu.sp < start_sp:
-            if mpu.processorCycles - start > _CYCLES:
+            if mpu.processorCycles - start > cycles:
                 raise SidParseError("play call did not return")
             self._step()
 
@@ -162,11 +167,12 @@ class SongTables(NamedTuple):
     song: int
 
 
-def _run(boot, until, settle=_SETTLE):
-    """A :class:`Trace` of ``boot``'s player, called until ``until(trace)`` and then
-    ``settle`` times more; None if ``until`` stays false."""
+def _run(boot, until, settle=_SETTLE, trace=None):
+    """A :class:`Trace` (``trace``, else a new one) of ``boot``'s player, called
+    until ``until(trace)`` and then ``settle`` times more; None if ``until`` stays
+    false."""
     subject, mpu, mem, play = boot
-    trace = Trace(subject, mpu, mem)
+    trace = trace or Trace(subject, mpu, mem)
     for _ in range(_HORIZON):
         trace.call(play)
         if until(trace):
@@ -177,53 +183,69 @@ def _run(boot, until, settle=_SETTLE):
 
 
 def _pointer_tables(reads):
-    """``(song pointer, pattern pointer)``, each the ``(byte, operand)`` of its two
-    halves: of the pointers ``(zp),Y`` reads go through whose halves are table
+    """Each ``(song pointer, pattern pointer)``, each the ``(byte, operand)`` of its
+    two halves: of the pointers ``(zp),Y`` reads go through whose halves are table
     entries, the pattern one is indexed by a byte read through the other."""
     through = {}
     for r in reads:
         if r.pointer and None not in (r.pointer[0][0], r.pointer[1][0]):
-            through.setdefault(r.pointer, set()).add(r.addr)
-    index = {(r.addr, r.base): r.origin for r in reads if r.pointer is None}
+            through.setdefault(r.pointer, set()).add(r.source)
+    index = {(r.source, r.base): r.origin for r in reads if r.pointer is None}
     for patt in through:
         org = index.get(patt[0])
         for song, seen in through.items():
             if song != patt and org in seen and song[0] in index and song[1] in index:
-                return song, patt
-    return None
+                yield song, patt
 
 
 def _lengths(columns):
-    """Each named column's length, the four tiling one block in base order."""
+    """Each named column's length, the four tiling one block in base order, else
+    None."""
     order = sorted(columns.items(), key=lambda kv: kv[1])
     gaps = {}
     for (name, base), (_, nxt) in zip(order, order[1:]):
         gaps.setdefault(name[0], set()).add(nxt - base)
     if any(len(g) != 1 for g in gaps.values()) or len(gaps) != 2:
-        raise SidParseError("song and pattern tables do not tile one block")
+        return None
     return gaps["s"].pop(), gaps["p"].pop()
 
 
-def song_tables(boot) -> SongTables:
-    """The :class:`SongTables` the booted player's sequencer reads; its song is the
+def _tables(song, patt):
+    """The column bases of a song and pattern pointer and the song and pattern
+    counts they tile to, else None: GoatTracker 2's song table holds three
+    orderlist pointers a song."""
+    bases = {"slo": song[0][1], "shi": song[1][1], "plo": patt[0][1], "phi": patt[1][1]}
+    lengths = _lengths(bases)
+    if lengths is None or lengths[0] % 3 or not lengths[1]:
+        return None
+    return bases, lengths
+
+
+def song_tables(boot, trace=None) -> SongTables:
+    """The :class:`SongTables` the booted player's sequencer reads, continuing
+    ``trace`` (of its init), the first pointers it reads that tile as GoatTracker
+    2's tables (another player in the image may run alongside); its song is the
     one whose first orderlist the lowest song-table index read is."""
-    found = []
+    found, seen = [], []
 
     def fetched(trace):
-        found[:] = [_pointer_tables(trace.reads)]
-        return found[0] is not None
+        for pair in _pointer_tables(trace.reads):
+            seen.append(pair)
+            tables = _tables(*pair)
+            if tables is not None:
+                found.append(tables)
+                return True
+        return False
 
-    trace = _run(boot, fetched, 0)
+    trace = _run(boot, fetched, 0, trace)
     if trace is None:
+        if seen:
+            raise SidParseError("song and pattern tables do not tile one block")
         raise SidParseError(
             "no GoatTracker song table read: the player reads no song and "
             "pattern tables"
         )
-    song, patt = found[0]
-    bases = {"slo": song[0][1], "shi": song[1][1], "plo": patt[0][1], "phi": patt[1][1]}
-    songs, patterns = _lengths(bases)
-    if songs % 3 or not patterns:
-        raise SidParseError("song table is not three orderlists a song")
+    bases, (songs, patterns) = found[0]
     index = min(r.addr - r.base for r in trace.reads if r.base == bases["slo"])
     return SongTables(
         bases["slo"],
@@ -283,13 +305,15 @@ def _speed(reads, origins, end):
 
 def _tiling(lefts, last, speed, end):
     """``(lengths, speed rows, zero rows)`` of the abutting two-column tables whose
-    left columns start at ``lefts``, the last ending at ``last`` or, where its row 1
-    ``speed`` is seen, at the speed table, up to ``end``. greloc leads each speed
-    column with a zero row when the build has a speed effect, which instrument
-    vibrato and every packed speed row are for."""
-    stop = last if speed is None else speed - 1
+    left columns start at ``lefts``, the last ending where its row 1 ``speed`` is
+    seen, else at ``last``, else (a table no row of which is read) at ``end``.
+    greloc leads each speed column with a zero row when the build has a speed
+    effect, which instrument vibrato and every packed speed row are for."""
     lens = [(b - a) / 2 for a, b in zip(lefts, lefts[1:])]
-    lens.append((stop - lefts[-1]) / 2 if speed is not None else last - lefts[-1])
+    if speed is not None:
+        lens.append((speed - 1 - lefts[-1]) / 2)
+    else:
+        lens.append((end - lefts[-1]) / 2 if last is None else last - lefts[-1])
     rest = end - (lefts[-1] + 2 * lens[-1])
     if any(n < 0 or n % 1 for n in lens) or rest < 0 or rest % 2:
         raise SidParseError("tables do not tile the instrument/table region")
@@ -302,7 +326,8 @@ def _roles(trace, cols, wave, tables):
     """``{column: address}`` of the instrument columns besides the ``wave`` pointer,
     the tables starting at ``tables``, each told by what the player does with instrument 1's byte: the SID register it
     reaches or the table it indexes, the speed table last and the filter's pointer
-    kept globally, the pulse's per voice. Of the counters, the gate timer pairs
+    kept globally (read or not: a player can store it where nothing reads it), the
+    pulse's per voice. Of the counters, the gate timer pairs
     with the first wave and the vibrato delay is the one whose copy counts down.
     """
     sid = {}
@@ -317,6 +342,10 @@ def _roles(trace, cols, wave, tables):
     starts = {c: _row1(trace.reads, c, tables) for c in cols if c not in roles.values()}
     pointers = [c for _, c in sorted((s, c) for c, s in starts.items() if s)]
     inert = [c for c in cols if c in starts and not starts[c]]
+    for c in inert[:]:
+        if {s.indexed for s in trace.stores if s.origin == c} == {False}:
+            roles["filt"] = c
+            inert.remove(c)
     gate = "first" in roles
     if len(inert) - gate not in (0, 1) or len(inert) - gate > len(pointers):
         raise SidParseError("instrument columns are not greloc's")
@@ -367,7 +396,7 @@ def _anchor(trace, anchors, ours):
     return next(
         (
             a
-            for addr, org, _, base in trace.sid
+            for addr, org, _, base, _ in trace.sid
             if addr & 0x1F in _FREQ and (org, base) in loads
             for a in anchors
             if a[0] <= org < a[0] + 2 * a[2]
@@ -382,7 +411,7 @@ def _note_bases(trace):
     the player indexes; else None."""
     loads = {(r.addr, r.base): r for r in trace.reads if r.origin is not None}
     voices = {}
-    for addr, org, _, base in trace.sid:
+    for addr, org, _, base, _ in trace.sid:
         reg, read = addr & 0x1F, loads.get((org, base))
         if reg in _FREQ and read is not None:
             key = (reg // 7, read.origin, read.value)
@@ -397,7 +426,7 @@ def instrument_layout(bench, anchors, tables) -> dict:
     orderlists start, past the song and pattern ``tables``.
 
     A planted note shows the columns its instrument byte indexes and the wavetable
-    pointer (instrument 1's, else set to 1); planted with instrument 1's other
+    pointer (instrument 1's, else the tune's first nonzero bytes or 1s); planted with instrument 1's other
     columns 1, no wavetable and speed commands on the other voices (or as few of
     these as the player plays through), what each column is and where the speed
     table is; where no vibrato or command shows it, planted with every pointer at
@@ -431,9 +460,14 @@ def instrument_layout(bench, anchors, tables) -> dict:
     ours = planted | set(range(tstart, end))
     anchor, bases = _anchor(trace, anchors, ours), _note_bases(trace)
     wave = [c for c in cols if _row1(trace.reads, c) == tstart]
-    if not wave:
-        trace = run(dict.fromkeys(cols, 1), held)
-        wave = [c for c in cols if _row1(trace.reads, c) == tstart]
+    mem = bench.image.mem
+    used = {c: next((v for v in mem[c : c + num] if v), 0) for c in cols}
+    for cells in ([used, dict.fromkeys(cols, 1)] if not wave else []):
+        trace = _run(bench.boot({**buf, **cells}), held)
+        if trace is not None:
+            bases = bases or _note_bases(trace)
+            wave = [c for c in cols if _row1(trace.reads, c) == tstart]
+            break
     if len(wave) != 1:
         raise SidParseError("no column indexes the wavetable after the instruments")
     ones = {c: int(c != wave[0]) for c in cols}
@@ -453,6 +487,7 @@ def instrument_layout(bench, anchors, tables) -> dict:
     buf = plant
     params = {a for a in rooms & set(buf) if buf[a] == 1} - planted
     roles = _roles(trace, cols, wave[0], tstart)
+    bases = bases or _note_bases(trace)
     lefts = {"wave": tstart}
     lefts.update(
         {
@@ -462,12 +497,18 @@ def instrument_layout(bench, anchors, tables) -> dict:
         }
     )
     speed = _speed(trace.reads, params | {roles.get("vib")}, end)
+    dead = lefts.get("filt", 0) is None
+    if dead:
+        del lefts["filt"]
     right = None
-    if speed is None:
+    if speed is None or dead:
         last, left = list(lefts.items())[-1]
         rows = {a + k: _LEFT[t] for t, a in lefts.items() for k in (0, 1)}
         trace = run({**dict.fromkeys(cols, 1), **rows}, held)
+        bases = bases or _note_bases(trace)
         right = _right(trace.reads, roles[last], left)
+    if dead:
+        lefts["filt"], right = 2 * right - left, None
     lens, slen, zeros = _tiling(list(lefts.values()), right, speed, end)
     lens = dict(zip(lefts, lens))
     return dict(

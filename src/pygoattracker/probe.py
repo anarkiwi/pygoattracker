@@ -67,21 +67,25 @@ def _call(mpu, mem, play):
         raise ProbeMiss("play call did not return")
 
 
-def boot(image, subtune=0, buf=None):
+def boot(image, subtune=0, buf=None, init_run=None):
     """``(subject, mpu, mem, play)``: ``image`` after its init, booted as
     :func:`~pysidtracker.oracle.boot_flat` with the KERNAL's PAL/NTSC flag the PSID
     driver sets, and ``buf``'s ``{address: byte}`` planted in RAM, where an init
-    that copies song data put it."""
+    that copies song data put it. ``init_run(subject, mpu, mem, address, subtune)``
+    runs the init in place of :func:`~vagrant_moses.cpu.run_to_rts`."""
     h = image.header
     subject = power_on_ram()
     subject[image.load : image.load + len(image.image)] = image.image
     subject[_VOLUME] = _DRIVER_VOLUME
     subject[_VIDEO] = int(not (h.version >= 2 and (h.flags >> 2) & 3 == 2))
-    init = h.init_address or h.real_load_address
-    subject[1] = psid_init_bank(init)
+    start = h.init_address or h.real_load_address
+    subject[1] = psid_init_bank(start)
     mpu, mem = wire_mpu(subject, True, reg.sid_model_for_flags(h.flags))
-    run_to_rts(mpu, mem, init, subtune, _BOOT_CYCLES)
-    play = h.play_address or init
+    if init_run is None:
+        run_to_rts(mpu, mem, start, subtune, _BOOT_CYCLES)
+    else:
+        init_run(subject, mpu, mem, start, subtune)
+    play = h.play_address or start
     set_iomap(mpu, psid_play_bank(play))
     for addr, value in (buf or {}).items():
         subject[addr] = value
@@ -96,7 +100,8 @@ class Bench:
     byte lengths, the room planted rows have; ``play`` overrides the header's play
     address;
     ``span`` is the ``[start, end)`` of the player's own code; ``song`` the player's
-    own song, whose first channel a planted voice must replace.
+    own song, whose first channel a planted voice must replace; ``copies`` the RAM
+    bytes the init copied each song data byte to, which a plant writes too.
     """
 
     image: SidImage
@@ -107,6 +112,7 @@ class Bench:
     play: int | None = None
     span: tuple = (None, None)
     song: int | None = None
+    copies: dict = field(default_factory=dict)
     _slots: list = field(init=False)
 
     def __post_init__(self):
@@ -193,6 +199,8 @@ class Bench:
                 raise ProbeMiss(f"{name} table too short")
             put(base, bytes(a for a, _ in rows))
             put(base + right, bytes(b for _, b in rows))
+        for addr, value in list(buf.items()):
+            buf.update(dict.fromkeys(self.copies.get(addr, ()), value))
         return buf
 
     def boot(self, buf=None):

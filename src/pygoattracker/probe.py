@@ -557,15 +557,18 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
     """What the first play call starts from. A full-ghosting build's is the ghost
     init leaves, and the cutoff, mode and volume its filter code then stores to it;
     a chip-writing build's is the SID its first tick writes from the variables init
-    leaves as loaded (None where the planted song does not play)."""
+    leaves as loaded, and the registers its song-init call writes (None where the
+    planted song does not play)."""
     g = build.ghost
     funk = build.funk or (8, 5)
     if g is None:
+        log = _Writes()
         try:
             buf = bench.plant([(_REST,)], {1: {}}, {"wave": _WAVE})
-            regs = list(bench.frames(buf, cap=2))[-1][0]
+            first, regs = (row[0] for row in bench.frames(buf, cap=2, writes=log))
         except ProbeMiss:
             return None
+        init = sorted({w[0] for w in log.calls[0]})
         return PlayerState(
             registers=tuple(int(v) for v in regs),
             cutoff=int(regs[_CUTOFF]),
@@ -573,6 +576,7 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
             volume=int(regs[_MODEVOL]) & 0x0F,
             funk=funk,
             ghost=False,
+            init=tuple((r, int(first[r])) for r in init),
         )
     buf = bench.plant([(Row(bench.pitches(1)[0], 1), _REST)], {1: {}}, {"wave": _WAVE})
     subject, mpu, mem, play = bench.boot(buf)

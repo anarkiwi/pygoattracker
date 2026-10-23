@@ -103,6 +103,8 @@ class PlayerState:
 
     ``ghost``: ``registers`` is the full-buffering ghost; else they are the SID the
     first tick writes from the channel and filter variables init leaves as loaded.
+    ``init``: the ``(register, value)`` SID writes of a chip-writing build's
+    song-init call, which loads the channel registers from those variables.
     """
 
     registers: tuple
@@ -111,6 +113,7 @@ class PlayerState:
     volume: int
     funk: tuple
     ghost: bool = True
+    init: tuple = ()
 
 
 class PlayerCode(NamedTuple):

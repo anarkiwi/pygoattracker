@@ -870,6 +870,21 @@ def test_chip_state_envelopes_hold_from_the_first_tick(song):
     assert {(constants.AD_REG, 0xDF), (constants.SR_REG, 0xF9)} <= {*second}
 
 
+def test_chip_state_song_init_call_outputs_its_register_loads(song):
+    regs = [0] * constants.SID_REGISTERS
+    regs[0:2] = [0xE8, 0x03]
+    init = ((constants.FREQ_LO_REG, 0xE8), (constants.FREQ_HI_REG, 0x03))
+    loads = Player(song, state=ghost_state(regs, ghost=False, init=init))
+    plain = Player(song, state=ghost_state(regs, ghost=False))
+    assert {*init} <= {*play(loads, 1)[0]}
+    assert {*init}.isdisjoint(play(plain, 1)[0])
+    grid = Player(song, state=ghost_state(regs, ghost=False, init=init)).render_grid(40)
+    assert (
+        grid[1:]
+        == Player(song, state=ghost_state(regs, ghost=False)).render_grid(40)[1:]
+    )
+
+
 def test_state_seeds_funktempo(song):
     player = Player(song, state=ghost_state(funk=(3, 4)))
     player.play_frame()

@@ -40,32 +40,6 @@
  },
  {
   "compare": "lead",
-  "frames": 10,
-  "id": "1b958001d98c",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:788>790')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "0090d99830e5af2378281353ee037e91",
-  "reason": "pygoattracker/player.py:788 if chan.tick == 0: -> 790: reference frame 1, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/X/Xiny6581/Pro_Patria_tune_2.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 10,
-  "id": "1d8c3f5b286f",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_call:230>233')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "0028f674f8979b6ee8171dcb83f1b790",
-  "reason": "pygoattracker/player.py:230 if self._state == _INIT: -> 233: reference frame 1, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/M/Maktone/Struggle_Within.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
   "frames": 11,
   "id": "4a34016ededf",
   "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:788>802')",
@@ -89,18 +63,5 @@
   "relpath": "MUSICIANS/S/Soya/From_Here_to_Somewhere_Near.sid",
   "right": "format:auto",
   "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 10,
-  "id": "ca299abc62c5",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._filter_routine:463>489')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "8881a58b3141bf4f0743ff402b56a2ca",
-  "reason": "pygoattracker/player.py:463 if self._filterptr: -> 489 || vs: $A6B0 RTS -> out: reference frame 1, register $16 fc_hi",
-  "relpath": "MUSICIANS/C/Chiummo_Aldo/Planet_Golf.sid",
-  "right": "format:auto",
-  "song": 2
  }
 ]

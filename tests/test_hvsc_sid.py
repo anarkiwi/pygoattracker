@@ -6,7 +6,7 @@ real High Voltage SID Collection tunes that ``sidid`` identifies as GoatTracker
 players. HVSC tunes are copyright works and are never committed; only their
 relative paths are (``tests/data/hvsc_goattracker_sample.txt``). Each tune is
 resolved from a local HVSC ``C64Music`` tree (``$HVSC``) when present, else
-fetched from the public HVSC mirror into the gitignored ``tests/.tunecache``
+fetched from the public HVSC mirror into the gitignored ``.tunecache``
 (with retries), so the test runs for real in CI and skips an individual tune
 only when it is genuinely unreachable.
 
@@ -46,7 +46,6 @@ from pygoattracker.packed import pattern_rows
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
 from pygoattracker.writer import build_sng
-from tests._fixture_cache import HVSC_CACHE
 
 _SAMPLE_FILE = Path(__file__).parent / "data" / "hvsc_goattracker_sample.txt"
 
@@ -86,7 +85,7 @@ def _resolve(rel: str):
     Returns ``None`` only when the tune is genuinely unreachable after retries,
     so an individual tune skips cleanly rather than failing offline CI.
     """
-    return resolve_tune(rel, cache_dir=HVSC_CACHE)
+    return resolve_tune(rel)
 
 
 @functools.lru_cache(maxsize=None)

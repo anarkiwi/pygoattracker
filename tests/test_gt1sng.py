@@ -24,7 +24,6 @@ from tests._fixture_cache import (
     GOATTRK093_SONGS,
     GOATTRK_SONGS,
     GOATOLD_SONGS,
-    HVSC_CACHE,
     goatold_song,
     goattrk093_song,
     goattrk_song,
@@ -40,7 +39,7 @@ V153_SONGS = sorted(GOATTRK_SONGS)
 def _oracle_sid(relpath: str = ORACLE_SID) -> Path:
     from pysidtracker.testing import resolve_tune
 
-    path = resolve_tune(relpath, cache_dir=HVSC_CACHE)
+    path = resolve_tune(relpath)
     if path is None:
         pytest.skip("oracle sid unavailable (no local HVSC tree, mirror offline)")
     return Path(path)

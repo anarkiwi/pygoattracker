@@ -15,7 +15,6 @@ from pysidtracker.testing import resolve_tune
 from pygoattracker import probe, sid
 from pygoattracker.packed import NONE, PackedLayout, PlayerBuild
 from pygoattracker.typed import Note, Rest, Row
-from tests._fixture_cache import HVSC_CACHE
 
 BUILDS = {
     # NOWAVEDELAY off without delay rows.
@@ -63,7 +62,7 @@ BUILDS = {
 
 
 def _decompiled(rel):
-    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
+    path = resolve_tune(rel)
     if path is None:
         pytest.skip(f"{rel} unavailable (offline, not cached)")
     return sid.decompile_sid(Path(path).read_bytes())

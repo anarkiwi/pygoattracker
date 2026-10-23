@@ -861,6 +861,15 @@ def test_chip_state_seeds_the_variables_without_a_ghost(song):
     assert {(constants.FREQ_LO_REG, 0xE8), (constants.FREQ_HI_REG, 0x03)} <= {*second}
 
 
+def test_chip_state_envelopes_hold_from_the_first_tick(song):
+    regs = [0] * constants.SID_REGISTERS
+    regs[constants.AD_REG : constants.SR_REG + 1] = [0xDF, 0xF9]
+    player = Player(song, state=ghost_state(regs, ghost=False))
+    first, second = play(player, 2)
+    assert (constants.AD_REG, 0xDF) not in first
+    assert {(constants.AD_REG, 0xDF), (constants.SR_REG, 0xF9)} <= {*second}
+
+
 def test_state_seeds_funktempo(song):
     player = Player(song, state=ghost_state(funk=(3, 4)))
     player.play_frame()

@@ -8,7 +8,6 @@ their packed addresses, and every 8-bit carry and wraparound follows the 6502 co
 from __future__ import annotations
 
 from pysidtracker import MemPlayer
-from pysidtracker.registers import PW_HI_REGS
 
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.gt1 import (
@@ -55,6 +54,8 @@ class Gt1Player(MemPlayer):
     Instantiating ``Gt1Player`` picks the transcription of the song's playroutine.
     """
 
+    MASK_PW_HI = True
+
     def __new__(cls, song: Gt1Song, subtune: int = 0):
         if cls is Gt1Player:
             cls = _PLAYERS[song.ref.family]
@@ -82,13 +83,6 @@ class Gt1Player(MemPlayer):
 
     def _song_init(self, subtune: int) -> None:
         """Run the packed ``init`` entry for ``subtune``."""
-
-    def snapshot(self) -> list:
-        """The SID register file, pulse-width-high registers masked to their nibble."""
-        regs = super().snapshot()
-        for reg in PW_HI_REGS:
-            regs[reg] &= 0x0F
-        return regs
 
     def _wave_next(self, ptr: int, note: int, instnum: int) -> tuple:
         """The note of wavetable row ``ptr`` and the row after it (0 stops)."""

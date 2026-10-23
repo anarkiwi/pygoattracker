@@ -173,7 +173,8 @@ class Player(MemPlayer):
         writes a 25-byte ghost of the SID that ``mt_play`` copies to the chip
         before it runs, so each call outputs the previous call's registers. The
         ghost's voice bytes are the channels' frequency and pulse variables, and
-        init keeps them and the filter/volume immediates.
+        init keeps them and the filter/volume immediates. A chip-writing build's
+        ``state`` seeds the same variables, which init leaves as the image loaded.
         """
         for reg, value in self._init_regs:
             self._mem[self.SID_BASE + reg] = value
@@ -186,15 +187,17 @@ class Player(MemPlayer):
         self._filtertype = 0
         self._ghost = None
         if state is not None:
-            self._ghost = list(state.registers)
+            if state.ghost:
+                self._ghost = list(state.registers)
             self._funktable = list(state.funk)
             self._masterfader = state.volume & 0x0F
             self._filtercutoff = state.cutoff
             self._filtertype = state.filttype
             for channel, chan in enumerate(self._channels):
                 base = channel * constants.VOICE_REG_SIZE
-                chan.freq = self._ghost[base + 1] << 8 | self._ghost[base]
-                chan.pulse = self._ghost[base + 3] << 8 | self._ghost[base + 2]
+                regs = state.registers
+                chan.freq = regs[base + 1] << 8 | regs[base]
+                chan.pulse = regs[base + 3] << 8 | regs[base + 2]
         self._filterctrl = 0
         self._filtertime = 0
         self._filterptr = 0

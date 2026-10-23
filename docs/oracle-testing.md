@@ -60,13 +60,13 @@ suite excludes `-m oracle`; a dedicated CI job runs it. To pre-fetch the tunes
 the suite names, and the decompile test's corpus sample:
 
 ```bash
-pysid-tune-fetch --tests tests --tests tests/data/hvsc_goattracker_sample.txt
+pysid-tune-fetch --tests tests --tests tests/data/hvsc_goattracker_sample.txt --tests tests/data/pathdiff.json
 ```
 
 ## Whole-HVSC survey
 
 [`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
-(`pip install "pysidtracker[survey]>=0.25.0"`) compares every GoatTracker tune
+(`pip install "pysidtracker[survey]>=0.36.0"`) compares every GoatTracker tune
 in an HVSC tree against the oracle over each subtune's full HVSC song length.
 `scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
 `render` (`DecompiledSid.player()`), which the oracle tests above share; its `info` is the decoded
@@ -86,6 +86,26 @@ PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC tunes.csv <md5>_<son
 
 ```bash
 PYTHONPATH=scripts python -m pysidtracker.whydiff $HVSC/<path>.sid oracle_hvsc:player --song 1 --frames 1000
+```
+
+## Pathdiff xfails
+
+`tests/test_pathdiff.py` (marked `oracle`) runs `tests/data/pathdiff.json`: one
+strict xfail per top fix of [`pysidtracker.pathdiff`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/pathdiff.md),
+the corpus-wide localisation of the survey's divergences to the fewest fixes.
+Each case is the fix's representative subtune, failing with whydiff's
+explanation until the fix lands. Cases name the player as `format:auto`, which
+picks the same GoatTracker V1.x or V2 player as `oracle_hvsc:player`. After a
+survey `run`, regenerate (existing ids are kept) or prune fixed cases:
+
+```bash
+python -m pysidtracker.pathdiff build $HVSC tunes.csv --work .hvsc-survey \
+    --right scripts/oracle_hvsc.py:player --jobs 28 --force
+python -m pysidtracker.pathdiff rank --work .hvsc-survey \
+    --right scripts/oracle_hvsc.py:player --explain 10
+python -m pysidtracker.pathdiff xfails --work .hvsc-survey \
+    --right scripts/oracle_hvsc.py:player --as-right format:auto \
+    --manifest tests/data/pathdiff.json --top 15 --prune
 ```
 
 `scripts/build_census.py $HVSC tunes.csv` tallies which `PlayerBuild` defines the

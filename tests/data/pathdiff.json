@@ -27,19 +27,6 @@
  },
  {
   "compare": "lead",
-  "frames": 10,
-  "id": "0aefe7900187",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:817>818')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "0c1d35af541854546f8743122f2365c4",
-  "reason": "pygoattracker/player.py:817 if not (self.optimize_pulse and fetch_tick): -> 818: reference frame 1, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/B/Bayliss_Richard/Crash_Barrier.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
   "frames": 11,
   "id": "4a34016ededf",
   "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:788>802')",
@@ -48,19 +35,6 @@
   "md5": "0bd2581c126378ea4e6d9d8455453bb4",
   "reason": "pygoattracker/player.py:788 if chan.tick == 0: -> 802 || vs: $0AEE BEQ $0af6 -> $0AF0: reference frame 0, register $03 v1_pw_hi",
   "relpath": "MUSICIANS/L/Linus/Commando_Take_Me_to_the_Bridge_short.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 10,
-  "id": "a1391685d43d",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_call:233>235')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "3360bc31758e4af7881b10302dcfc576",
-  "reason": "pygoattracker/player.py:233 if self._state == _STOPPED: -> 235: reference frame 1, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/S/Soya/From_Here_to_Somewhere_Near.sid",
   "right": "format:auto",
   "song": 1
  }

@@ -5,7 +5,6 @@ whose layouts are greloc's; the HVSC tunes are packer variants the observation
 must read the same way (fetched like :mod:`tests.test_hvsc_sid`, never committed).
 """
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -14,10 +13,7 @@ from pysidtracker.testing import resolve_tune
 
 from pygoattracker import observe, sid
 from pygoattracker.errors import SidParseError
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-
-import fetch_tunes  # noqa: E402  pylint: disable=wrong-import-position
+from tests._fixture_cache import HVSC_CACHE
 
 DATA = Path(__file__).parent / "data"
 
@@ -82,8 +78,7 @@ def test_the_note_table_is_where_unchanged_frequencies_are_loaded_from():
     subject[0x3000] = 0x10
     trace = observe.Trace(subject, *wire_mpu(subject))
     trace.call(0x1000)
-    assert observe._note_bases(trace, [(0x2000, 0, 0x80)]) == (0x2000, 0x2080)
-    assert observe._note_bases(trace, [(0x2100, 0, 0x80)]) is None
+    assert observe._note_bases(trace) == (0x2000, 0x2080)
     subject[0x2010], subject[0x2090] = 0x34, 0x12
     assert sid._freq_table(subject, 0x3000, 12, 8, (0x2000, 0x2080))[0x10] == 0x1234
 
@@ -188,7 +183,7 @@ _OUTSIDE = {"GAMES/A-F/Deathflood.sid": 0xC3A2, "DEMOS/A-F/BM1K.sid": 0x3206}
 
 @pytest.mark.parametrize("rel,cols", _VARIANTS.items())
 def test_a_packer_variant_reads_as_its_player_reads_it(rel, cols):
-    path = resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
+    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
     d = sid.decompile_sid(path.read_bytes())
@@ -199,7 +194,7 @@ def test_a_packer_variant_reads_as_its_player_reads_it(rel, cols):
 
 @pytest.mark.parametrize("rel,addr", _OUTSIDE.items())
 def test_song_data_past_the_image_is_read_where_the_player_reads_it(rel, addr):
-    path = resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
+    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
     d = sid.decompile_sid(path.read_bytes())
@@ -209,7 +204,7 @@ def test_song_data_past_the_image_is_read_where_the_player_reads_it(rel, addr):
 
 def test_a_goattracker_2_0_player_is_named():
     rel = "MUSICIANS/R/Rusty46/Shadowboxin.sid"
-    path = resolve_tune(rel, cache_dir=fetch_tunes.CACHE)
+    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
     with pytest.raises(SidParseError, match="2.0x"):

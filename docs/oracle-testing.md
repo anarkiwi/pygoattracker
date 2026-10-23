@@ -40,6 +40,7 @@ byte-exact over the whole song:
 | `Captain_Ishtar` 5, `Cruiser-X_79` 4, `Trance_Sector` 12 | the song the player's own song-table load selects: a wrapper-entered player's entry past the header's count |
 | `Blast_em_All`, `An_UFO_Attack_from_Space` | one pulse-or-filter table, code-located: the player is seen to play it as pulse |
 | `Peep_Show` | the pulse optimization measured from a set row landing on the gate timer's fetch call |
+| `Lazy_Day` | a player doubling the pulse modulation speed (`asl` before the add): the step measured from a planted +1 modulation |
 | `Hose_It_Out`, `Legend_of_Zelda_Preview` | an empty pattern at the image end: its row read from the power-on RAM past it |
 | `Miner_Prophet_preview` | a hard-restart define assembled at two sites |
 | `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |

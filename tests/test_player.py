@@ -449,6 +449,23 @@ def test_pulse_zero_time_step_modulates_256_times(song):
     assert (chan.pulse, chan.pulsetime, chan.pulse_table_ptr) == (0x900, 0, 2)
 
 
+def test_pulse_step_scales_each_modulation(song):
+    song.pulsetable.left = [0x02, 0x02, 0xFF]
+    song.pulsetable.right = [0x10, 0xF0, 0x00]
+    for step, history in (
+        (1, [0x810, 0x820, 0x810, 0x800]),
+        (2, [0x820, 0x840, 0x820, 0x800]),
+    ):
+        player = started(song, pulse_step=step)
+        chan = player._channels[0]
+        chan.pulse_table_ptr, chan.pulsetime, chan.pulse = 1, 0, 0x800
+        seen = []
+        for _ in range(4):
+            player._pulse_exec(chan)
+            seen.append(chan.pulse)
+        assert seen == history
+
+
 def test_pulse_low_byte_unmasked(song):
     # The relocated player (player.s, what an exported .sid runs) stores the
     # full pulse low byte to $D402; only the editor's gplay preview masks bit 0.

@@ -19,8 +19,10 @@ from pygoattracker.typed import Note, Rest, Row
 BUILDS = {
     # NOWAVEDELAY off without delay rows.
     "DEMOS/0-9/2_Hours_NOT_Enough.sid": dict(
-        wavedelay=True, simplepulse=False, adparam=0x0F, srparam=0
+        wavedelay=True, simplepulse=False, adparam=0x0F, srparam=0, pulsestep=1
     ),
+    # a modulation speed doubled before it is added.
+    "MUSICIANS/M/Mueller_Manuel/Lazy_Day.sid": dict(pulsestep=2),
     # a ghost build's stock funk tempo table.
     "MUSICIANS/R/Radiantx/Cheese_Wings.sid": dict(ghost=5332, alt=False, funk=(8, 5)),
     # notes split over short patterns; a hard restart to $FF/$F0.
@@ -34,7 +36,7 @@ BUILDS = {
     # realtime from the tick 0 of a tie; no speed rows but greloc's zero row.
     "MUSICIANS/B/Bayliss_Richard/Sand_Dunes_in_Paradise.sid": dict(realtime=False),
     # a NOPULSEMOD build: the pulse optimization from alternating set rows.
-    "MUSICIANS/F/Flotsam/Escherian_Stairwell.sid": dict(pulseopt=False),
+    "MUSICIANS/F/Flotsam/Escherian_Stairwell.sid": dict(pulseopt=False, pulsestep=None),
     "DEMOS/G-L/Goat_City.sid": dict(wavedelay=False, pulseopt=True, deftempo=5),
     # a two-row pulse table: the pulse optimization from the gate timer's fetch.
     "MUSICIANS/M/MCH/Peep_Show.sid": dict(pulseopt=False),
@@ -42,7 +44,7 @@ BUILDS = {
     "DEMOS/A-F/A_Crack_in_the_Facade.sid": dict(wavedelay=False, fixed=(2, 9)),
     # no play address: greloc's ``jmp mt_play`` plays it.
     "DEMOS/G-L/Grandi.sid": dict(wavedelay=False, deftempo=5),
-    "MUSICIANS/M/Mibri/Halloween-Main_Title.sid": dict(simplepulse=True),
+    "MUSICIANS/M/Mibri/Halloween-Main_Title.sid": dict(simplepulse=True, pulsestep=1),
     "MUSICIANS/N/Narciso/Burning_Madness.sid": dict(
         ghost=5003, alt=False, pulseopt=False, realtime=True
     ),

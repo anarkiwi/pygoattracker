@@ -134,6 +134,13 @@ TUNES = {
         1,
         67.035,
     ),
+    # a filter pointer stored where nothing reads it.
+    "ninja_carnage_11": ("MUSICIANS/D/Dya/Ninja_Carnage.sid", 11, 69.429),
+    # the note table seen once the planted wavetable is gone.
+    "step_on": ("MUSICIANS/D/DJ_Space/Step_On.sid", 1, 153.219),
+    "foot_in_the_mud": ("MUSICIANS/P/Prestune/Foot_in_the_Mud.sid", 1, 38.316),
+    # instrument 1 without a wave program, the tune's own pointers planted.
+    "yeti_mountain_11": ("MUSICIANS/R/Roly/Yeti_Mountain.sid", 11, 7.083),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

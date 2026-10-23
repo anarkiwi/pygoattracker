@@ -83,6 +83,17 @@ def test_the_note_table_is_where_unchanged_frequencies_are_loaded_from():
     assert sid._freq_table(subject, 0x3000, 12, 8, (0x2000, 0x2080))[0x10] == 0x1234
 
 
+def test_a_copied_byte_keeps_its_origin_and_its_last_load():
+    subject = bytearray(0x10000)
+    code = "A0 00 B9 00 30 99 00 40 B9 00 40 85 50 AD 00 50 85 51 B1 50 60"
+    subject[0x1000 : 0x1000 + 21] = bytes.fromhex(code)
+    trace = observe.Trace(subject, *wire_mpu(subject))
+    trace.call(0x1000)
+    copy = next(r for r in trace.reads if r.base == 0x4000)
+    assert (copy.addr, copy.source) == (0x4000, 0x3000)
+    assert trace.reads[-1].pointer == ((0x3000, 0x4000), (0x5000, 0x5000))
+
+
 def test_the_song_and_pattern_columns_tile_one_block():
     stock = dict(slo=0x100, shi=0x106, plo=0x10C, phi=0x114)
     assert observe._lengths(stock) == (6, 8)
@@ -112,6 +123,7 @@ def test_the_tables_and_speed_table_tile_to_the_orderlists():
             observe._tiling(lefts, *args)
     with pytest.raises(SidParseError):
         observe._tiling([0x100, 0x10B], 0x10C, None, 0x120)
+    assert observe._tiling([0x100, 0x10A], None, None, 0x112) == ([5, 4], 0, 0)
 
 
 def test_speed_row_1_is_a_left_and_right_read_ending_the_region():

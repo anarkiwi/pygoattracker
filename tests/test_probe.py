@@ -122,6 +122,9 @@ def test_planted_data_lands_at_the_layout_or_misses():
     assert {0x1100, 0x1120} <= set(planted) and 0x1110 not in planted
     with pytest.raises(probe.ProbeMiss):
         probe.Bench(bench.image, lay, (8,), (2, 3, 3)).plant([rows])
+    copied = probe.Bench(bench.image, lay, (8,), (3, 3, 3), copies={0x1100: [0x0900]})
+    planted = copied.plant([rows])
+    assert planted[0x0900] == planted[0x1100]
     two = dataclasses.replace(lay, order_addrs=tuple(range(0x1100, 0x1160, 0x10)))
     planted = probe.Bench(bench.image, two, (8,), (2,) * 3 + (3,) * 3, song=1).plant(
         [rows]

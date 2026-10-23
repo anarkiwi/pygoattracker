@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from pysidtracker import gridcmp, resolve_tune, survey
+from pysidtracker.testing import default_cache
 
 import oracle_hvsc
 from pygoattracker import gt1, sid
@@ -36,13 +37,12 @@ def main(argv=None):
     parser.add_argument("--song", type=int, default=1)
     parser.add_argument("--frames", type=int, default=300)
     parser.add_argument("--anchor", type=lambda s: int(s, 16), default=None)
-    parser.add_argument("--cache", default=None)
+    parser.add_argument("--cache", default=None, help="tune cache (default .tunecache)")
     parser.add_argument("--context", type=int, default=3)
     args = parser.parse_args(argv)
 
     root = Path(__file__).resolve().parent.parent
-    cache = args.cache or str(root / "tests" / ".tunecache")
-    path = resolve_tune(args.tune, cache_dir=cache)
+    path = resolve_tune(args.tune, cache_dir=args.cache)
     if path is None and Path(args.tune).exists():
         path = Path(args.tune)
     if path is None:
@@ -51,7 +51,7 @@ def main(argv=None):
 
     data = Path(path).read_bytes()
     _, oracle, source = survey.file_oracle(
-        data, args.song, args.frames, root / ".oracle-cache", Path(path)
+        data, args.song, args.frames, default_cache("csv", root), Path(path)
     )
     try:
         lib = render(data, args.song, args.frames + gridcmp.LEAD, args.anchor)

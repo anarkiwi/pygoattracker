@@ -39,7 +39,7 @@ from pysidtracker.poweron import power_on_ram
 
 from pygoattracker import constants
 from pygoattracker.errors import SidParseError
-from pygoattracker.observe import instrument_layout, song_tables
+from pygoattracker.observe import Trace, instrument_layout, song_tables
 from pygoattracker.packed import (
     PackedLayout,
     PlayerBuild,
@@ -173,6 +173,7 @@ def _load_image(raw: bytes) -> SidImage:
 
 
 _FREQ_MIN_LEN = 8
+_INIT_CYCLES = 8_000_000
 
 
 def _find_freq_hi_anchor(image: SidImage):
@@ -416,10 +417,20 @@ def _decompile(image, header, anchor, subtune) -> DecompiledSid:
     """The song data the player the tune's init selects reads, decompiled."""
     base = player_span(image, anchor[0]).start
     play = header.play_address or (None if base is None else base + 3)
-    booted = boot(image, subtune)
+    traced = []
+
+    def init_run(subject, mpu, mem, address, song):
+        traced.append(Trace(subject, mpu, mem))
+        traced[0].call(address, song, _INIT_CYCLES)
+
+    booted = boot(image, subtune, init_run=init_run)
     mem = bytes(booted[0])
     after = SidImage(bytearray(mem), 0, len(mem), header, image.image, b"")
-    t = song_tables((*booted[:3], play or booted[3]))
+    copies = {}
+    for addr, (org, exact, *_) in traced[0].cells.items():
+        if exact and org is not None and org != addr:
+            copies.setdefault(org, []).append(addr)
+    t = song_tables((*booted[:3], play or booted[3]), traced[0])
 
     def pointers(lo, hi, n):
         return [mem[lo + i] | mem[hi + i] << 8 for i in range(n)]
@@ -448,7 +459,9 @@ def _decompile(image, header, anchor, subtune) -> DecompiledSid:
 
     def bench(lay):
         span = (player_span(after, lay.freq_addr).start, lay.freq_addr)
-        return Bench(image, lay, sizes, tuple(orders), subtune, play, span, t.song)
+        return Bench(
+            image, lay, sizes, tuple(orders), subtune, play, span, t.song, copies
+        )
 
     tables = (t.song_lo, t.song_hi, t.patt_lo, t.patt_hi)
     fields = instrument_layout(bench(lay), _all_anchors(after), tables)

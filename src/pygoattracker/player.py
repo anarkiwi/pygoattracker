@@ -175,7 +175,8 @@ class Player(MemPlayer):
         ghost's voice bytes are the channels' frequency and pulse variables, and
         init keeps them and the filter/volume immediates. A chip-writing build's
         ``state`` seeds the same variables, which init leaves as the image loaded,
-        and the envelopes a build writing them every tick outputs from its first.
+        and the envelopes a build writing them every tick outputs from its first;
+        its song-init call outputs the registers ``state.init`` loads from them.
         """
         for reg, value in self._init_regs:
             self._mem[self.SID_BASE + reg] = value
@@ -188,7 +189,9 @@ class Player(MemPlayer):
         self._filtertype = 0
         self._ghost = None
         self._envelopes = ()
+        self._init_writes = ()
         if state is not None:
+            self._init_writes = state.init
             if state.ghost:
                 self._ghost = list(state.registers)
             else:
@@ -243,6 +246,8 @@ class Player(MemPlayer):
         """
         if self._state == _INIT:
             self._init_routine()
+            for reg, value in self._init_writes:
+                self.regs[reg] = value
             return
         for reg, value in self._envelopes:
             self.regs[reg] = value

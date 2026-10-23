@@ -1,19 +1,6 @@
 [
  {
   "compare": "lead",
-  "frames": 9,
-  "id": "0232cdfddf96",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._sequencer:393>395')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "03460f77d84f8b9fefa1b6966854289a",
-  "reason": "pygoattracker/player.py:393 if self._state in (_STOP, _STOPPED) or chan.pattptr != _PATT_END: -> 395: reference frame 0, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/H/Hannula_Antti/Laid_Back_Sunday.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
   "frames": 19,
   "id": "03399fd1fc8c",
   "key": "('first', '6502:edge:6c8ea833d85f965bce367e62', '')",

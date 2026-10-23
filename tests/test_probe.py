@@ -91,6 +91,21 @@ def test_a_chip_writing_build_starts_from_the_variables_init_leaves():
     assert probe.state(_bench(wlen=1), PlayerBuild()) is None
 
 
+def test_a_song_init_call_loads_the_channel_registers_init_leaves():
+    d = _decompiled("MUSICIANS/H/Hannula_Antti/Laid_Back_Sunday.sid")
+    init = dict(d.info.state.init)
+    mem = d.image.mem
+    for c in (0, 7, 14):
+        assert (init[c], init[c + 1], init[c + 2]) == tuple(
+            mem[0x13DF + c : 0x13E2 + c]
+        )
+        assert (init[c + 5], init[c + 6]) == tuple(mem[0x13F1 + c : 0x13F3 + c])
+        assert init[c + 4] == 0
+    state = _decompiled("MUSICIANS/M/Maktone/Struggle_Within.sid").info.state
+    assert dict(state.init) == {4: 0, 11: 0, 18: 0, 0x15: 0}
+    assert probe.state(_bench(), PlayerBuild()).init == ()
+
+
 def _bench(**lay):
     """A bench over an image whose init and play only return."""
     body = bytearray(0x1000)

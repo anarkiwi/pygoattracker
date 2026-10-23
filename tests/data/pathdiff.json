@@ -1,15 +1,1 @@
-[
- {
-  "compare": "lead",
-  "frames": 19,
-  "id": "03399fd1fc8c",
-  "key": "('first', '6502:edge:6c8ea833d85f965bce367e62', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "84588ee2e7bf21ab9719d78ff2e7b883",
-  "reason": "$1278 BNE $128e -> $127A || vs: pygoattracker/player.py:683 if self._lt(ptbl, chan.pulse_table_ptr) == constants.TABLEJUMP: -> 687: reference frame 10, register $02 v1_pw_lo",
-  "relpath": "MUSICIANS/M/Mueller_Manuel/Lazy_Day.sid",
-  "right": "format:auto",
-  "song": 1
- }
-]
+[]

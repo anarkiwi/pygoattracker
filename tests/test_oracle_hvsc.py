@@ -110,6 +110,8 @@ TUNES = {
     "an_ufo_attack": ("MUSICIANS/M/Mutetus/An_UFO_Attack_from_Space.sid", 1, 144.62),
     # the pulse optimization measured from a set row on the gate timer's fetch.
     "peep_show": ("MUSICIANS/M/MCH/Peep_Show.sid", 1, 40.52),
+    # a player doubling the pulse modulation speed, measured from a +1 step.
+    "lazy_day": ("MUSICIANS/M/Mueller_Manuel/Lazy_Day.sid", 1, 246),
     # an empty pattern past the image end, read from the power-on RAM there.
     "hose_it_out": ("MUSICIANS/N/Narciso/Hose_It_Out.sid", 1, 38.804),
     "legend_of_zelda_preview": ("GAMES/G-L/Legend_of_Zelda_Preview.sid", 1, 18.534),

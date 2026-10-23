@@ -106,6 +106,16 @@ def test_a_song_init_call_loads_the_channel_registers_init_leaves():
     assert probe.state(_bench(), PlayerBuild()).init == ()
 
 
+def test_a_calculated_speed_build_starts_from_the_lastnotes_init_leaves():
+    d = _decompiled("MUSICIANS/L/Linus/Commando_Take_Me_to_the_Bridge_short.sid")
+    assert d.info.state.lastnote == tuple(d.image.mem[0x0C70:0x0C85:7])
+    assert any(d.info.state.lastnote)
+    d = _decompiled("MUSICIANS/H/Hannula_Antti/Laid_Back_Sunday.sid")
+    assert d.info.state.lastnote == ()
+    assert probe.state(_bench(), PlayerBuild()).lastnote == ()
+    assert probe.state(_bench(notes=96), PlayerBuild()).lastnote == ()
+
+
 def _bench(**lay):
     """A bench over an image whose init and play only return."""
     body = bytearray(0x1000)

@@ -495,6 +495,43 @@ def _ghost(bench):
     return None, None, bool(first) and not first[-1] & 0x0F
 
 
+def _held_stores(bench, buf, value):
+    """The bases (address less X) of the indexed stores of ``value`` over
+    :data:`_CAP` play calls of ``buf`` that still hold it after them."""
+    subject, mpu, mem, play = bench.boot(buf)
+    stores = {}
+
+    def store(addr, written):
+        if written == value:
+            stores[addr] = addr - mpu.x
+
+    observe_data_access(mpu, on_write=store)
+    for _ in range(_CAP):
+        _call(mpu, mem, play)
+    return {base for addr, base in stores.items() if subject[addr] == value}
+
+
+def _lastnote(bench):
+    """Each channel's ``mt_chnlastnote`` as init leaves it: the base of the store a
+    wavetable absolute note holds after the song plays, the same for two notes,
+    read at each channel's offset (None where no store shows)."""
+    pattern, *notes = (n.pitch for n in bench.pitches(3))
+    if notes[0] == notes[1] or not all(0 < n < 0x80 for n in notes):
+        raise ProbeMiss("no two wavetable notes")
+    rows = [(Row(Note(pattern), 1), _REST)]
+    first, second = (
+        _held_stores(bench, bench.plant(rows, {1: {}}, {"wave": wave}), n)
+        for n in notes
+        for wave in [((_WAVE[0][0], n), (C.TABLEJUMP, 0))]
+    )
+    shown = first & second
+    if len(shown) != 1:
+        return None
+    base = shown.pop()
+    subject = bench.boot()[0]
+    return tuple(subject[base + c * C.VOICE_REG_SIZE] for c in range(C.MAX_CHN))
+
+
 def _shown(probe, *args, default=None):
     """``probe(*args)``, or ``default`` where the planted song does not play."""
     try:
@@ -558,9 +595,10 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
     init leaves, and the cutoff, mode and volume its filter code then stores to it;
     a chip-writing build's is the SID its first tick writes from the variables init
     leaves as loaded, and the registers its song-init call writes (None where the
-    planted song does not play)."""
+    planted song does not play); each with the calculated-speed notes init keeps."""
     g = build.ghost
     funk = build.funk or (8, 5)
+    lastnote = _shown(_lastnote, bench) or ()
     if g is None:
         log = _Writes()
         try:
@@ -577,6 +615,7 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
             funk=funk,
             ghost=False,
             init=tuple((r, int(first[r])) for r in init),
+            lastnote=lastnote,
         )
     buf = bench.plant([(Row(bench.pitches(1)[0], 1), _REST)], {1: {}}, {"wave": _WAVE})
     subject, mpu, mem, play = bench.boot(buf)
@@ -590,4 +629,5 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
         filttype=mode & 0xF0,
         volume=mode & 0x0F,
         funk=funk,
+        lastnote=lastnote,
     )

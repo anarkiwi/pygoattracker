@@ -217,13 +217,12 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# test fixture downloads
-tests/.fixture_cache/
-# HVSC corpus tunes are copyright works -- fetched on demand, never committed.
-tests/.tunecache/
+# pysidtracker's download cache: HVSC tunes, pinned fixtures and oracle traces
+# (copyright works or derived from them) -- fetched on demand, never committed.
 .tunecache/
-# Oracle sidtrace CSVs (derived from copyright tunes) -- rendered on demand.
-.oracle-cache/
+# Core dumps.
+/core
+core.[0-9]*
 .coverage.floor
 .roundtrip/
 .hvsc-survey/

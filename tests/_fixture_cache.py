@@ -3,10 +3,10 @@
 The songs are tracker distribution artifacts, so they are not tracked
 in this repo; they are downloaded on demand from pinned source mirror
 commits, verified by SHA-256 (:func:`pysidtracker.testing.fetch_verified`),
-and cached under ``tests/.fixture_cache``. Tests skip when offline and fail
-when a pin no longer verifies. The NinjaTracker example tunes are read from
-the editor's .d64 disk image (:func:`pysidtracker.d64.read_d64`). HVSC tunes
-are cached in :data:`HVSC_CACHE`.
+and cached in pysidtracker's download cache (``.tunecache/archives``). Tests
+skip when offline and fail when a pin no longer verifies. The NinjaTracker
+example tunes are read from the editor's .d64 disk image
+(:func:`pysidtracker.d64.read_d64`).
 """
 
 from pathlib import Path
@@ -16,7 +16,6 @@ from pysidtracker.d64 import read_d64
 from pysidtracker.testing import (
     ChecksumMismatch,
     TuneFetchError,
-    default_tune_cache,
     fetch_archive_member,
     fetch_verified,
 )
@@ -29,9 +28,6 @@ _NT2_D64_URL = (
     f"{_NT2_COMMIT}/ninjatr2.d64"
 )
 _NT2_D64_SHA256 = "440624b88db8361251bce0729b383bf3737161b9b87e406fcfef6191829a6002"
-CACHE_DIR = Path(__file__).parent / ".fixture_cache"
-# ``$PYSID_TUNECACHE``, else ``tests/.tunecache``.
-HVSC_CACHE = default_tune_cache(Path(__file__).parent)
 
 _GT1_URL = "https://cadaver.github.io/tools"
 GT1_ARCHIVES = {
@@ -125,7 +121,7 @@ def _fetch(fetch, *args, **kwargs) -> bytes:
     """The bytes ``fetch`` caches, skipping the test when the download is
     unreachable."""
     try:
-        return fetch(*args, cache_dir=CACHE_DIR, **kwargs).read_bytes()
+        return fetch(*args, **kwargs).read_bytes()
     except ChecksumMismatch:
         raise
     except TuneFetchError as exc:

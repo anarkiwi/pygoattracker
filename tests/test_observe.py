@@ -13,7 +13,6 @@ from pysidtracker.testing import resolve_tune
 
 from pygoattracker import observe, sid
 from pygoattracker.errors import SidParseError
-from tests._fixture_cache import HVSC_CACHE
 
 DATA = Path(__file__).parent / "data"
 
@@ -194,7 +193,7 @@ _OUTSIDE = {"GAMES/A-F/Deathflood.sid": 0xC3A2, "DEMOS/A-F/BM1K.sid": 0x3206}
 
 @pytest.mark.parametrize("rel,cols", _VARIANTS.items())
 def test_a_packer_variant_reads_as_its_player_reads_it(rel, cols):
-    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
+    path = resolve_tune(rel)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
     d = sid.decompile_sid(path.read_bytes())
@@ -205,7 +204,7 @@ def test_a_packer_variant_reads_as_its_player_reads_it(rel, cols):
 
 @pytest.mark.parametrize("rel,addr", _OUTSIDE.items())
 def test_song_data_past_the_image_is_read_where_the_player_reads_it(rel, addr):
-    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
+    path = resolve_tune(rel)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
     d = sid.decompile_sid(path.read_bytes())
@@ -215,7 +214,7 @@ def test_song_data_past_the_image_is_read_where_the_player_reads_it(rel, addr):
 
 def test_a_goattracker_2_0_player_is_named():
     rel = "MUSICIANS/R/Rusty46/Shadowboxin.sid"
-    path = resolve_tune(rel, cache_dir=HVSC_CACHE)
+    path = resolve_tune(rel)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
     with pytest.raises(SidParseError, match="2.0x"):

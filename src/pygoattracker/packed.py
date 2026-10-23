@@ -99,13 +99,18 @@ class PlayerBuild:
 
 @dataclass(frozen=True)
 class PlayerState:
-    """What the first play call starts from: the ghost image and the globals init keeps."""
+    """What the first play call starts from: the ghost image and the globals init keeps.
+
+    ``ghost``: ``registers`` is the full-buffering ghost; else they are the SID the
+    first tick writes from the channel and filter variables init leaves as loaded.
+    """
 
     registers: tuple
     cutoff: int
     filttype: int
     volume: int
     funk: tuple
+    ghost: bool = True
 
 
 class PlayerCode(NamedTuple):

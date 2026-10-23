@@ -850,6 +850,17 @@ def test_ghost_voice_bytes_are_the_channel_variables(song):
     assert (player._channels[0].freq, player._channels[0].pulse) == (0x03E8, 0x0400)
 
 
+def test_chip_state_seeds_the_variables_without_a_ghost(song):
+    plain = Player(song).render_grid(40)
+    assert Player(song, state=ghost_state(ghost=False)).render_grid(40) == plain
+    regs = [0] * constants.SID_REGISTERS
+    regs[0:2] = [0xE8, 0x03]
+    player = Player(song, state=ghost_state(regs, ghost=False))
+    first, second = play(player, 2)
+    assert (constants.FREQ_LO_REG, 0xE8) not in first
+    assert {(constants.FREQ_LO_REG, 0xE8), (constants.FREQ_HI_REG, 0x03)} <= {*second}
+
+
 def test_state_seeds_funktempo(song):
     player = Player(song, state=ghost_state(funk=(3, 4)))
     player.play_frame()

@@ -79,7 +79,16 @@ def test_a_ghost_build_starts_from_its_ghost_and_its_filter_immediates():
     d = _decompiled("MUSICIANS/N/Narciso/Burning_Madness.sid")
     assert d.info.state.registers == tuple(d.image.mem[5003 : 5003 + 25])
     assert (d.info.state.volume, d.info.state.funk) == (0x0F, (8, 5))
-    assert probe.state(None, PlayerBuild()) is None
+
+
+def test_a_chip_writing_build_starts_from_the_variables_init_leaves():
+    d = _decompiled("MUSICIANS/M/Maktone/Struggle_Within.sid")
+    state = d.info.state
+    assert not state.ghost
+    assert state.registers[0:2] == tuple(d.image.mem[0x1390:0x1392])
+    assert (state.cutoff, state.filttype, state.volume) == (0x58, 0x10, 0x0F)
+    assert probe.state(_bench(), PlayerBuild()).registers[:24] == (0,) * 24
+    assert probe.state(_bench(wlen=1), PlayerBuild()) is None
 
 
 def _bench(**lay):

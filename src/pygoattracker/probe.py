@@ -382,6 +382,16 @@ def _pulseopt(bench):
     return bool((steps == 0).any()) if steps.any() else None
 
 
+def _pulsestep(bench):
+    """The pulse-low step a +1 modulation speed makes each call it runs (None: no
+    one step shows)."""
+    if not bench.lay.pulse:
+        return None
+    run = _melody(bench, pulse=_MODPULSE)
+    steps = set(np.diff(run.grid[run.notes[0] :, _PLO]) & 0xFF) - {0}
+    return int(steps.pop()) if len(steps) == 1 else None
+
+
 def _pulsefetch(bench, row):
     """The pulse optimization also skips the step on the gate timer's fetch call:
     with the gate timer at the call after a note's init, a set row lands a call
@@ -578,6 +588,7 @@ def measure(bench: Bench) -> PlayerBuild:
             lambda: _pulseopt(bench),
             lambda: None if row is None else _pulsefetch(bench, row),
         ),
+        pulsestep=_shown(_pulsestep, bench),
         realtime=(
             None
             if row is None

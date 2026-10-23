@@ -11,18 +11,5 @@
   "relpath": "MUSICIANS/M/Mueller_Manuel/Lazy_Day.sid",
   "right": "format:auto",
   "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 11,
-  "id": "4a34016ededf",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:788>802')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "0bd2581c126378ea4e6d9d8455453bb4",
-  "reason": "pygoattracker/player.py:788 if chan.tick == 0: -> 802 || vs: $0AEE BEQ $0af6 -> $0AF0: reference frame 0, register $03 v1_pw_hi",
-  "relpath": "MUSICIANS/L/Linus/Commando_Take_Me_to_the_Bridge_short.sid",
-  "right": "format:auto",
-  "song": 1
  }
 ]

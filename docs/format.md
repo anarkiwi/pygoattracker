@@ -75,7 +75,9 @@ which data its index came from, and its operand where the table is:
 
 - **song and pattern tables**: of the pointers `LDA (zp),Y` reads go through,
   the pattern pointer's index is a byte read through the other, the song
-  pointer. The operands of the reads that loaded each pointer half are the four
+  pointer. The init is traced too, so pointers or song data it copies to RAM
+  keep their origin (and plants write the copies); the first pointers that tile
+  as GoatTracker 2's tables are taken, as another player may run alongside. The operands of the reads that loaded each pointer half are the four
   column bases; they tile one block, which gives the song and pattern counts.
   The lowest song-table index read is the player's own song for the header song
   (so a wrapper's or a module's selection is the player's, not a guess).
@@ -88,8 +90,9 @@ which data its index came from, and its operand where the table is:
   wavetable and speed commands on the other voices, each is
   told by what the player does with its byte: AD, SR and the first wave by the
   SID register they reach; pulse, filter and vibrato pointers by the table they
-  index, the filter's kept globally rather than per voice, the speed table
-  last; the vibrato delay by its copy counting down, the gate timer by pairing
+  index, the filter's kept globally rather than per voice (read or not: a
+  player may store it where nothing reads it, and its table then runs from the
+  previous one's end to the orderlists), the speed table last; the vibrato delay by its copy counting down, the gate timer by pairing
   with the first wave.
 - **table lengths**: the wave, pulse and filter tables abut, so each starts
   where the previous ends. The last ends where instrument vibrato or a speed

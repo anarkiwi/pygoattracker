@@ -5,7 +5,6 @@ instrument classes the player's own ``cmp #FIRSTNOHRINSTR`` operands state.
 """
 
 import dataclasses
-import sys
 from pathlib import Path
 
 import pytest

@@ -71,7 +71,7 @@ pysid-tune-fetch --tests tests --tests tests/data/hvsc_goattracker_sample.txt --
 in an HVSC tree against the oracle over each subtune's full HVSC song length.
 `scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
 `render` (`DecompiledSid.player()`), which the oracle tests above share; its `info` is the decoded
-`PlayerBuild` plus SIMPLEPULSE / NOWAVEDELAY / live-vibrato, so `triage` shows
+`PlayerBuild`, the `Build` it resolves to and NOWAVEDELAY, so `triage` shows
 the exact rate per decoded playroutine option.
 
 ```bash

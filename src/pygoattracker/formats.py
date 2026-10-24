@@ -7,14 +7,16 @@ entry-point group make ``pysidtracker info|reglog|wav`` play packed GoatTracker 
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Iterable, Sequence
 
 from pysidtracker import MemPlayer, SidFormat
 
 from pygoattracker.gt1 import DecompiledGt1, Gt1SidParser
+from pygoattracker.packed import Build
 from pygoattracker.sid import DecompiledSid, GoatTrackerSidParser
 
-_GT2_OPTIONS = ("simplepulse", "nowavedelay", "live_vibrato")
+_EDITOR = asdict(Build()) | {"nowavedelay": False}
 
 
 def _player(model) -> MemPlayer:
@@ -43,7 +45,8 @@ def _describe_gt2(model: DecompiledSid) -> Iterable[str]:
     yield f"subtunes: {len(song.subtunes)}"
     yield f"patterns: {len(song.patterns)}"
     yield f"instruments: {len(song.instruments)}"
-    options = [name for name in _GT2_OPTIONS if getattr(info, name)]
+    flags = asdict(info.playback) | {"nowavedelay": info.nowavedelay}
+    options = [name for name, on in flags.items() if on is True and not _EDITOR[name]]
     yield f"options:  {' '.join(options) or 'none'}"
 
 

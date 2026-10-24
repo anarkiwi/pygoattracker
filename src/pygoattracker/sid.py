@@ -41,6 +41,7 @@ from pygoattracker import constants
 from pygoattracker.errors import SidParseError
 from pygoattracker.observe import Trace, instrument_layout, song_tables
 from pygoattracker.packed import (
+    Build,
     PackedLayout,
     PlayerBuild,
     PlayerState,
@@ -82,21 +83,19 @@ class PackedInfo:
     ``freq_table`` is the tuning greloc packed, entry ``n`` for note
     ``firstnote + n``; ``note_read`` is what the packed player reads for each
     note index 0-127, the tuning and the bytes around it, which is what a
-    :class:`~pygoattracker.player.Player` takes as its ``freq_table``.
+    :class:`~pygoattracker.player.Player` takes as its ``freq_table``;
+    ``playback`` is what ``build`` and the song data resolve to.
     """
 
     firstnote: int = 0
     lastnote: int = constants.MAX_NOTES - 1
     freq_table: tuple = ()
     note_read: tuple = ()
-    simplepulse: bool = False
-    live_vibrato: bool = False
     nowavedelay: bool = False
     layout: PackedLayout | None = None
     build: PlayerBuild = field(default_factory=PlayerBuild)
+    playback: Build = field(default_factory=Build)
     state: PlayerState | None = None
-    init_regs: tuple = ()
-    wrapper_flush: bool = False
 
 
 @dataclass
@@ -117,24 +116,12 @@ class DecompiledSid:
         The build's hard-restart ADSR and its pulse/realtime skip optimizations
         replace the editor's when the code states them.
         """
-        info, build = self.info, self.info.build
-        adparam = constants.DEFAULT_ADPARAM
-        if build.adparam is not None:
-            adparam = build.adparam << 8 | build.srparam
         return Player(
             self.typed,
             subtune=self.subtune,
-            adparam=adparam,
-            freq_table=info.note_read,
-            simplepulse=info.simplepulse,
-            live_vibrato=info.live_vibrato,
-            optimize_pulse=True if build.pulseopt is None else build.pulseopt,
-            pulse_step=build.pulsestep or 1,
-            optimize_realtime=True if build.realtime is None else build.realtime,
-            state=info.state,
-            default_tempo=build.deftempo,
-            init_regs=info.init_regs,
-            wrapper_flush=info.wrapper_flush,
+            build=self.info.playback,
+            state=self.info.state,
+            freq_table=self.info.note_read,
         )
 
     def repack(self) -> list[tuple[int, bytes, bytes]]:
@@ -320,11 +307,10 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
         lastnote=firstnote + length - 1,
         freq_table=typed.freq,
         note_read=_freq_table(mem, addr, firstnote, length, bases),
-        simplepulse=simplepulse,
-        live_vibrato=noeffects,
         nowavedelay=nowavedelay,
         layout=lay,
         build=build,
+        playback=build.resolve(simplepulse=simplepulse, live_vibrato=noeffects),
     )
     return typed.to_song(), info, typed
 
@@ -397,7 +383,10 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
         raise SidParseError(f"malformed packed GoatTracker data: byte {exc}") from exc
     except ProbeMiss as exc:
         raise SidParseError(f"the song data does not hold a probe: {exc}") from exc
-    decoded.info.init_regs = init_regs(_load_image(raw), subtune)
+    info = decoded.info
+    info.playback = replace(
+        info.playback, init_regs=init_regs(_load_image(raw), subtune)
+    )
     return decoded
 
 
@@ -479,7 +468,6 @@ def _decompile(image, header, anchor, subtune) -> DecompiledSid:
     build = measure(probe)
     song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)
-    info.wrapper_flush = build.wrapper
     decoded = DecompiledSid(song, info, header, subtune, typed, image, mem)
     return _finish(decoded, t.song)
 

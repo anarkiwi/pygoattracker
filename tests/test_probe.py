@@ -215,3 +215,12 @@ def test_planted_data_lands_at_the_layout_or_misses():
 def test_a_player_that_plays_nothing_shows_no_build():
     bench = _bench()
     assert probe.measure(bench) == PlayerBuild()
+
+
+def test_control_overlay_is_the_and_or_each_voice_shows():
+    assert probe._mask({0xCD: 0xCD, 0x02: 0x02, 0x30: 0x30}) == (0xFF, 0)
+    assert probe._mask({0xCD: 0x1D, 0x02: 0x12, 0x30: 0x10}) == (0x0F, 0x10)
+    with pytest.raises(probe.ProbeMiss):
+        probe._mask({0xCD: 0x32, 0x02: 0xFD, 0x30: 0xCF})
+    build = _decompiled("GAMES/A-F/Doc_Cosmos.sid", 1).info.build
+    assert build.overlay == ((0, 0), (0x0F, 0x10), (0x0F, 0x10))

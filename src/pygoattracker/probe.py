@@ -55,6 +55,8 @@ _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
 _CAP = 256
 _CALLS = (0x20, 0x4C)  # jsr, jmp abs
 _ROUTE = 32
+_HELD = 96
+_WAVES = (0xCD, 0x02, 0x30)  # gate-on waveforms setting and clearing every bit
 _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
@@ -656,21 +658,79 @@ def _channels(bench):
     return tuple(out)
 
 
+def _planted(bench, channel, wave=_WAVE, frames=_ROUTE):
+    """The grids of every chip over ``frames`` calls of a note planted on
+    ``channel`` alone (None: on none) with wavetable ``wave``."""
+    note, rest = (Row(bench.pitches(1)[0], 1), _REST), (_REST,)
+    voices = [note if k == channel else rest for k in range(bench.lay.channels)]
+    buf = bench.plant(voices, {1: {}}, {"wave": wave}, every=True)
+    return np.array(list(bench.frames(buf, frames)))
+
+
+def _key(rows, quiet):
+    """The first ``(frame, chip, voice)`` the planted envelope reaches, gate on or
+    where the ``quiet`` grids of no note do not hold it, else None."""
+    ad = _BASE["ad"]
+    env = rows[..., _VOICE_AD] == ad
+    calm = quiet[..., _VOICE_AD] != ad
+    gate = rows[..., _VOICE_CTRL] & 1 == 1
+    found = np.argwhere(
+        env & (gate | calm) & ~(~calm & (quiet[..., _VOICE_CTRL] & 1 == 1))
+    )
+    return tuple(int(v) for v in found[0]) if found.size else None
+
+
 def _voices(bench, channels):
     """Each channel's register offset from ``$D400`` (``$20`` a chip): where a note
     planted on it alone writes its envelope, None where it writes none."""
-    note, rest = (Row(bench.pitches(1)[0], 1), _REST), (_REST,)
+    quiet = _planted(bench, None)
     out = []
     for channel in range(channels):
-        voices = [note if k == channel else rest for k in range(bench.lay.channels)]
-        buf = bench.plant(voices, {1: {}}, {"wave": _WAVE}, every=True)
-        rows = list(bench.frames(buf, _ROUTE))
-        hits = (_envelope(row, last) for last, row in zip([None] + rows, rows))
-        hit = next((h for h in hits if h is not None), None)
-        out.append(None if hit is None else hit[0] * 0x20 + hit[1] * C.VOICE_REG_SIZE)
+        hit = _key(_planted(bench, channel), quiet)
+        out.append(None if hit is None else hit[1] * 0x20 + hit[2] * C.VOICE_REG_SIZE)
     if not any(v is not None for v in out):
         raise ProbeMiss("no planted note sounds")
     return tuple(out)
+
+
+def _mask(seen):
+    """``(and, or)`` taking each waveform of ``seen`` to the control byte it shows."""
+    keep = sets = 0
+    for bit in (1 << b for b in range(8)):
+        on = {out & bit for wave, out in seen.items() if wave & bit}
+        off = {out & bit for wave, out in seen.items() if not wave & bit}
+        if len(on) != 1 or len(off) != 1 or (on, off) == ({0}, {bit}):
+            raise ProbeMiss("a control bit is not an and/or of the waveform")
+        keep |= bit if on != off else 0
+        sets |= bit if off == {bit} else 0
+    return keep, sets
+
+
+def _overlay(bench, voices):
+    """Each channel's ``(and, or)`` on the control byte it writes: the first byte
+    its voice shows past its note's init call for :data:`_WAVES`, each set by a
+    held wavetable row, else the init call's; None where it is identity or no row
+    shows."""
+    quiet = _planted(bench, None, frames=_HELD)
+    out = []
+    for channel, voice in enumerate(voices):
+        seen, moved = {}, False
+        for wave in _WAVES if voice is not None else ():
+            rows = _planted(
+                bench, channel, ((wave + 0x10, 0x80), (C.TABLEJUMP, 0)), _HELD
+            )
+            hit = _key(rows, quiet)
+            if hit is None:
+                raise ProbeMiss("the planted note does not key")
+            ctrl = rows[hit[0] :, hit[1], _VOICE_CTRL[hit[2]]]
+            later = np.flatnonzero(ctrl != ctrl[0])
+            moved |= bool(later.size)
+            seen[wave] = int(ctrl[later[0]] if later.size else ctrl[0])
+        if seen and not moved and set(seen.values()) == {_BASE["first"]}:
+            seen = {}
+        mask = _mask(seen) if seen else (0xFF, 0)
+        out.append(None if mask == (0xFF, 0) else mask)
+    return tuple(out) if any(out) else None
 
 
 def calls(image, subtune, play, entries):
@@ -712,11 +772,17 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
     lay = bench.lay
     ghost, alt, wrapper = _shown(_ghost, bench, default=(None, None, False))
     voices = _shown(_voices, bench, channels or C.MAX_CHN)
+    overlay = voices and _shown(_overlay, bench, voices)
     try:
         run = _melody(bench)
     except ProbeMiss:
         return PlayerBuild(
-            ghost=ghost, alt=alt, wrapper=wrapper, channels=channels, voices=voices
+            ghost=ghost,
+            alt=alt,
+            wrapper=wrapper,
+            channels=channels,
+            voices=voices,
+            overlay=overlay,
         )
     gaps = set(np.diff(run.notes[:4]))
     row = int(gaps.pop()) if len(run.notes) >= 4 and len(gaps) == 1 else None
@@ -755,6 +821,7 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         wrapper=wrapper,
         channels=channels,
         voices=voices,
+        overlay=overlay,
     )
 
 

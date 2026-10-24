@@ -188,6 +188,9 @@ The voice layout is read off the player, not assumed:
   where a note planted on it alone writes its envelope; `None` where it reaches no
   chip (stores patched out), though it still runs and drives its chip's filter.
   Channels `3n..3n+2` share one filter; the master volume is shared.
+- **overlay**: each channel's `(and, or)` on the control byte it writes (a hook
+  between the player and the chip), from the bytes its voice holds for waveforms
+  setting and clearing every bit, each set by a held wavetable row.
 - **calls**: the times one header play call enters the player's own `mt_play`
   (a wrapper calling it twice is double speed); the build is then measured at
   `mt_play` itself.

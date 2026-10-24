@@ -26,14 +26,6 @@ from pygoattracker.typed import TypedSong
 
 _PATT_END = -1
 _CHIP = 0x20
-_FILTER_COMMANDS = frozenset(
-    (
-        constants.CMD_SETFILTERPTR,
-        constants.CMD_SETFILTERCTRL,
-        constants.CMD_SETFILTERCUTOFF,
-        constants.CMD_SETMASTERVOL,
-    )
-)
 _INIT, _RUNNING, _STOP, _STOPPED = range(4)
 
 # Default empty pattern, as left by the editor's clearsong().
@@ -220,6 +212,15 @@ class Player(MemPlayer):
                 for chan, value in zip(self._channels, values):
                     setattr(chan, name, value)
         self._wrapper_first = self.build.wrapper_flush
+        self._effects = {
+            constants.CMD_PORTAUP: self._porta_up,
+            constants.CMD_PORTADOWN: self._porta_down,
+            constants.CMD_TONEPORTA: self._toneporta,
+            constants.CMD_VIBRATO: self._vibrato,
+        }
+        self._pulse_step = (
+            self._pulse_step_simple if self.build.simplepulse else self._pulse_step_full
+        )
         self._state = _INIT
 
     def _frame(self) -> None:
@@ -431,18 +432,21 @@ class Player(MemPlayer):
         else:
             chan.freq = (chan.freq + speed) & 0xFFFF
 
+    def _stop_at_jump(self, table: int, ptr: int) -> None:
+        """Stop the song if ``ptr`` starts on a jump of ``table``."""
+        if ptr and self._lt(table, ptr) == constants.TABLEJUMP:
+            self._stop()
+
     def _set_pulse_ptr(self, chan: _Channel, value: int) -> None:
         chan.pulse_table_ptr = value
         chan.pulsetime = 0
-        if value and self._lt(constants.PTBL, value) == constants.TABLEJUMP:
-            self._stop()
+        self._stop_at_jump(constants.PTBL, value)
 
     def _set_filter_ptr(self, channel: int, value: int) -> None:
         filt = self._filters[channel // constants.MAX_CHN]
         filt.ptr = value
         filt.time = 0
-        if value and self._lt(constants.FTBL, value) == constants.TABLEJUMP:
-            self._stop()
+        self._stop_at_jump(constants.FTBL, value)
 
     def _sequencer(self, channel: int) -> None:
         chan = self._channels[channel]
@@ -550,10 +554,20 @@ class Player(MemPlayer):
             bank[constants.RES_FILT_REG] = filt.ctrl
             bank[constants.MODE_VOL_REG] = filt.type | self._masterfader
 
-    def _filter_command(self, channel: int, command: int, param: int) -> None:
-        """The filter and volume commands of ``channel``'s chip."""
+    def _set_command(
+        self, channel: int, chan: _Channel, command: int, param: int
+    ) -> None:
+        """The one-shot commands the wavetable and pattern tick 0 share."""
         filt = self._filters[channel // constants.MAX_CHN]
-        if command == constants.CMD_SETFILTERPTR:
+        if command == constants.CMD_SETAD:
+            self._reg(channel, constants.AD_REG, param)
+        elif command == constants.CMD_SETSR:
+            self._reg(channel, constants.SR_REG, param)
+        elif command == constants.CMD_SETWAVE:
+            chan.wave = param
+        elif command == constants.CMD_SETPULSEPTR:
+            self._set_pulse_ptr(chan, param)
+        elif command == constants.CMD_SETFILTERPTR:
             self._set_filter_ptr(channel, param)
         elif command == constants.CMD_SETFILTERCTRL:
             filt.ctrl = param
@@ -574,24 +588,10 @@ class Player(MemPlayer):
             constants.CMD_FUNKTEMPO,
         ):
             self._stop()
-        elif command == constants.CMD_PORTAUP:
-            self._porta_up(chan, param)
-        elif command == constants.CMD_PORTADOWN:
-            self._porta_down(chan, param)
-        elif command == constants.CMD_TONEPORTA:
-            self._toneporta(chan, param)
-        elif command == constants.CMD_VIBRATO:
-            self._vibrato(chan, param)
-        elif command == constants.CMD_SETAD:
-            self._reg(channel, constants.AD_REG, param)
-        elif command == constants.CMD_SETSR:
-            self._reg(channel, constants.SR_REG, param)
-        elif command == constants.CMD_SETWAVE:
-            chan.wave = param
-        elif command == constants.CMD_SETPULSEPTR:
-            self._set_pulse_ptr(chan, param)
+        elif command in self._effects:
+            self._effects[command](chan, param)
         else:
-            self._filter_command(channel, command, param)
+            self._set_command(channel, chan, command, param)
 
     def _new_note_init(self, channel: int, chan: _Channel, iptr: _Instr) -> None:
         chan.note = (chan.newnote - constants.FIRSTNOTE) & 0xFF
@@ -607,9 +607,7 @@ class Player(MemPlayer):
                 chan.wave = iptr.firstwave
                 chan.gate = 0xFF
         chan.wave_table_ptr = iptr.wave_ptr
-        if chan.wave_table_ptr:
-            if self._lt(constants.WTBL, chan.wave_table_ptr) == constants.TABLEJUMP:
-                self._stop()
+        self._stop_at_jump(constants.WTBL, chan.wave_table_ptr)
         if iptr.pulse_ptr:
             self._set_pulse_ptr(chan, iptr.pulse_ptr)
         if iptr.filter_ptr:
@@ -623,28 +621,15 @@ class Player(MemPlayer):
         if command == constants.CMD_DONOTHING:
             chan.command = 0
             chan.cmddata = iptr.speed_ptr
-        elif command in (constants.CMD_PORTAUP, constants.CMD_PORTADOWN):
-            chan.vibtime = 0
+        elif command in self._effects:
+            if command in (constants.CMD_PORTAUP, constants.CMD_PORTADOWN):
+                chan.vibtime = 0
             chan.command = command
             chan.cmddata = data
-        elif command in (constants.CMD_TONEPORTA, constants.CMD_VIBRATO):
-            chan.command = command
-            chan.cmddata = data
-        elif command == constants.CMD_SETAD:
-            self._reg(channel, constants.AD_REG, data)
-        elif command == constants.CMD_SETSR:
-            self._reg(channel, constants.SR_REG, data)
-        elif command == constants.CMD_SETWAVE:
-            chan.wave = data
         elif command == constants.CMD_SETWAVEPTR:
             chan.wave_table_ptr = data
             chan.wavetime = 0
-            if data and self._lt(constants.WTBL, data) == constants.TABLEJUMP:
-                self._stop()
-        elif command == constants.CMD_SETPULSEPTR:
-            self._set_pulse_ptr(chan, data)
-        elif command in _FILTER_COMMANDS:
-            self._filter_command(channel, command, data)
+            self._stop_at_jump(constants.WTBL, data)
         elif command == constants.CMD_FUNKTEMPO:
             if data:
                 self._funktable[0] = (self._lt(constants.STBL, data) - 1) & 0xFF
@@ -660,6 +645,8 @@ class Player(MemPlayer):
             else:
                 for other in self._channels:
                     other.tempo = newtempo
+        else:
+            self._set_command(channel, chan, command, data)
 
     def _wave_exec(self, channel: int, chan: _Channel) -> bool:
         """Run one wavetable step. True skips realtime commands this tick."""
@@ -695,10 +682,8 @@ class Player(MemPlayer):
 
     def _tickn_command(self, chan: _Channel) -> None:
         command = chan.command
-        if command == constants.CMD_PORTAUP:
-            self._porta_up(chan, chan.cmddata)
-        elif command == constants.CMD_PORTADOWN:
-            self._porta_down(chan, chan.cmddata)
+        if command in self._effects:
+            self._effects[command](chan, chan.cmddata)
         elif command == constants.CMD_DONOTHING:
             # Instrument vibrato (player.s mt_effect_0). Speed 0 = no vibrato AND
             # no vibdelay decrement (mt_effect_0's leading ``beq`` is before the
@@ -726,20 +711,17 @@ class Player(MemPlayer):
                 chan.vibdelay -= 1
                 return
             self._vibrato(chan, param)
-        elif command == constants.CMD_VIBRATO:
-            self._vibrato(chan, chan.cmddata)
-        elif command == constants.CMD_TONEPORTA:
-            self._toneporta(chan, chan.cmddata)
 
     def _pulse_exec(self, chan: _Channel) -> None:
-        if self.build.simplepulse:
-            self._pulse_exec_simple(chan)
-            return
         ptbl = constants.PTBL
         if self._lt(ptbl, chan.pulse_table_ptr) == constants.TABLEJUMP:
             chan.pulse_table_ptr = self._rt(ptbl, chan.pulse_table_ptr)
             if not chan.pulse_table_ptr:
                 return
+        self._pulse_step(chan)
+
+    def _pulse_step_full(self, chan: _Channel) -> None:
+        ptbl = constants.PTBL
         if not chan.pulsetime:
             left = self._lt(ptbl, chan.pulse_table_ptr)
             if left >= 0x80:
@@ -756,7 +738,7 @@ class Player(MemPlayer):
         if not chan.pulsetime:
             chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
 
-    def _pulse_exec_simple(self, chan: _Channel) -> None:
+    def _pulse_step_simple(self, chan: _Channel) -> None:
         """SIMPLEPULSE pulse executor (player.s mt_setpulse/mt_pulsemod,
         ``.IF SIMPLEPULSE != 0``).
 
@@ -768,7 +750,7 @@ class Player(MemPlayer):
         ghostpulsehi (no separate hi store, no ``& 0x0F``), and mt_pulsemod
         does an 8-bit ``lo = lo + speed + carry`` accumulate writing the same
         byte to both lo and hi. The SID then masks the high pulse nibble to 12
-        bits. The editor player (``_pulse_exec``) instead computes
+        bits. The editor player (``_pulse_step_full``) instead computes
         ``pulse = (left & 0x0f) << 8 | right`` giving pulse-hi 0 where this
         packed player gives pulse-hi = the packed byte's low nibble.
 
@@ -776,10 +758,6 @@ class Player(MemPlayer):
         12-bit SID pulse is ``((byte & 0x0f) << 8) | byte``.
         """
         ptbl = constants.PTBL
-        if self._lt(ptbl, chan.pulse_table_ptr) == constants.TABLEJUMP:
-            chan.pulse_table_ptr = self._rt(ptbl, chan.pulse_table_ptr)
-            if not chan.pulse_table_ptr:
-                return
         byte = chan.pulse & 0xFF
         if not chan.pulsetime:
             left = self._lt(ptbl, chan.pulse_table_ptr)

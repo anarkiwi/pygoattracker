@@ -994,3 +994,36 @@ def test_a_wave_pointer_wrapping_past_the_last_entry_reads_a_cleared_step(song):
     song.patterns[0].rows[1] = Row(command=constants.CMD_SETWAVEPTR, data=0xFF)
     history = reg_history(song, 20, constants.CONTROL_REG)
     assert history[-1] == history[-2]
+
+
+def test_voices_route_each_channel_s_registers(song):
+    plain = Player(song).render_grid(20)
+    routed = Player(song, voices=(14, None, 0)).render_grid(20)
+    for want, got in zip(plain, routed):
+        assert got[14:21] == want[0:7] and got[0:7] == want[14:21]
+        assert got[7:14] == [0] * 7
+
+
+def test_idle_channels_never_play(song):
+    grid = Player(song, idle=(1,)).render_grid(20)
+    assert all(row[7:14] == [0] * 7 for row in grid)
+    assert any(row[0:7] != [0] * 7 for row in grid)
+
+
+def test_calls_run_that_many_ticks_a_frame(song):
+    one = Player(song).render_grid(41)
+    assert Player(song, calls=2).render_grid(20) == one[1::2]
+
+
+def test_six_channels_play_two_chips_with_a_filter_each():
+    song = basic_song()
+    cutoff = Pattern.empty(8)
+    cutoff.rows[0] = Row(command=constants.CMD_SETFILTERCUTOFF, data=0x77)
+    song.patterns.append(cutoff)
+    song.subtunes[0].channels = [Orderlist() for _ in range(5)]
+    song.subtunes[0].channels.append(Orderlist(entries=[PlayPattern(1)]))
+    player = Player(song)
+    player.render_grid(20)
+    first, second = (bytes(player._mem[a : a + 21]) for a in (0xD400, 0xD420))
+    assert first[:14] == second[:14] and len(player.loops) == 6
+    assert player._mem[0xD416] == 0 and player._mem[0xD436] == 0x77

@@ -189,6 +189,16 @@ TUNES = {
         1,
         26,
     ),
+    # vibrato variables the song-init call leaves as the image loaded them.
+    "stale_vibtime": ("MUSICIANS/N/Nata/Phobos_2SID.sid", 1, 165),
+    "stale_vibdelay": ("MUSICIANS/C/Chiummo_Aldo/Petal_Panic_preview.sid", 1, 71.283),
+    # the voice layout read off the player: two channels, an idle channel, stereo
+    # and 3SID chips, a wrapper calling mt_play twice.
+    "two_channels": ("GAMES/G-L/Hamburgers_Going_to_Switzerland.sid", 1, 17.876),
+    "idle_channel": ("MUSICIANS/C/Crisps/Soiled_Iron.sid", 10, 3.797),
+    "stereo": ("MUSICIANS/E/Encore/Camel_Ohio_2SID.sid", 1, 177.639),
+    "three_sids": ("MUSICIANS/S/Shogoon/Cheezzy_Top_3SID.sid", 1, 169.199),
+    "double_call": ("GAMES/M-R/Marble_Boy.sid", 1, 0.583),
 }
 
 

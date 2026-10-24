@@ -12,7 +12,7 @@ from pysidtracker.emu import observe_data_access
 from vagrant_moses import memmap as mm
 
 from pygoattracker.errors import SidParseError
-from pygoattracker.packed import pattern_bytes
+from pygoattracker.packed import channel_count, pattern_bytes, stride
 from pygoattracker.probe import ProbeMiss
 from pygoattracker.typed import PortamentoUp, Rest, Row, Vibrato
 
@@ -65,7 +65,8 @@ class Trace:
     ``sid`` every ``(address, origin, exact, operand, last operand)`` written in
     ``$D400-$D7FF``,
     ``counted``
-    the origins of the bytes incremented or decremented in place.
+    the origins of the bytes incremented or decremented in place, ``pcs`` every
+    instruction address run.
     """
 
     def __init__(self, subject, mpu, mem):
@@ -75,6 +76,7 @@ class Trace:
         self.cells = {}
         self.reads, self.stores, self.sid = [], [], []
         self.counted = set()
+        self.pcs = set()
         self._rd, self._wr = [], []
         observe_data_access(mpu, self._rd.append, lambda a, v: self._wr.append(a))
 
@@ -84,6 +86,7 @@ class Trace:
     def _step(self):
         mpu, sub, rd, wr, regs = self.mpu, self.subject, self._rd, self._wr, self.regs
         pc = mpu.pc
+        self.pcs.add(pc)
         name, mode = OPCODES[sub[pc]]
         rd.clear()
         wr.clear()
@@ -165,6 +168,9 @@ class SongTables(NamedTuple):
     songs: int
     patterns: int
     song: int
+    channels: int = 3
+    stride: int = 3
+    idle: tuple = ()
 
 
 def _run(boot, until, settle=_SETTLE, trace=None):
@@ -210,13 +216,13 @@ def _lengths(columns):
     return gaps["s"].pop(), gaps["p"].pop()
 
 
-def _tables(song, patt):
+def _tables(song, patt, stride):
     """The column bases of a song and pattern pointer and the song and pattern
-    counts they tile to, else None: GoatTracker 2's song table holds three
-    orderlist pointers a song."""
+    counts they tile to, else None: the song table holds ``stride`` orderlist
+    pointers a song."""
     bases = {"slo": song[0][1], "shi": song[1][1], "plo": patt[0][1], "phi": patt[1][1]}
     lengths = _lengths(bases)
-    if lengths is None or lengths[0] % 3 or not lengths[1]:
+    if lengths is None or lengths[0] % stride or not lengths[1]:
         return None
     return bases, lengths
 
@@ -224,16 +230,18 @@ def _tables(song, patt):
 def song_tables(boot, trace=None) -> SongTables:
     """The :class:`SongTables` the booted player's sequencer reads, continuing
     ``trace`` (of its init), the first pointers it reads that tile as GoatTracker
-    2's tables (another player in the image may run alongside); its song is the
-    one whose first orderlist the lowest song-table index read is."""
+    2's tables (another player in the image may run alongside), ``channels`` those
+    its init clears and ``idle`` those whose orderlist it never reads; its song is
+    the one whose first orderlist the lowest song-table index read is."""
     found, seen = [], []
 
     def fetched(trace):
+        channels = channel_count(trace.subject, trace.pcs)
         for pair in _pointer_tables(trace.reads):
             seen.append(pair)
-            tables = _tables(*pair)
+            tables = _tables(*pair, stride(channels))
             if tables is not None:
-                found.append(tables)
+                found.append((*tables, channels))
                 return True
         return False
 
@@ -245,16 +253,22 @@ def song_tables(boot, trace=None) -> SongTables:
             "no GoatTracker song table read: the player reads no song and "
             "pattern tables"
         )
-    bases, (songs, patterns) = found[0]
-    index = min(r.addr - r.base for r in trace.reads if r.base == bases["slo"])
+    bases, (songs, patterns), channels = found[0]
+    n = stride(channels)
+    read = {r.addr - r.base for r in trace.reads if r.base == bases["slo"]}
+    index = min(read)
+    first = index - index % n
     return SongTables(
         bases["slo"],
         bases["shi"],
         bases["plo"],
         bases["phi"],
-        songs // 3,
+        songs // n,
         patterns,
-        index // 3,
+        index // n,
+        channels,
+        n,
+        tuple(c for c in range(channels) if first + c not in read),
     )
 
 

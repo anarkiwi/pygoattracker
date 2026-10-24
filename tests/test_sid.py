@@ -392,3 +392,16 @@ def test_player_uses_the_build_s_pulse_and_realtime_optimizations():
         False,
         False,
     )
+
+
+def test_voices_fold_onto_the_chips_the_header_declares():
+    raw = bytearray(0x7C)
+    raw[4:6] = (0, 4)
+    raw[0x7A], raw[0x7B] = 0x42, 0x44
+    assert sid._chips(bytes(raw)) == {0, 1, 2}
+    raw[4:6] = (0, 3)
+    assert sid._chips(bytes(raw)) == {0, 1}
+    raw[4:6] = (0, 2)
+    assert sid._chips(bytes(raw)) == {0}
+    assert sid._mirror((0, 0x27, 0x47, None), {0, 1}) == (0, 0x27, 0x07, None)
+    assert sid._mirror(None, {0}) is None

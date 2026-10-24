@@ -6,6 +6,7 @@
 and :class:`Build` the playback options they resolve to.
 """
 
+import re
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
@@ -69,6 +70,17 @@ class PackedLayout:
     songtbl_hi: int | None = None  # None: right after the low column
     patt_hi: int | None = None
     cols: tuple | None = None  # column names in memory order; None: greloc's
+    channels: int = C.MAX_CHN  # orderlist pointers a song
+
+
+def default_voices(channels: int | None) -> tuple | None:
+    """Channel ``c`` on chip ``c // 3``, voice ``c % 3`` (None: the song's own)."""
+    if channels is None:
+        return None
+    return tuple(
+        (c // C.MAX_CHN) * 0x20 + (c % C.MAX_CHN) * C.VOICE_REG_SIZE
+        for c in range(channels)
+    )
 
 
 @dataclass(frozen=True)
@@ -80,7 +92,11 @@ class PlayerBuild:
     ``firstlegato`` gate-off, then legato. None: a define the player does not show.
     ``wrapper``: a play wrapper outside the player flushes its zero-page ghost;
     ``pulsestep``: the pulse change a +1 modulation speed makes;
-    ``funk``: the funk tempo table a ghost build's first play call starts from.
+    ``funk``: the funk tempo table a ghost build's first play call starts from;
+    ``channels``: the channels the player inits; ``idle``: those its play never
+    runs; ``voices``: each one's register offset from ``$D400`` (``$20`` a chip),
+    None where its registers reach no chip; ``calls``: player calls a play call
+    makes.
     """
 
     ghost: int | None = None
@@ -98,6 +114,10 @@ class PlayerBuild:
     simplepulse: bool | None = None
     funk: tuple | None = None
     wrapper: bool = False
+    channels: int | None = None
+    idle: tuple = ()
+    voices: tuple | None = None
+    calls: int = 1
 
     def resolve(self, **decoded) -> "Build":
         """The :class:`Build` these defines play with, the editor's where not shown;
@@ -113,6 +133,9 @@ class PlayerBuild:
             pulse_step=self.pulsestep or 1,
             default_tempo=self.deftempo,
             wrapper_flush=self.wrapper,
+            voices=self.voices or default_voices(self.channels),
+            calls=self.calls,
+            idle=self.idle,
             **decoded,
         )
 
@@ -130,7 +153,10 @@ class Build:
     ``default_tempo``: greloc DEFAULTTEMPO, every channel's starting countdown (None:
     the editor's instrument-63 rule over tempo 5);
     ``wrapper_flush``: a play wrapper flushes an all-zero ghost, muting frame one;
-    ``init_regs``: ``(reg, value)`` SID writes of the tune's init routine.
+    ``init_regs``: ``(reg, value)`` SID writes of the tune's init routine;
+    ``voices``: each channel's register offset from ``$D400`` (``$20`` a chip, None:
+    silent; None: channel ``c`` on chip ``c // 3``, voice ``c % 3``);
+    ``calls``: player ticks a frame runs; ``idle``: channels the play never runs.
     """
 
     adparam: int = C.DEFAULT_ADPARAM
@@ -142,6 +168,9 @@ class Build:
     default_tempo: int | None = None
     wrapper_flush: bool = False
     init_regs: tuple = ()
+    voices: tuple | None = None
+    calls: int = 1
+    idle: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -198,6 +227,26 @@ def player_span(image, data):
         if m.addr < m.captures["p"] <= t
     ]
     return PlayerCode(image, bases[-1], data) if bases else PlayerCode(image)
+
+
+# mt_init's clear of two channel-variable blocks: ``txa; ldx #n; sta base,x; dex; bpl``.
+_CLEAR = re.compile(rb"\x8a\xa2(.)\x9d..\xca\x10\xfa", re.S)
+_CLEARED = 2 * C.VOICE_REG_SIZE
+
+
+def channel_count(mem, pcs) -> int:
+    """The channels a player sequences: its init, run at ``pcs``, clears two
+    variable blocks of them (the editor's three where no one clear runs)."""
+    sizes = {m[1][0] + 1 for pc in pcs if (m := _CLEAR.match(bytes(mem[pc : pc + 9])))}
+    if len(sizes) != 1 or (size := sizes.pop()) % _CLEARED:
+        return C.MAX_CHN
+    return size // _CLEARED
+
+
+def stride(channels: int) -> int:
+    """Orderlist pointers a song: greloc lays three, which a player sequencing
+    fewer leaves unread, a stereo packer one a channel."""
+    return max(channels, C.MAX_CHN)
 
 
 # ---- packed bytes <-> meaning ------------------------------------------------

@@ -1,16 +1,17 @@
 """GoatTracker 2 playroutine in Python.
 
-:class:`Player` is a :class:`pysidtracker.MemPlayer`: it inherits the flat
-64 KiB memory, the post-init snapshot, the diffing :meth:`play_frame` and the
+:class:`Player` is a :class:`pysidtracker.MemPlayer`: it inherits the
+flat memory image, the post-init snapshot, the diffing :meth:`play_frame` and the
 :meth:`render_grid`/:meth:`iter_frames` drivers, and implements only the two
 tracker-specific hooks -- :meth:`_init` (build the playroutine state and run the
-editor's reset) and :meth:`_frame` (advance one 50 Hz tick, writing this frame's
+editor's reset) and :meth:`_frame` (advance one play call, writing this frame's
 SID registers into ``$D400``). Everything else here is a private transcription of
 the reference playroutine (``gplay.c`` / ``player.s`` in the GoatTracker 2.76
 source): the sequencer, tempo/funktempo handling, wave/pulse/filter/speed table
 execution, realtime commands, gateoff timer and hard restart, all following the
-original tick for tick with its 8-bit wraparound arithmetic. Multispeed playback
-and the editor's jamming/mid-song-start modes are not implemented.
+original tick for tick with its 8-bit wraparound arithmetic, over the channels and
+voices the :class:`~pygoattracker.packed.Build` lays out. The editor's
+jamming/mid-song-start modes are not implemented.
 """
 
 from dataclasses import dataclass, replace
@@ -20,10 +21,19 @@ from pysidtracker import MemPlayer
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Song
-from pygoattracker.packed import Build, PlayerState
+from pygoattracker.packed import Build, PlayerState, default_voices
 from pygoattracker.typed import TypedSong
 
 _PATT_END = -1
+_CHIP = 0x20
+_FILTER_COMMANDS = frozenset(
+    (
+        constants.CMD_SETFILTERPTR,
+        constants.CMD_SETFILTERCTRL,
+        constants.CMD_SETFILTERCUTOFF,
+        constants.CMD_SETMASTERVOL,
+    )
+)
 _INIT, _RUNNING, _STOP, _STOPPED = range(4)
 
 # Default empty pattern, as left by the editor's clearsong().
@@ -78,6 +88,17 @@ class _Channel:
     gatetimer: int = 0
 
 
+@dataclass
+class _Filter:
+    """One chip's filter state, which the channels it sounds share."""
+
+    ctrl: int = 0
+    time: int = 0
+    ptr: int = 0
+    cutoff: int = 0
+    type: int = 0
+
+
 class Player(MemPlayer):
     """Play a :class:`~pygoattracker.model.Song` (or a ``TypedSong``) one frame at a time.
 
@@ -108,6 +129,10 @@ class Player(MemPlayer):
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
         self._song = song
+        self._voices = build.voices or default_voices(
+            len(song.subtunes[subtune].channels)
+        )
+        self._nchan = len(self._voices)
         # The editor playroutine (gplay.c) reads a fixed note-frequency table
         # zero-padded to 128 entries. The PACKED player (gt2reloc/player.s) lays
         # the table out as ``freqtbllo[firstnote..lastnote]`` followed
@@ -125,7 +150,7 @@ class Player(MemPlayer):
             build, adparam=build.adparam & 0xFFFF, init_regs=tuple(build.init_regs)
         )
         self._init_state = state
-        self.loops = [0] * constants.MAX_CHN
+        self.loops = [0] * self._nchan
         # MemPlayer has no code image to mount (this is a model-driven, not a
         # 6502-driven, transcription); it seeds ``$D418`` to max volume, runs
         # ``_init`` (below), then snapshots the register file so ``render_grid``
@@ -158,64 +183,86 @@ class Player(MemPlayer):
         for reg, value in self.build.init_regs:
             self._mem[self.SID_BASE + reg] = value
         self._compile(self._song, subtune)
-        self._channels = [_Channel() for _ in range(constants.MAX_CHN)]
+        self._channels = [_Channel() for _ in range(self._nchan)]
+        self._filters = [_Filter() for _ in range(0, self._nchan, constants.MAX_CHN)]
+        self._banks = {}
         state = self._init_state
         self._funktable = [8, 5]
         self._masterfader = 0x0F
-        self._filtercutoff = 0
-        self._filtertype = 0
         self._ghost = None
         self._envelopes = ()
         self._init_writes = ()
         if state is not None:
             self._init_writes = state.init
+            regs = state.registers
+            home = [
+                (channel, off)
+                for channel, off in enumerate(self._voices)
+                if off is not None and off < _CHIP
+            ]
             if state.ghost:
-                self._ghost = list(state.registers)
+                self._ghost = list(regs)
             else:
                 self._envelopes = tuple(
-                    (reg, state.registers[reg])
-                    for channel in range(constants.MAX_CHN)
-                    for reg in (
-                        constants.AD_REG + channel * constants.VOICE_REG_SIZE,
-                        constants.SR_REG + channel * constants.VOICE_REG_SIZE,
-                    )
+                    (off + reg, regs[off + reg])
+                    for _, off in home
+                    for reg in (constants.AD_REG, constants.SR_REG)
                 )
             self._funktable = list(state.funk)
             self._masterfader = state.volume & 0x0F
-            self._filtercutoff = state.cutoff
-            self._filtertype = state.filttype
-            for channel, chan in enumerate(self._channels):
-                base = channel * constants.VOICE_REG_SIZE
-                regs = state.registers
-                chan.freq = regs[base + 1] << 8 | regs[base]
-                chan.pulse = regs[base + 3] << 8 | regs[base + 2]
+            filt = self._filters[home[0][0] // constants.MAX_CHN if home else 0]
+            filt.cutoff, filt.type = state.cutoff, state.filttype
+            for channel, off in home:
+                chan = self._channels[channel]
+                chan.freq = regs[off + 1] << 8 | regs[off]
+                chan.pulse = regs[off + 3] << 8 | regs[off + 2]
             for name, values in state.channels:
                 for chan, value in zip(self._channels, values):
                     setattr(chan, name, value)
-        self._filterctrl = 0
-        self._filtertime = 0
-        self._filterptr = 0
         self._wrapper_first = self.build.wrapper_flush
         self._state = _INIT
 
     def _frame(self) -> None:
         """Advance one play call, writing what it outputs to the SID memory.
 
-        A full-ghosting build outputs the ghost the previous call left, then
-        updates it; a play-wrapper flush build starts from its all-zero ghost,
-        so its first frame carries a muted $D418.
+        A play call runs :attr:`~pygoattracker.packed.Build.calls` player ticks. A
+        full-ghosting build outputs the ghost the previous tick left, then updates
+        it; a play-wrapper flush build starts from its all-zero ghost, so its first
+        frame carries a muted $D418.
         """
         out = self.regs
-        if self._ghost is not None:
-            out = list(self._ghost)
-            self.regs = self._ghost
-        self._play_call()
+        for _ in range(self.build.calls):
+            if self._ghost is not None:
+                out = list(self._ghost)
+                self.regs = self._ghost
+            self._play_call()
         if self._wrapper_first:
             out = list(out)
             out[constants.MODE_VOL_REG] &= 0xF0
             self._wrapper_first = False
-        base = self.SID_BASE
-        self._mem[base : base + constants.SID_REGISTERS] = bytes(v & 0xFF for v in out)
+        for chip, bank in ((0, out), *self._banks.items()):
+            base = self.SID_BASE + chip * _CHIP
+            self._mem[base : base + constants.SID_REGISTERS] = bytes(
+                v & 0xFF for v in bank
+            )
+
+    def _bank(self, chip: int) -> list:
+        """The register file of ``chip`` (``$20`` apart from ``$D400``)."""
+        if not chip:
+            return self.regs
+        return self._banks.setdefault(chip, [0] * constants.SID_REGISTERS)
+
+    def _reg(self, channel: int, reg: int, value: int) -> None:
+        """Write voice register ``reg`` of ``channel``, where its writes reach a chip."""
+        off = self._voices[channel]
+        if off is not None:
+            self._bank(off // _CHIP)[off % _CHIP + reg] = value
+
+    def _filter_bank(self, group: int):
+        """The register file the filter of channel ``group`` writes, None if silent."""
+        offs = self._voices[group * constants.MAX_CHN : (group + 1) * constants.MAX_CHN]
+        chip = next((off // _CHIP for off in offs if off is not None), None)
+        return None if chip is None else self._bank(chip)
 
     def _play_call(self) -> None:
         """One ``mt_play``: song init on the first call, else one player tick.
@@ -237,9 +284,11 @@ class Player(MemPlayer):
         if self._state == _STOP:
             self._state = _STOPPED
             return
-        self._filter_routine()
-        for channel in range(constants.MAX_CHN):
-            self._play_channel(channel)
+        for group in range(len(self._filters)):
+            self._filter_routine(group)
+        for channel in range(self._nchan):
+            if channel not in self.build.idle:
+                self._play_channel(channel)
 
     def _compile(self, song: Song, subtune: int) -> None:
         """Flatten the typed model into playroutine data arrays."""
@@ -384,9 +433,10 @@ class Player(MemPlayer):
         if value and self._lt(constants.PTBL, value) == constants.TABLEJUMP:
             self._stop()
 
-    def _set_filter_ptr(self, value: int) -> None:
-        self._filterptr = value
-        self._filtertime = 0
+    def _set_filter_ptr(self, channel: int, value: int) -> None:
+        filt = self._filters[channel // constants.MAX_CHN]
+        filt.ptr = value
+        filt.time = 0
         if value and self._lt(constants.FTBL, value) == constants.TABLEJUMP:
             self._stop()
 
@@ -419,9 +469,10 @@ class Player(MemPlayer):
             chan.pattnum = 0
 
     def _init_routine(self) -> None:
-        self._filterctrl = 0
-        self._filterptr = 0
-        for channel in range(constants.MAX_CHN):
+        for filt in self._filters:
+            filt.ctrl = 0
+            filt.ptr = 0
+        for channel in range(self._nchan):
             chan = self._channels[channel]
             chan.songptr = 0
             chan.command = 0
@@ -444,13 +495,14 @@ class Player(MemPlayer):
             chan.trans = 0
             chan.instr = 1
             self._sequencer(channel)
-            self.regs[constants.CONTROL_REG + channel * constants.VOICE_REG_SIZE] = (
-                chan.wave & chan.gate
-            )
-        self.regs[constants.FC_LO_REG] = 0
+            self._reg(channel, constants.CONTROL_REG, chan.wave & chan.gate)
+        for group in range(len(self._filters)):
+            bank = self._filter_bank(group)
+            if bank is not None:
+                bank[constants.FC_LO_REG] = 0
         if self._state != _STOP:
             self._state = _RUNNING
-        if 0 in self._songlen:
+        if 0 in self._songlen[: self._nchan]:
             self._state = _STOP
 
     def _default_tempo(self) -> int:
@@ -461,37 +513,53 @@ class Player(MemPlayer):
             return last_instr.ad - 1
         return 5
 
-    def _filter_routine(self) -> None:
-        if self._filterptr:
+    def _filter_routine(self, group: int) -> None:
+        filt = self._filters[group]
+        if filt.ptr:
             ftbl = constants.FTBL
-            if self._lt(ftbl, self._filterptr) == constants.TABLEJUMP:
-                self._filterptr = self._rt(ftbl, self._filterptr)
-            if self._filterptr:
-                if not self._filtertime:
-                    left = self._lt(ftbl, self._filterptr)
+            if self._lt(ftbl, filt.ptr) == constants.TABLEJUMP:
+                filt.ptr = self._rt(ftbl, filt.ptr)
+            if filt.ptr:
+                if not filt.time:
+                    left = self._lt(ftbl, filt.ptr)
                     if left >= 0x80:
-                        self._filtertype = left & 0x70
-                        self._filterctrl = self._rt(ftbl, self._filterptr)
-                        self._filterptr = (self._filterptr + 1) & 0xFF
-                        if self._lt(ftbl, self._filterptr) == 0x00:
-                            self._filtercutoff = self._rt(ftbl, self._filterptr)
-                            self._filterptr = (self._filterptr + 1) & 0xFF
+                        filt.type = left & 0x70
+                        filt.ctrl = self._rt(ftbl, filt.ptr)
+                        filt.ptr = (filt.ptr + 1) & 0xFF
+                        if self._lt(ftbl, filt.ptr) == 0x00:
+                            filt.cutoff = self._rt(ftbl, filt.ptr)
+                            filt.ptr = (filt.ptr + 1) & 0xFF
                     elif left:
-                        self._filtertime = left
+                        filt.time = left
                     else:
-                        self._filtercutoff = self._rt(ftbl, self._filterptr)
-                        self._filterptr = (self._filterptr + 1) & 0xFF
-                if self._filtertime:
-                    self._filtercutoff = (
-                        self._filtercutoff + self._rt(ftbl, self._filterptr)
-                    ) & 0xFF
-                    self._filtertime -= 1
-                    if not self._filtertime:
-                        self._filterptr = (self._filterptr + 1) & 0xFF
-        self.regs[constants.FC_LO_REG] = 0x00
-        self.regs[constants.FC_HI_REG] = self._filtercutoff
-        self.regs[constants.RES_FILT_REG] = self._filterctrl
-        self.regs[constants.MODE_VOL_REG] = self._filtertype | self._masterfader
+                        filt.cutoff = self._rt(ftbl, filt.ptr)
+                        filt.ptr = (filt.ptr + 1) & 0xFF
+                if filt.time:
+                    filt.cutoff = (filt.cutoff + self._rt(ftbl, filt.ptr)) & 0xFF
+                    filt.time -= 1
+                    if not filt.time:
+                        filt.ptr = (filt.ptr + 1) & 0xFF
+        bank = self._filter_bank(group)
+        if bank is not None:
+            bank[constants.FC_LO_REG] = 0x00
+            bank[constants.FC_HI_REG] = filt.cutoff
+            bank[constants.RES_FILT_REG] = filt.ctrl
+            bank[constants.MODE_VOL_REG] = filt.type | self._masterfader
+
+    def _filter_command(self, channel: int, command: int, param: int) -> None:
+        """The filter and volume commands of ``channel``'s chip."""
+        filt = self._filters[channel // constants.MAX_CHN]
+        if command == constants.CMD_SETFILTERPTR:
+            self._set_filter_ptr(channel, param)
+        elif command == constants.CMD_SETFILTERCTRL:
+            filt.ctrl = param
+            if not filt.ctrl:
+                filt.ptr = 0
+        elif command == constants.CMD_SETFILTERCUTOFF:
+            filt.cutoff = param
+        elif command == constants.CMD_SETMASTERVOL:
+            if param < 0x10:
+                self._masterfader = param
 
     def _wave_command(self, channel: int, chan: _Channel, command: int) -> None:
         """Pattern command executed from a wavetable step ($F0-$FE)."""
@@ -511,24 +579,15 @@ class Player(MemPlayer):
         elif command == constants.CMD_VIBRATO:
             self._vibrato(chan, param)
         elif command == constants.CMD_SETAD:
-            self.regs[constants.AD_REG + 7 * channel] = param
+            self._reg(channel, constants.AD_REG, param)
         elif command == constants.CMD_SETSR:
-            self.regs[constants.SR_REG + 7 * channel] = param
+            self._reg(channel, constants.SR_REG, param)
         elif command == constants.CMD_SETWAVE:
             chan.wave = param
         elif command == constants.CMD_SETPULSEPTR:
             self._set_pulse_ptr(chan, param)
-        elif command == constants.CMD_SETFILTERPTR:
-            self._set_filter_ptr(param)
-        elif command == constants.CMD_SETFILTERCTRL:
-            self._filterctrl = param
-            if not self._filterctrl:
-                self._filterptr = 0
-        elif command == constants.CMD_SETFILTERCUTOFF:
-            self._filtercutoff = param
-        elif command == constants.CMD_SETMASTERVOL:
-            if param < 0x10:
-                self._masterfader = param
+        else:
+            self._filter_command(channel, command, param)
 
     def _new_note_init(self, channel: int, chan: _Channel, iptr: _Instr) -> None:
         chan.note = (chan.newnote - constants.FIRSTNOTE) & 0xFF
@@ -550,9 +609,9 @@ class Player(MemPlayer):
         if iptr.pulse_ptr:
             self._set_pulse_ptr(chan, iptr.pulse_ptr)
         if iptr.filter_ptr:
-            self._set_filter_ptr(iptr.filter_ptr)
-        self.regs[constants.AD_REG + 7 * channel] = iptr.ad
-        self.regs[constants.SR_REG + 7 * channel] = iptr.sr
+            self._set_filter_ptr(channel, iptr.filter_ptr)
+        self._reg(channel, constants.AD_REG, iptr.ad)
+        self._reg(channel, constants.SR_REG, iptr.sr)
 
     def _tick0_command(self, channel: int, chan: _Channel, iptr: _Instr) -> None:
         command = chan.newcommand
@@ -568,9 +627,9 @@ class Player(MemPlayer):
             chan.command = command
             chan.cmddata = data
         elif command == constants.CMD_SETAD:
-            self.regs[constants.AD_REG + 7 * channel] = data
+            self._reg(channel, constants.AD_REG, data)
         elif command == constants.CMD_SETSR:
-            self.regs[constants.SR_REG + 7 * channel] = data
+            self._reg(channel, constants.SR_REG, data)
         elif command == constants.CMD_SETWAVE:
             chan.wave = data
         elif command == constants.CMD_SETWAVEPTR:
@@ -580,17 +639,8 @@ class Player(MemPlayer):
                 self._stop()
         elif command == constants.CMD_SETPULSEPTR:
             self._set_pulse_ptr(chan, data)
-        elif command == constants.CMD_SETFILTERPTR:
-            self._set_filter_ptr(data)
-        elif command == constants.CMD_SETFILTERCTRL:
-            self._filterctrl = data
-            if not self._filterctrl:
-                self._filterptr = 0
-        elif command == constants.CMD_SETFILTERCUTOFF:
-            self._filtercutoff = data
-        elif command == constants.CMD_SETMASTERVOL:
-            if data < 0x10:
-                self._masterfader = data
+        elif command in _FILTER_COMMANDS:
+            self._filter_command(channel, command, data)
         elif command == constants.CMD_FUNKTEMPO:
             if data:
                 self._funktable[0] = (self._lt(constants.STBL, data) - 1) & 0xFF
@@ -767,24 +817,23 @@ class Player(MemPlayer):
                 if not iptr.gatetimer & 0x40:
                     chan.gate = 0xFE
                     if not iptr.gatetimer & 0x80:
-                        self.regs[constants.AD_REG + 7 * channel] = (
-                            self.build.adparam >> 8
-                        )
-                        self.regs[constants.SR_REG + 7 * channel] = (
-                            self.build.adparam & 0xFF
-                        )
+                        hr = self.build.adparam
+                        self._reg(channel, constants.AD_REG, hr >> 8)
+                        self._reg(channel, constants.SR_REG, hr & 0xFF)
 
     def _write_voice_regs(self, channel: int, chan: _Channel) -> None:
-        base = constants.VOICE_REG_SIZE * channel
         if chan.mute:
             chan.wave = 0x08
-            self.regs[constants.CONTROL_REG + base] = chan.wave
+            self._reg(channel, constants.CONTROL_REG, chan.wave)
             return
-        self.regs[constants.FREQ_LO_REG + base] = chan.freq & 0xFF
-        self.regs[constants.FREQ_HI_REG + base] = chan.freq >> 8
-        self.regs[constants.PULSE_LO_REG + base] = chan.pulse & 0xFF
-        self.regs[constants.PULSE_HI_REG + base] = chan.pulse >> 8
-        self.regs[constants.CONTROL_REG + base] = chan.wave & chan.gate
+        for reg, value in (
+            (constants.FREQ_LO_REG, chan.freq & 0xFF),
+            (constants.FREQ_HI_REG, chan.freq >> 8),
+            (constants.PULSE_LO_REG, chan.pulse & 0xFF),
+            (constants.PULSE_HI_REG, chan.pulse >> 8),
+            (constants.CONTROL_REG, chan.wave & chan.gate),
+        ):
+            self._reg(channel, reg, value)
 
     def _play_channel(self, channel: int) -> None:
         chan = self._channels[channel]

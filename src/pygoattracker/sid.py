@@ -52,7 +52,7 @@ from pygoattracker.packed import (
     player_span,
 )
 from pygoattracker.player import Player
-from pygoattracker.probe import Bench, ProbeMiss, boot, measure, state
+from pygoattracker.probe import Bench, ProbeMiss, boot, calls, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.model import (
     Orderlist,
@@ -96,6 +96,11 @@ class PackedInfo:
     build: PlayerBuild = field(default_factory=PlayerBuild)
     playback: Build = field(default_factory=Build)
     state: PlayerState | None = None
+
+    @property
+    def channels(self) -> int:
+        """The channels the player sequences."""
+        return len(self.playback.voices or ()) or constants.MAX_CHN
 
 
 @dataclass
@@ -292,9 +297,10 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
     simplepulse = (
         _detect_simplepulse(pleft) if build.simplepulse is None else build.simplepulse
     )
+    n = lay.channels
     subtunes = [
-        Subtune(channels=orderlists[s * 3 : s * 3 + 3])
-        for s in range(len(orderlists) // 3)
+        Subtune(channels=orderlists[s * n : s * n + n])
+        for s in range(len(orderlists) // n)
     ]
     typed = decode(mem, lay, build, header, subtunes, nowavedelay, simplepulse)
     noeffects = not any(isinstance(r, WaveCommand) for r in typed.wavetable) and all(
@@ -357,7 +363,7 @@ def _finish(decoded, song):
     if not 0 <= song < len(decoded.song.subtunes):
         raise SidParseError(
             f"no such subtune: the song selects subtune {song}, "
-            f"but the player decodes {count} subtune(s)"
+            f"but the player decodes {len(decoded.song.subtunes)} subtune(s)"
         )
     decoded.subtune = song
     return decoded
@@ -376,7 +382,9 @@ def decompile_sid(src, subtune=0) -> DecompiledSid:
     if detection.anchor is None:
         raise SidParseError("no GoatTracker frequency table found (not a GT sid?)")
     try:
-        decoded = _decompile(image, image.header, detection.anchor, subtune)
+        decoded = _decompile(
+            image, image.header, detection.anchor, subtune, _chips(raw)
+        )
     except (IndexError, ValueError) as exc:
         raise SidParseError(f"malformed packed GoatTracker data: {exc}") from exc
     except KeyError as exc:
@@ -403,8 +411,32 @@ def init_regs(image, subtune=0) -> tuple:
     )
 
 
-def _decompile(image, header, anchor, subtune) -> DecompiledSid:
-    """The song data the player the tune's init selects reads, decompiled."""
+# PSID header bytes of the second (v3+) and third (v4+) SID's ``$Dxx0`` address.
+_EXTRA_SIDS = ((3, 0x7A), (4, 0x7B))
+
+
+def _chips(raw) -> set:
+    """The chips (``$20`` blocks from ``$D400``) the ``.sid`` header declares."""
+    version = int.from_bytes(raw[4:6], "big")
+    chips = {0}
+    for since, pos in _EXTRA_SIDS:
+        addr = 0xD000 | raw[pos] << 4 if len(raw) > pos else 0
+        if version >= since and 0xD420 <= addr < 0xD800:
+            chips.add((addr - constants.SID_BASE) // 0x20)
+    return chips
+
+
+def _mirror(voices, chips):
+    """``voices`` with each register offset on a chip not in ``chips`` folded onto
+    ``$D400``, which the chip select mirrors there."""
+    if voices is None:
+        return None
+    return tuple(v if v is None or v // 0x20 in chips else v % 0x20 for v in voices)
+
+
+def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> DecompiledSid:
+    """The song data the player the tune's init selects reads, decompiled, its
+    voices on the header's ``chips``."""
     base = player_span(image, anchor[0]).start
     play = header.play_address or (None if base is None else base + 3)
     traced = []
@@ -425,7 +457,7 @@ def _decompile(image, header, anchor, subtune) -> DecompiledSid:
     def pointers(lo, hi, n):
         return [mem[lo + i] | mem[hi + i] << 8 for i in range(n)]
 
-    order_addrs = pointers(t.song_lo, t.song_hi, 3 * t.songs)
+    order_addrs = pointers(t.song_lo, t.song_hi, t.stride * t.songs)
     patt_addrs = pointers(t.patt_lo, t.patt_hi, t.patterns)
     orderlists, orders = [], []
     for addr in order_addrs:
@@ -445,7 +477,18 @@ def _decompile(image, header, anchor, subtune) -> DecompiledSid:
         **dict.fromkeys(("pulse", "filt", "vib", "gate"), False),
         songtbl_hi=t.song_hi,
         patt_hi=t.patt_hi,
+        channels=t.stride,
     )
+
+    jump = player_span(after, anchor[0]).start
+    entries = set()
+    if jump is not None:
+        entries = {jump + 3}
+        if mem[jump + 3] == 0x4C:
+            entries.add(mem[jump + 4] | mem[jump + 5] << 8)
+    ticks = 1 if play is None else calls(image, subtune, play, entries)
+    if ticks > 1:
+        play = jump + 3
 
     def bench(lay):
         span = (player_span(after, lay.freq_addr).start, lay.freq_addr)
@@ -465,7 +508,8 @@ def _decompile(image, header, anchor, subtune) -> DecompiledSid:
             lay, gate_flags=any(v & 0xC0 for v in mem[col : col + lay.num_instr])
         )
     probe = bench(lay)
-    build = measure(probe)
+    build = replace(measure(probe, t.channels), calls=ticks, idle=t.idle)
+    build = replace(build, voices=_mirror(build.voices, chips))
     song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)
     decoded = DecompiledSid(song, info, header, subtune, typed, image, mem)

@@ -1,19 +1,6 @@
 [
  {
   "compare": "lead",
-  "frames": 14,
-  "id": "04ac3342e2b4",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:853>854')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "592b266a21297878a5b12be9f8db184d",
-  "reason": "pygoattracker/player.py:853 if fetch_tick: -> 854: reference frame 5, register $13 v3_ad",
-  "relpath": "MUSICIANS/C/Crisps/Soiled_Iron.sid",
-  "right": "format:auto",
-  "song": 10
- },
- {
-  "compare": "lead",
   "frames": 10,
   "id": "2554ab9ef6be",
   "key": "('first', '6502:edge:1ec93d046777ca00909de6f0', '')",
@@ -35,45 +22,6 @@
   "md5": "0f5ea9b0fae5a743abdd71f25636a321",
   "reason": "$10F2 BMI $1123 -> $1123: reference frame 14, register $00 v1_freq_lo",
   "relpath": "MUSICIANS/M/Mr_Death/Aeppelepsi_Gubbjaevel.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 11,
-  "id": "4ec27fa7020b",
-  "key": "('first', '6502:edge:e9d04785d5bd2ce4c7fc5787', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "b89d001d09148ee3cea0dae5d31ca604",
-  "reason": "$10C4 BEQ $10d1 -> $10C6: reference frame 2, register $00 v1_freq_lo",
-  "relpath": "GAMES/G-L/Hamburgers_Going_to_Switzerland.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 35,
-  "id": "5d6850c523a5",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._filter_routine:493>494')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "f03391927be9dc5414b24b5bc0d90a87",
-  "reason": "pygoattracker/player.py:493 if self._filterptr: -> 494: reference frame 26, register $18 mode_vol",
-  "relpath": "MUSICIANS/C/Crowley_Owen/Electrozombie_Generation_2SID.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 13,
-  "id": "b381a384daf1",
-  "key": "('first', '6502:edge:879dfcec5eb8d426cdfac3fe', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "8225a6243e1501d2f70b3490342a803b",
-  "reason": "$305D BEQ $307b -> $305F: reference frame 4, register $05 v1_ad",
-  "relpath": "GAMES/M-R/Marble_Boy.sid",
   "right": "format:auto",
   "song": 1
  },
@@ -105,19 +53,6 @@
  },
  {
   "compare": "lead",
-  "frames": 20,
-  "id": "bf2311382ac8",
-  "key": "('first', '6502:edge:e4f35762cbd73ca246f5de62', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "373e86fb8f39f0e15522fbf893bc2661",
-  "reason": "$12BA BEQ $12e7 -> $12BC: reference frame 11, register $05 v1_ad",
-  "relpath": "DEMOS/S-Z/We_Are_in_Control-SID_Mix.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
   "frames": 10,
   "id": "c08d8beb4448",
   "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_call:255>260')",
@@ -126,32 +61,6 @@
   "md5": "d6d8dc8e9a97fddbde010fba151492e8",
   "reason": "pygoattracker/player.py:255 if self._state == _INIT: -> 260: reference frame 1, register $15 fc_lo",
   "relpath": "MUSICIANS/G/Groepaz/I_Dont_Know_What_I_Am_Doing.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 14,
-  "id": "d857a5b4b7d9",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._get_new_notes:791>792')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "20c8107637a1e25b73ea901090c2f0ca",
-  "reason": "pygoattracker/player.py:791 if newnote <= constants.LASTNOTE: -> 792: reference frame 5, register $05 v1_ad",
-  "relpath": "MUSICIANS/S/Snabel/Frogger_Arcade.sid",
-  "right": "format:auto",
-  "song": 25
- },
- {
-  "compare": "lead",
-  "frames": 14,
-  "id": "e751c344be49",
-  "key": "('first', '6502:edge:ab618a1b4f91c0bff03f5d61', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "1ebd79dbaa92d3ec6b7cb0e10af59819",
-  "reason": "$17CC BEQ $17e8 -> $17CE: reference frame 5, register $13 v3_ad",
-  "relpath": "MUSICIANS/E/Encore/Camel_Ohio_2SID.sid",
   "right": "format:auto",
   "song": 1
  }

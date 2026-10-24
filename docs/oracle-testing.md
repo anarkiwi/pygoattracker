@@ -44,6 +44,10 @@ byte-exact over the whole song:
 | `Hose_It_Out`, `Legend_of_Zelda_Preview` | an empty pattern at the image end: its row read from the power-on RAM past it |
 | `Miner_Prophet_preview` | a hard-restart define assembled at two sites |
 | `Easy_Going`, `GoatTracker_Classical_Example`, `Fuggbot`, `swamped` | GoatTracker V1.25 musicroutines 11.1, 11.3, 11.4, 11.5 (orderlists before the pattern table in 11.1/11.5) |
+| `Phobos_2SID`, `Petal_Panic_preview` | vibrato time and delay the song-init call leaves as the image loaded them |
+| `Hamburgers_Going_to_Switzerland`, `Soiled_Iron` 10 | two channels; a channel the play never runs |
+| `Camel_Ohio_2SID`, `Cheezzy_Top_3SID` | stereo and 3SID builds, each channel on the chip and voice it writes |
+| `Marble_Boy` | a play wrapper calling `mt_play` twice a frame |
 | `GoatTracker_example_MW1_title`, `Kaori_360`, `Disco_Fever`, `Plaah`, `Bee` | GoatTracker V0.96, V1.01, V1.1, V1.21, V1.22 standard playroutines (no jump table and packer init stub before V1.1, `$FE`/`$FF` orderlist ends before V1.15) |
 
 ## Running

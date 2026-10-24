@@ -153,3 +153,22 @@ def test_a_build_s_defines_resolve_to_its_playback_options():
     assert (
         P.PlayerBuild(pulseopt=True, realtime=True, pulsestep=0).resolve() == P.Build()
     )
+
+
+def test_channel_count_reads_the_clear_its_init_runs():
+    mem = bytearray(0x40)
+    mem[0x10:0x19] = bytes.fromhex("8aa2539d0010ca10fa")
+    assert P.channel_count(mem, {0x10}) == 6
+    assert P.channel_count(mem, {0x11}) == C.MAX_CHN
+    mem[0x12] = 0x1B
+    assert P.channel_count(mem, {0x10}) == 2
+    mem[0x12] = 0x20
+    assert P.channel_count(mem, {0x10}) == C.MAX_CHN
+    assert (P.stride(2), P.stride(6)) == (C.MAX_CHN, 6)
+
+
+def test_voices_resolve_from_the_channels_shown():
+    assert P.PlayerBuild().resolve().voices is None
+    assert P.PlayerBuild(channels=2).resolve().voices == (0, 7)
+    assert P.PlayerBuild(channels=4).resolve().voices == (0, 7, 14, 0x20)
+    assert P.PlayerBuild(channels=2, voices=(14, None)).resolve().voices == (14, None)

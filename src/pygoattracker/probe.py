@@ -34,6 +34,8 @@ from pygoattracker.typed import (
 _SID = range(mm.SID_BASE, mm.SID_BASE + C.SID_REGISTERS)
 _IO = range(mm.SID_BASE, mm.SID_BASE + 0x400)
 _AD, _SR, _CTRL, _PLO, _PHI = 5, 6, 4, 2, 3
+_VOICE_AD = [_AD + v * C.VOICE_REG_SIZE for v in range(C.MAX_CHN)]
+_VOICE_CTRL = [_CTRL + v * C.VOICE_REG_SIZE for v in range(C.MAX_CHN)]
 _CUTOFF, _MODEVOL = 0x16, 0x18
 _FILTCTRL = 0xF1
 _RESFILT = 0x17
@@ -51,6 +53,8 @@ _VIBDELAYS = (0x30, 0x28)
 _REST = Row(Rest(), None, None, 24)
 _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
 _CAP = 256
+_CALLS = (0x20, 0x4C)  # jsr, jmp abs
+_ROUTE = 32
 _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
@@ -159,11 +163,12 @@ class Bench:
             yield slot, pattern_bytes(rows[:n])
             rows = rows[n:]
 
-    def plant(self, voices, instruments=None, tables=None) -> dict:
+    def plant(self, voices, instruments=None, tables=None, every=False) -> dict:
         """``{address: byte}`` planting ``voices`` (row sequences), ``instruments``
         (``{number: {column: byte}}`` over :data:`_BASE`) and ``tables`` (``{name:
         ((left, right), ...)}``); each channel whose orderlist holds one plays a voice,
-        which the played song's first must."""
+        which the played song's first must (``every``: only the played song's
+        channels, each its own)."""
         lay, buf = self.lay, {}
 
         def put(addr, data):
@@ -177,11 +182,19 @@ class Bench:
                 order.append(chunk[0])
                 put(lay.patt_addrs[chunk[0]], chunk[1])
             orders.append(bytes(order + [C.LOOPSONG, 0]))
+        song = range(
+            lay.channels * (self.song or 0),
+            lay.channels * (self.song or 0) + lay.channels,
+        )
+        if every and len({lay.order_addrs[k] for k in song}) < lay.channels:
+            raise ProbeMiss("the song's channels share an orderlist")
         for k, addr in enumerate(lay.order_addrs):
-            order = orders[k % 3 % len(orders)]
+            if every and k not in song:
+                continue
+            order = orders[k % lay.channels % len(orders)]
             if len(order) <= self.order_sizes[k]:
                 put(addr, order)
-            elif k == 3 * (self.song or 0):
+            elif k == song.start or every:
                 raise ProbeMiss("orderlist too short")
         cols = columns(lay)
         for num, over in (instruments or {}).items():
@@ -237,19 +250,46 @@ class Bench:
 
     def grid(self, voices, instruments=None, tables=None, frames=_CAP, until=None):
         """The register grid of up to ``frames`` play calls of the planted song, on
-        the SID its first planted envelope is written to; ``until(grid)``, asked
-        every :data:`_STRIDE` calls, ends it early."""
+        the chip and voice its first planted envelope is written to, that voice's
+        registers moved to voice 1's; ``until(grid)``, asked every :data:`_STRIDE`
+        calls, ends it early."""
         buf = self.plant(voices, instruments, tables)
-        rows, chip = [], None
+        rows, hit = [], None
         for row in self.frames(buf, frames):
+            if hit is None:
+                hit = _envelope(row, rows[-1] if rows else None)
             rows.append(row)
-            if chip is None:
-                hit = np.flatnonzero(row[:, _AD] == _BASE["ad"])
-                chip = int(hit[0]) if hit.size else None
-            if until and chip is not None and len(rows) % _STRIDE == 0:
-                if until(np.array(rows)[:, chip]):
+            if until and hit is not None and len(rows) % _STRIDE == 0:
+                if until(_voice1(np.array(rows), hit)):
                     break
-        return np.array(rows)[:, chip or 0]
+        return _voice1(np.array(rows), hit or (0, 0))
+
+
+def _keyed(row):
+    """Each ``(chip, voice)`` of ``row`` holding the planted envelope, gate on."""
+    return (row[:, _VOICE_AD] == _BASE["ad"]) & (row[:, _VOICE_CTRL] & 1 == 1)
+
+
+def _envelope(row, last):
+    """The ``(chip, voice)`` ``row`` keys the planted envelope on, else None."""
+    new = _keyed(row)
+    if last is not None:
+        new &= ~_keyed(last)
+    found = np.argwhere(new)
+    return tuple(int(v) for v in found[0]) if found.size else None
+
+
+def _voice1(rows, hit):
+    """The ``(chip, voice)`` ``hit`` of each row, its voice's registers swapped with
+    voice 1's."""
+    chip, voice = hit
+    cols = list(range(C.SID_REGISTERS))
+    lo = voice * C.VOICE_REG_SIZE
+    cols[: C.VOICE_REG_SIZE], cols[lo : lo + C.VOICE_REG_SIZE] = (
+        cols[lo : lo + C.VOICE_REG_SIZE],
+        cols[: C.VOICE_REG_SIZE],
+    )
+    return rows[:, chip][:, cols]
 
 
 class _Writes:
@@ -616,6 +656,43 @@ def _channels(bench):
     return tuple(out)
 
 
+def _voices(bench, channels):
+    """Each channel's register offset from ``$D400`` (``$20`` a chip): where a note
+    planted on it alone writes its envelope, None where it writes none."""
+    note, rest = (Row(bench.pitches(1)[0], 1), _REST), (_REST,)
+    out = []
+    for channel in range(channels):
+        voices = [note if k == channel else rest for k in range(bench.lay.channels)]
+        buf = bench.plant(voices, {1: {}}, {"wave": _WAVE}, every=True)
+        rows = list(bench.frames(buf, _ROUTE))
+        hits = (_envelope(row, last) for last, row in zip([None] + rows, rows))
+        hit = next((h for h in hits if h is not None), None)
+        out.append(None if hit is None else hit[0] * 0x20 + hit[1] * C.VOICE_REG_SIZE)
+    if not any(v is not None for v in out):
+        raise ProbeMiss("no planted note sounds")
+    return tuple(out)
+
+
+def calls(image, subtune, play, entries):
+    """How many times one play call at ``play`` after the song-init one runs the
+    target of its first ``jsr``/``jmp``, where that is one of the player's play
+    ``entries`` (else 1)."""
+    subject, mpu, mem, play = boot(image, subtune)[:3] + (play,)
+    _call(mpu, mem, play)
+    start_sp, count, entry = mpu.sp, 0, None
+    for byte in (0x00, 0x01):
+        mem[0x0100 + mpu.sp] = byte
+        mpu.sp = (mpu.sp - 1) & 0xFF
+    mpu.pc, start = play, mpu.processorCycles
+    while mpu.sp < start_sp and mpu.processorCycles - start <= _CYCLES:
+        pc = mpu.pc
+        count += pc == entry
+        if entry is None and subject[pc] in _CALLS:
+            entry = subject[pc + 1] | subject[pc + 2] << 8
+        mpu.step()
+    return max(count, 1) if entry in entries else 1
+
+
 def _shown(probe, *args, default=None):
     """``probe(*args)``, or ``default`` where the planted song does not play."""
     try:
@@ -629,14 +706,18 @@ def _first_shown(*probes):
     return next((v for v in (_shown(p) for p in probes) if v is not None), None)
 
 
-def measure(bench: Bench) -> PlayerBuild:
-    """Every :class:`~pygoattracker.packed.PlayerBuild` define the player shows."""
+def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
+    """Every :class:`~pygoattracker.packed.PlayerBuild` define the player sequencing
+    ``channels`` (None: the editor's) shows."""
     lay = bench.lay
     ghost, alt, wrapper = _shown(_ghost, bench, default=(None, None, False))
+    voices = _shown(_voices, bench, channels or C.MAX_CHN)
     try:
         run = _melody(bench)
     except ProbeMiss:
-        return PlayerBuild(ghost=ghost, alt=alt, wrapper=wrapper)
+        return PlayerBuild(
+            ghost=ghost, alt=alt, wrapper=wrapper, channels=channels, voices=voices
+        )
     gaps = set(np.diff(run.notes[:4]))
     row = int(gaps.pop()) if len(run.notes) >= 4 and len(gaps) == 1 else None
     k, hr = _class(run)
@@ -672,6 +753,8 @@ def measure(bench: Bench) -> PlayerBuild:
         simplepulse=_simplepulse(run),
         funk=None if row is None or ghost is None else _shown(_funk, bench, row),
         wrapper=wrapper,
+        channels=channels,
+        voices=voices,
     )
 
 

@@ -182,7 +182,7 @@ class Player(MemPlayer):
         ``state`` seeds the same variables, which init leaves as the image loaded,
         and the envelopes a build writing them every tick outputs from its first;
         its song-init call outputs the registers ``state.init`` loads from them.
-        Either seeds the calculated-speed notes ``state.lastnote`` init keeps.
+        Either seeds the channel variables ``state.channels`` init keeps.
         """
         for reg, value in self._init_regs:
             self._mem[self.SID_BASE + reg] = value
@@ -218,8 +218,9 @@ class Player(MemPlayer):
                 regs = state.registers
                 chan.freq = regs[base + 1] << 8 | regs[base]
                 chan.pulse = regs[base + 3] << 8 | regs[base + 2]
-            for chan, note in zip(self._channels, state.lastnote):
-                chan.lastnote = note
+            for name, values in state.channels:
+                for chan, value in zip(self._channels, values):
+                    setattr(chan, name, value)
         self._filterctrl = 0
         self._filtertime = 0
         self._filterptr = 0
@@ -678,8 +679,8 @@ class Player(MemPlayer):
             # no vibdelay decrement (mt_effect_0's leading ``beq`` is before the
             # dec). vibdelay is channel-retained, reloaded only at note-init
             # (_new_note_init), matching mt_chnvibdelay; the channel delay starts
-            # at zero (the reset loop clears it and mt_initchn never reloads it),
-            # so an instrument-1 speed-table vibrato is audible from the gate-off
+            # as init leaves it (neither the reset loop nor mt_initchn loads it),
+            # so an instrument-1 speed-table vibrato can sound from the gate-off
             # intro frames -- the editor's gplay.c skips it instead.
             #
             # ``param`` source is build-dependent. The packed instrument-vibrato-

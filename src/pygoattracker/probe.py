@@ -46,6 +46,8 @@ _MODPULSE = ((0x7F, 0x01), (C.TABLEJUMP, 1))  # +1 a frame, looping
 _TOGGLEPULSE = ((0x88, 0x11), (0x89, 0x22), (C.TABLEJUMP, 1))  # two sets, looping
 _FILTER = ((0x90, _FILTCTRL), (C.TABLEJUMP, 0))  # lowpass, resonance and voice 1
 _CALCSPEED = (0x81, 0x01)  # half the note's semitone step (or 1) a call
+_SLOWVIB = (0x40, 0x01)  # a vibrato turning only after 32 calls
+_VIBDELAYS = (0x30, 0x28)
 _REST = Row(Rest(), None, None, 24)
 _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
 _CAP = 256
@@ -505,41 +507,113 @@ def _ghost(bench):
     return None, None, bool(first) and not first[-1] & 0x0F
 
 
-def _held_stores(bench, buf, value):
-    """The bases (address less X) of the indexed stores of ``value`` over
-    :data:`_CAP` play calls of ``buf`` that still hold it after them."""
+def _stores(bench, buf, match):
+    """The bases (address less X) of the player's own stores over :data:`_CAP` play
+    calls of ``buf`` whose written values and the byte left after them ``match``."""
     subject, mpu, mem, play = bench.boot(buf)
-    stores = {}
+    start, end = bench.span
+    written = {}
 
-    def store(addr, written):
-        if written == value:
-            stores[addr] = addr - mpu.x
+    def store(addr, value):
+        if (start is None or start <= mpu.pc) and (end is None or mpu.pc < end):
+            written.setdefault((addr, addr - mpu.x), []).append(value)
 
     observe_data_access(mpu, on_write=store)
     for _ in range(_CAP):
         _call(mpu, mem, play)
-    return {base for addr, base in stores.items() if subject[addr] == value}
+    return {base for (addr, base), seq in written.items() if match(seq, subject[addr])}
+
+
+def _steps(start, step, count=4):
+    """A match for stores writing ``count`` values from ``start`` ``step`` apart."""
+    want = [(start + k * step) & 0xFF for k in range(count)]
+    return lambda seq, _: any(
+        seq[k : k + count] == want for k in range(len(seq) - count + 1)
+    )
+
+
+def _countdown(start):
+    """A match for stores counting ``start`` down to zero, where they stay."""
+    want = list(range(start, -1, -1))
+    return lambda seq, _: any(
+        seq[k : k + start + 1] == want and 0xFF not in seq[k + start + 1 :]
+        for k in range(len(seq) - start)
+    )
 
 
 def _lastnote(bench):
-    """Each channel's ``mt_chnlastnote`` as init leaves it: the base of the store a
-    wavetable absolute note holds after the song plays, the same for two notes,
-    read at each channel's offset (None where no store shows)."""
+    """``mt_chnlastnote``: the store a wavetable absolute note holds after the song
+    plays, the same for two notes."""
     pattern, *notes = (n.pitch for n in bench.pitches(3))
     if notes[0] == notes[1] or not all(0 < n < 0x80 for n in notes):
         raise ProbeMiss("no two wavetable notes")
     rows = [(Row(Note(pattern), 1), _REST)]
     first, second = (
-        _held_stores(bench, bench.plant(rows, {1: {}}, {"wave": wave}), n)
+        _stores(
+            bench,
+            bench.plant(rows, {1: {}}, {"wave": wave}),
+            lambda seq, held, n=n: held == n and n in seq,
+        )
         for n in notes
         for wave in [((_WAVE[0][0], n), (C.TABLEJUMP, 0))]
     )
-    shown = first & second
-    if len(shown) != 1:
-        return None
-    base = shown.pop()
-    subject = bench.boot()[0]
-    return tuple(subject[base + c * C.VOICE_REG_SIZE] for c in range(C.MAX_CHN))
+    return first & second
+
+
+def _vibtime(bench):
+    """``mt_chnvibtime``: the store a vibrato steps by two each call, from an
+    instrument vibrato where the build has one, else the pattern command."""
+    lay = bench.lay
+    tables = {"wave": _WAVE, "speed": (_SLOWVIB,) * (1 + bool(lay.slen))}
+    if lay.vib and lay.slen:
+        voice, over = (Row(bench.pitches(1)[0], 1), _REST), {"vib": 1}
+    else:
+        voice, over = (Row(bench.pitches(1)[0], 1, Vibrato(1)), _REST), {}
+    return _stores(bench, bench.plant([voice], {1: over}, tables), _steps(2, 2))
+
+
+def _vibdelay(bench):
+    """``mt_chnvibdelay``: the store two instrument vibrato delays each count down
+    to zero and stop at, under a vibrato of speed two so no register slides alike."""
+    lay = bench.lay
+    if not (lay.vib and lay.slen):
+        raise ProbeMiss("no instrument vibrato")
+    tables = {"wave": _WAVE, "speed": ((_SLOWVIB[0], 2),) * 2}
+    rows = [(Row(bench.pitches(1)[0], 1), _REST)]
+    first, second = (
+        _stores(
+            bench,
+            bench.plant(rows, {1: {"vib": 1, "vibdelay": delay}}, tables),
+            _countdown(delay),
+        )
+        for delay in _VIBDELAYS
+    )
+    return first & second
+
+
+# Channel variables init leaves as loaded: the Player field each seeds, the probe
+# locating its store, and what the Player's count adds to the byte.
+_CHANNEL_VARS = (
+    ("lastnote", _lastnote, 0),
+    ("vibtime", _vibtime, 0),
+    ("vibdelay", _vibdelay, 1),
+)
+
+
+def _channels(bench):
+    """``(field, values)`` of each channel variable the song-init call leaves as the
+    image loaded it, read at each channel's offset from the one store its probe
+    locates."""
+    subject, mpu, mem, play = bench.boot()
+    _call(mpu, mem, play)
+    out = []
+    for name, probe, bias in _CHANNEL_VARS:
+        bases = _shown(probe, bench) or set()
+        if len(bases) == 1:
+            base = bases.pop()
+            values = (subject[base + c * C.VOICE_REG_SIZE] for c in range(C.MAX_CHN))
+            out.append((name, tuple(v + bias for v in values)))
+    return tuple(out)
 
 
 def _shown(probe, *args, default=None):
@@ -606,10 +680,10 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
     init leaves, and the cutoff, mode and volume its filter code then stores to it;
     a chip-writing build's is the SID its first tick writes from the variables init
     leaves as loaded, and the registers its song-init call writes (None where the
-    planted song does not play); each with the calculated-speed notes init keeps."""
+    planted song does not play); each with the channel variables init keeps."""
     g = build.ghost
     funk = build.funk or (8, 5)
-    lastnote = _shown(_lastnote, bench) or ()
+    channels = _channels(bench)
     if g is None:
         log = _Writes()
         try:
@@ -626,7 +700,7 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
             funk=funk,
             ghost=False,
             init=tuple((r, int(first[r])) for r in init),
-            lastnote=lastnote,
+            channels=channels,
         )
     buf = bench.plant([(Row(bench.pitches(1)[0], 1), _REST)], {1: {}}, {"wave": _WAVE})
     subject, mpu, mem, play = bench.boot(buf)
@@ -640,5 +714,5 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
         filttype=mode & 0xF0,
         volume=mode & 0x0F,
         funk=funk,
-        lastnote=lastnote,
+        channels=channels,
     )

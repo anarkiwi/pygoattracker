@@ -1027,3 +1027,11 @@ def test_six_channels_play_two_chips_with_a_filter_each():
     first, second = (bytes(player._mem[a : a + 21]) for a in (0xD400, 0xD420))
     assert first[:14] == second[:14] and len(player.loops) == 6
     assert player._mem[0xD416] == 0 and player._mem[0xD436] == 0x77
+
+
+def test_overlay_masks_each_channel_s_control_byte(song):
+    plain = Player(song).render_grid(20)
+    masked = Player(song, overlay=((0, 0), None, (0x0F, 0x10))).render_grid(20)
+    for want, got in zip(plain, masked):
+        assert got[4] == 0 and got[11] == want[11]
+        assert got[18] == want[18] & 0x0F | 0x10

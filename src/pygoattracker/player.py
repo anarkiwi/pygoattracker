@@ -255,8 +255,12 @@ class Player(MemPlayer):
     def _reg(self, channel: int, reg: int, value: int) -> None:
         """Write voice register ``reg`` of ``channel``, where its writes reach a chip."""
         off = self._voices[channel]
-        if off is not None:
-            self._bank(off // _CHIP)[off % _CHIP + reg] = value
+        if off is None:
+            return
+        mask = self.build.overlay and self.build.overlay[channel]
+        if mask and reg == constants.CONTROL_REG:
+            value = value & mask[0] | mask[1]
+        self._bank(off // _CHIP)[off % _CHIP + reg] = value
 
     def _filter_bank(self, group: int):
         """The register file the filter of channel ``group`` writes, None if silent."""

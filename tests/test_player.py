@@ -913,7 +913,9 @@ def test_state_seeds_the_calculated_speed_notes_init_keeps():
     regs[0:2] = [C4_FREQ & 0xFF, C4_FREQ >> 8]
     table = constants.FREQ_TABLE
     for lastnote, step in ((52, table[53] - table[52]), (None, table[1] - table[0])):
-        kwargs = {} if lastnote is None else {"lastnote": (lastnote, 0, 0)}
+        kwargs = (
+            {} if lastnote is None else {"channels": (("lastnote", (lastnote, 0, 0)),)}
+        )
         history = freq_history(song, 30, state=ghost_state(regs, ghost=False, **kwargs))
         assert max(history) - C4_FREQ == step
 

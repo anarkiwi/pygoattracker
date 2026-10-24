@@ -63,11 +63,11 @@ BUILDS = {
 }
 
 
-def _decompiled(rel):
+def _decompiled(rel, subtune=0):
     path = resolve_tune(rel)
     if path is None:
         pytest.skip(f"{rel} unavailable (offline, not cached)")
-    return sid.decompile_sid(Path(path).read_bytes())
+    return sid.decompile_sid(Path(path).read_bytes(), subtune=subtune)
 
 
 @pytest.mark.parametrize("rel", BUILDS)
@@ -110,12 +110,42 @@ def test_a_song_init_call_loads_the_channel_registers_init_leaves():
 
 def test_a_calculated_speed_build_starts_from_the_lastnotes_init_leaves():
     d = _decompiled("MUSICIANS/L/Linus/Commando_Take_Me_to_the_Bridge_short.sid")
-    assert d.info.state.lastnote == tuple(d.image.mem[0x0C70:0x0C85:7])
-    assert any(d.info.state.lastnote)
+    lastnote = dict(d.info.state.channels)["lastnote"]
+    assert lastnote == tuple(d.image.mem[0x0C70:0x0C85:7])
+    assert any(lastnote)
     d = _decompiled("MUSICIANS/H/Hannula_Antti/Laid_Back_Sunday.sid")
-    assert d.info.state.lastnote == ()
-    assert probe.state(_bench(), PlayerBuild()).lastnote == ()
-    assert probe.state(_bench(notes=96), PlayerBuild()).lastnote == ()
+    assert "lastnote" not in dict(d.info.state.channels)
+    assert probe.state(_bench(), PlayerBuild()).channels == ()
+    assert probe.state(_bench(notes=96), PlayerBuild()).channels == ()
+
+
+@pytest.mark.parametrize(
+    "tune,vibtime,vibdelay",
+    [
+        ("MUSICIANS/N/Nata/Phobos_2SID.sid", 0x15AC, 0x15AD),
+        ("MUSICIANS/C/Chiummo_Aldo/Petal_Panic_preview.sid", 0x13E6, 0x13E7),
+    ],
+)
+def test_vibrato_variables_start_as_the_image_loaded_them(tune, vibtime, vibdelay):
+    d = _decompiled(tune)
+    mem = d.image.mem
+    channels = dict(d.info.state.channels)
+    assert channels["vibtime"] == tuple(mem[vibtime : vibtime + 15 : 7])
+    assert channels["vibdelay"] == tuple(
+        v + 1 for v in mem[vibdelay : vibdelay + 15 : 7]
+    )
+    assert any(channels["vibtime"] + channels["vibdelay"][2:])
+
+
+def test_a_countdown_outside_the_variable_read_seeds_nothing():
+    d = _decompiled("MUSICIANS/B/Bayliss_Richard/Cruiser-X_79.sid", 22)
+    assert "vibdelay" not in dict(d.info.state.channels)
+
+
+def test_variables_the_song_init_call_clears_seed_zero():
+    d = _decompiled("MUSICIANS/O/Onebitman/Zerozillion/First_Night_Together.sid")
+    assert d.image.mem[0x1292] == 2
+    assert dict(d.info.state.channels)["vibtime"] == (0, 0, 0)
 
 
 def _bench(**lay):

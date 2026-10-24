@@ -107,8 +107,10 @@ class PlayerState:
     first tick writes from the channel and filter variables init leaves as loaded.
     ``init``: the ``(register, value)`` SID writes of a chip-writing build's
     song-init call, which loads the channel registers from those variables.
-    ``lastnote``: each channel's calculated-speed note (``mt_chnlastnote``) init
-    leaves as loaded, empty where the build has none.
+    ``channels``: ``(field, values)`` of each channel variable init leaves as loaded
+    (``mt_chnlastnote``, ``mt_chnvibtime``, ``mt_chnvibdelay``), one value per channel
+    in the :class:`~pygoattracker.player.Player`'s terms; absent where the build
+    shows none.
     """
 
     registers: tuple
@@ -118,7 +120,7 @@ class PlayerState:
     funk: tuple
     ghost: bool = True
     init: tuple = ()
-    lastnote: tuple = ()
+    channels: tuple = ()
 
 
 class PlayerCode(NamedTuple):

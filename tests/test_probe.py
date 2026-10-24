@@ -148,6 +148,21 @@ def test_variables_the_song_init_call_clears_seed_zero():
     assert dict(d.info.state.channels)["vibtime"] == (0, 0, 0)
 
 
+@pytest.mark.parametrize(
+    "rel,subtune,voices,idle,calls",
+    [
+        ("GAMES/G-L/Hammurabi.sid", 0, (0, 7, 14), (), 1),
+        ("MUSICIANS/E/Encore/Camel_Ohio_2SID.sid", 0, (32, 39, 46, 0, 7, 14), (), 1),
+        ("DEMOS/S-Z/We_Are_in_Control-SID_Mix.sid", 0, (None,) * 3 + (0, 7, 14), (), 1),
+        ("MUSICIANS/C/Crisps/Soiled_Iron.sid", 9, (0, 7, None), (2,), 1),
+        ("GAMES/M-R/Marble_Boy.sid", 0, (0, 7), (), 2),
+    ],
+)
+def test_the_voices_are_where_the_player_writes_them(rel, subtune, voices, idle, calls):
+    playback = _decompiled(rel, subtune).info.playback
+    assert (playback.voices, playback.idle, playback.calls) == (voices, idle, calls)
+
+
 def _bench(**lay):
     """A bench over an image whose init and play only return."""
     body = bytearray(0x1000)

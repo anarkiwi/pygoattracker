@@ -111,8 +111,7 @@ so the decompiled song is the one the player plays.
 `player1.s`–`player4.s`) put the song and pattern tables after the instrument
 tables and have different instrument and table semantics (no speed table); they
 raise a clean `SidParseError` naming them. So do players whose sequencer does
-not read GoatTracker 2's song and pattern tables (interleaved pointer tables,
-stereo builds whose table geometry is not one block).
+not read GoatTracker 2's song and pattern tables (interleaved pointer tables).
 
 Direct-load images decompile with the standard library only. Crunched or
 relocated images have their init routine run in a 6502 emulator first (jennings,
@@ -177,6 +176,22 @@ option wherever the player shows no define, plus the options read from the song
 data (`simplepulse`, `live_vibrato`, `init_regs`); `PlayerBuild.deftempo` (greloc
 `DEFAULTTEMPO`) is its `default_tempo`.
 
+The voice layout is read off the player, not assumed:
+
+- **channels** (`PackedInfo.channels`): the channels the clear loop of the
+  song-init call's `mt_init` covers, two 7-byte variable blocks each; 1, 2, 3, 6
+  and 9 occur. greloc's song table holds three orderlist pointers a song (a
+  player sequencing fewer leaves the rest unread); a stereo packer's holds one
+  a channel (`PackedLayout.channels`).
+- **idle** channels: those whose orderlist pointer the play never reads.
+- **voices**: each channel's register offset from `$D400` (`$20` a chip),
+  where a note planted on it alone writes its envelope; `None` where it reaches no
+  chip (stores patched out), though it still runs and drives its chip's filter.
+  Channels `3n..3n+2` share one filter; the master volume is shared.
+- **calls**: the times one header play call enters the player's own `mt_play`
+  (a wrapper calling it twice is double speed); the build is then measured at
+  `mt_play` itself.
+
 ### NinjaTracker 2
 
 [NinjaTracker 2](http://covertbitops.c64.org) songs (the C64 editor's `N2` work
@@ -218,8 +233,9 @@ validated byte-exactly against a `sidplayfp` oracle
 `play_frame()` returns one PAL frame's changed register writes in ascending
 register order (the first frame returns all 25 registers, since the base
 `MemPlayer` diff has no prior snapshot); `render_grid(nframes)` returns the
-forward-filled 25-register per-frame grid. Not implemented: multispeed playback,
-stereo/2SID, and the editor's jamming / mid-song start modes.
+forward-filled 25-register per-frame grid of `$D400`; a stereo build's other chip
+is written at its own address. Not implemented: the editor's jamming / mid-song
+start modes.
 
 Register logs are one `clock reg val` triple per line (absolute clock in PAL CPU
 cycles, decimal, `#` comments). `write_reglog` / `read_reglog` write and read

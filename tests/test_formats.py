@@ -93,7 +93,7 @@ def test_describe_lines(formats, gt1_raw, gt2_raw):
         "subtunes: 1",
         "patterns: 2",
         "instruments: 1",
-        "options:  simplepulse nowavedelay live_vibrato",
+        "options:  simplepulse live_vibrato nowavedelay",
     ]
     gt1 = formats["goattracker1"]
     song = make_song()

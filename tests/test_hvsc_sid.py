@@ -216,7 +216,7 @@ def test_wrapper_selected_player():
     for subtune in (1, 8):  # songs 2 and 9
         result = sid.decompile_sid(raw, subtune=subtune)
         assert (
-            result.info.wrapper_flush
+            result.info.playback.wrapper_flush
         ), f"song {subtune + 1}: the wrapper-selected ghost-flush build must be the one decoded"
         assert result.player() is not None, f"song {subtune + 1}: no player"
 
@@ -261,7 +261,7 @@ def test_hvsc_corpus_round_trips_through_the_typed_model():
         for addr, packed, held in result.repack():
             assert addr in patterns, rel
             assert pattern_rows(packed, 0)[0] == pattern_rows(held, 0)[0], rel
-        typed = TypedSong.from_song(result.song, result.info.simplepulse)
+        typed = TypedSong.from_song(result.song, result.info.playback.simplepulse)
         assert typed.to_song() == result.song, rel
         checked += 1
     assert checked >= _FULL_SAMPLE_MIN_PASS or len(present) < len(_sample())

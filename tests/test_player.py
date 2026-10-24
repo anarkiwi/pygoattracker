@@ -24,8 +24,9 @@ from pygoattracker.model import (
     Subtune,
     Transpose,
 )
-from pygoattracker.packed import PlayerState
+from pygoattracker.packed import Build, PlayerState
 from pygoattracker.player import Player, iter_frames
+from pygoattracker.typed import TypedSong
 
 from tests.conftest import add_test_instrument, basic_song, note
 
@@ -951,6 +952,34 @@ def test_default_tempo_is_the_build_s():
     assert init_frames(song, default_tempo=5) == init_frames(
         basic_song(rows={row: Row(note=note("C-4"), instrument=1) for row in range(4)})
     )
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"adparam": 0xF0F0, "default_tempo": 3},
+        {"optimize_pulse": False, "optimize_realtime": False, "pulse_step": 2},
+        {"simplepulse": True, "live_vibrato": True},
+        {"wrapper_flush": True, "init_regs": ((0x0E, 0xFF),)},
+    ],
+)
+def test_a_build_plays_as_its_keyword_options(song, options):
+    built = Player(song, build=Build(**options))
+    assert built.build == Build(**options)
+    assert built.render_grid(60) == Player(song, **options).render_grid(60)
+
+
+def test_keyword_options_override_the_build(song):
+    player = Player(song, build=Build(adparam=0x1234, pulse_step=3), adparam=0x10FFFF)
+    assert player.build == Build(adparam=0xFFFF, pulse_step=3)
+
+
+def test_the_song_data_options_read_from_the_player(song):
+    player = Player(song, build=Build(live_vibrato=True))
+    assert (player.simplepulse, player.live_vibrato) == (False, True)
+    typed = Player(TypedSong.from_song(song, True), live_vibrato=False)
+    assert (typed.simplepulse, typed.live_vibrato) == (True, False)
 
 
 def test_init_regs_hold_until_the_player_writes_them(song):

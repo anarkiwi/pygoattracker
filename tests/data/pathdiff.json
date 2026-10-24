@@ -66,19 +66,6 @@
  },
  {
   "compare": "lead",
-  "frames": 11,
-  "id": "912fa2541989",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:818>832')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "01f00c7b91fc510f61bb14f4ff4d93d7",
-  "reason": "pygoattracker/player.py:818 if chan.tick == 0: -> 832: reference frame 2, register $0E v3_freq_lo",
-  "relpath": "MUSICIANS/C/Chiummo_Aldo/Petal_Panic_preview.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
   "frames": 13,
   "id": "b381a384daf1",
   "key": "('first', '6502:edge:879dfcec5eb8d426cdfac3fe', '')",
@@ -154,19 +141,6 @@
   "relpath": "MUSICIANS/S/Snabel/Frogger_Arcade.sid",
   "right": "format:auto",
   "song": 25
- },
- {
-  "compare": "lead",
-  "frames": 10,
-  "id": "ddfecda988ec",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_channel:818>820')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "5c4a2ee10f84327eae7cfe2b2b6fb4a8",
-  "reason": "pygoattracker/player.py:818 if chan.tick == 0: -> 820 || vs: $1246 BEQ $1273 -> $1273: reference frame 1, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/N/Nata/Phobos_2SID.sid",
-  "right": "format:auto",
-  "song": 1
  },
  {
   "compare": "lead",

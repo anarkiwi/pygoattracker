@@ -2,7 +2,8 @@
 
 ``decode`` states the packed bytes as what the packed player does with them;
 ``pack`` re-emits every byte at its address from the typed song and its layout;
-:class:`PlayerBuild` holds the greloc defines :mod:`pygoattracker.probe` measures.
+:class:`PlayerBuild` holds the greloc defines :mod:`pygoattracker.probe` measures,
+and :class:`Build` the playback options they resolve to.
 """
 
 from dataclasses import dataclass, replace
@@ -97,6 +98,50 @@ class PlayerBuild:
     simplepulse: bool | None = None
     funk: tuple | None = None
     wrapper: bool = False
+
+    def resolve(self, **decoded) -> "Build":
+        """The :class:`Build` these defines play with, the editor's where not shown;
+        ``decoded`` the options read from the song data rather than the player."""
+        return Build(
+            adparam=(
+                C.DEFAULT_ADPARAM
+                if self.adparam is None
+                else self.adparam << 8 | self.srparam
+            ),
+            optimize_pulse=True if self.pulseopt is None else self.pulseopt,
+            optimize_realtime=True if self.realtime is None else self.realtime,
+            pulse_step=self.pulsestep or 1,
+            default_tempo=self.deftempo,
+            wrapper_flush=self.wrapper,
+            **decoded,
+        )
+
+
+@dataclass(frozen=True)
+class Build:
+    """The playback options a :class:`~pygoattracker.player.Player` runs with.
+
+    ``adparam``: the hard-restart ADSR (AD high byte, SR low byte);
+    ``optimize_pulse``/``optimize_realtime``: the pulse/realtime command skips;
+    ``pulse_step``: the pulse change a +1 modulation speed makes;
+    ``simplepulse``: the packed SIMPLEPULSE pulse table and code path;
+    ``live_vibrato``: instrument vibrato reads the current instrument's param every
+    tick (greloc NOEFFECTS) instead of the one latched at note init;
+    ``default_tempo``: greloc DEFAULTTEMPO, every channel's starting countdown (None:
+    the editor's instrument-63 rule over tempo 5);
+    ``wrapper_flush``: a play wrapper flushes an all-zero ghost, muting frame one;
+    ``init_regs``: ``(reg, value)`` SID writes of the tune's init routine.
+    """
+
+    adparam: int = C.DEFAULT_ADPARAM
+    optimize_pulse: bool = True
+    optimize_realtime: bool = True
+    pulse_step: int = 1
+    simplepulse: bool = False
+    live_vibrato: bool = False
+    default_tempo: int | None = None
+    wrapper_flush: bool = False
+    init_regs: tuple = ()
 
 
 @dataclass(frozen=True)

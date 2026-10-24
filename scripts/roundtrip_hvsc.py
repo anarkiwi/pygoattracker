@@ -36,7 +36,7 @@ def check(path):
     row["gt2"] = True
     try:
         row["repack"] = [[a, x.hex(), y.hex()] for a, x, y in d.repack()]
-        song = TypedSong.from_song(d.song, d.info.simplepulse).to_song()
+        song = TypedSong.from_song(d.song, d.info.playback.simplepulse).to_song()
         row["song"] = song == d.song
         try:
             row["sng"] = build_sng(song) == build_sng(d.song)

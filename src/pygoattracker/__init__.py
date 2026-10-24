@@ -62,12 +62,13 @@ from pygoattracker.reglog import (
     write_reglog,
 )
 from pygoattracker.writer import build_sng, validate_song, write_sng
-from pygoattracker.packed import PackedLayout, PlayerBuild, PlayerState
+from pygoattracker.packed import Build, PackedLayout, PlayerBuild, PlayerState
 from pygoattracker.typed import TypedSong
 
 __version__ = "0.7.3"
 
 __all__ = [
+    "Build",
     "ConversionError",
     "DecompiledGt1",
     "DecompiledSid",

@@ -28,13 +28,11 @@ def render(data, song, nframes):
         return render_gt1(data, song, nframes)
     d = decompile_sid(data, subtune=song - 1)
     player = d.player()
-    info = asdict(d.info.build)
-    info.update(
-        simplepulse=d.info.simplepulse,
-        nowavedelay=d.info.nowavedelay,
-        live_vibrato=d.info.live_vibrato,
-        state=d.info.state is not None,
-    )
+    measured = asdict(d.info.build)
+    shown = {k: v for k, v in measured.items() if v is not None}
+    info = measured | asdict(d.info.playback) | shown
+    del info["init_regs"]
+    info.update(nowavedelay=d.info.nowavedelay, state=d.info.state is not None)
     return np.asarray(player.render_grid(nframes), np.int16), info
 
 

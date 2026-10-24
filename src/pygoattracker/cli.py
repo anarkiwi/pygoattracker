@@ -122,7 +122,7 @@ def _sid2sng(args) -> None:
     print(f"  subtunes:    {len(song.subtunes)}")
     print(f"  patterns:    {len(song.patterns)}")
     print(f"  instruments: {len(song.instruments)}")
-    print(f"  simplepulse: {result.info.simplepulse}")
+    print(f"  simplepulse: {result.info.playback.simplepulse}")
     print(f"wrote {args.output}")
 
 

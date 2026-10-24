@@ -90,6 +90,16 @@ for _ in range(50 * 60):                  # one minute at 50 Hz
 grid = Player(read_sng("tune.sng")).render_grid(250)   # 250 x 25 register grid
 ```
 
+Playback options default to the editor's; a `Build` (or its field names as
+keywords, which override it) selects others:
+
+```python
+from pygoattracker import Build
+
+Player(song, build=Build(adparam=0x0F00, simplepulse=True))
+Player(song, adparam=0x0F00, simplepulse=True)          # the same player
+```
+
 A decompiled `.sid` plays as its own player build (hard-restart ADSR, default
 tempo, init state, frequency table, pulse code):
 

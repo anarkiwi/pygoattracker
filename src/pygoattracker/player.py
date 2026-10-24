@@ -13,14 +13,14 @@ original tick for tick with its 8-bit wraparound arithmetic. Multispeed playback
 and the editor's jamming/mid-song-start modes are not implemented.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from pysidtracker import MemPlayer
 
 from pygoattracker import constants
 from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Song
-from pygoattracker.packed import PlayerState
+from pygoattracker.packed import Build, PlayerState
 from pygoattracker.typed import TypedSong
 
 _PATT_END = -1
@@ -86,10 +86,8 @@ class Player(MemPlayer):
     :meth:`~pysidtracker.MemPlayer.iter_frames` come from the base; this class
     only builds the playroutine state and runs the per-frame tick.
 
-    Options match the GoatTracker editor defaults: ``adparam`` is the hard
-    restart ADSR parameter, ``optimize_pulse`` and ``optimize_realtime`` are the
-    pulse/realtime command skip optimizations (both enabled in the editor);
-    ``pulse_step`` is the pulse change a +1 modulation speed makes.
+    ``build`` holds the playback options (:class:`~pygoattracker.packed.Build`, the
+    editor's by default); keyword ``options`` override its fields.
     """
 
     MASK_PW_HI = True
@@ -98,20 +96,14 @@ class Player(MemPlayer):
         self,
         song: Song | TypedSong,
         subtune: int = 0,
-        adparam: int = constants.DEFAULT_ADPARAM,
-        optimize_pulse: bool = True,
-        optimize_realtime: bool = True,
-        pulse_step: int = 1,
-        freq_table=None,
-        simplepulse: bool = False,
-        live_vibrato: bool = False,
+        build: Build | None = None,
         state: PlayerState | None = None,
-        default_tempo: int | None = None,
-        init_regs=(),
-        wrapper_flush: bool = False,
+        freq_table=None,
+        **options,
     ):
+        build = replace(build or Build(), **options)
         if isinstance(song, TypedSong):
-            simplepulse = simplepulse or song.simplepulse
+            build = replace(build, simplepulse=build.simplepulse or song.simplepulse)
             song = song.to_song()
         if not 0 <= subtune < len(song.subtunes):
             raise GoatTrackerError(f"no such subtune: {subtune}")
@@ -129,47 +121,26 @@ class Player(MemPlayer):
         self._freq_table = (
             constants.FREQ_TABLE if freq_table is None else tuple(freq_table)
         )
-        # ``simplepulse`` selects the packed player's SIMPLEPULSE pulse code
-        # path (greloc's one-byte pulse optimization), which computes pulse
-        # width differently from the editor player. The pulse table must then
-        # be the PACKED table (greloc's set-pulse byte + swapped speed); see
-        # ``_pulse_exec_simple``. Default False = the editor's full-mod path,
-        # so .SNG / editor playback is unchanged.
-        self.simplepulse = simplepulse
-        # ``live_vibrato`` selects the packed player's instrument-vibrato-only
-        # build (greloc NOEFFECTS != 0, i.e. no pattern-FX machinery). In that
-        # build the continuous instrument-vibrato effect reads its speed-table
-        # param LIVE from the channel's CURRENT instrument every tick
-        # (player.s ``ldy mt_chninstr,y ; lda mt_insvibparam-1,y``), so at a
-        # gate-off boundary -- where mt_getnewnote flips mt_chninstr to the new
-        # note's instrument 1-2 frames before the note inits -- it vibrates the
-        # held (old) frequency with the NEW instrument's param. The default
-        # full-FX build (NOEFFECTS == 0, and the editor's gplay.c) instead
-        # dispatches through ``mt_chnfx``/``mt_chnparam``, a param LATCHED only
-        # at note-init; default False keeps that editor-faithful latched read so
-        # .SNG / editor playback and full-FX packed tunes are unchanged.
-        self.live_vibrato = live_vibrato
-        self.adparam = adparam & 0xFFFF
-        self.optimize_pulse = optimize_pulse
-        self.pulse_step = pulse_step
-        self.optimize_realtime = optimize_realtime
+        self.build = replace(
+            build, adparam=build.adparam & 0xFFFF, init_regs=tuple(build.init_regs)
+        )
         self._init_state = state
-        # A play-wrapper flush build starts from its all-zero ghost: first frame muted.
-        self._wrapper_flush = wrapper_flush
-        # ``default_tempo`` is the packed player's ``DEFAULTTEMPO`` (greloc: the
-        # instrument-63 tempo, else ``multiplier * 6 - 1``), the countdown every
-        # channel starts with. None: the editor's instrument-63 rule over tempo 5.
-        self.default_tempo = default_tempo
-        # ``init_regs``: the ``(reg, value)`` SID writes of the tune's own init
-        # routine (an init stub's, ahead of ``mt_init``), which the chip holds
-        # until the playroutine overwrites them.
-        self._init_regs = tuple(init_regs)
         self.loops = [0] * constants.MAX_CHN
         # MemPlayer has no code image to mount (this is a model-driven, not a
         # 6502-driven, transcription); it seeds ``$D418`` to max volume, runs
         # ``_init`` (below), then snapshots the register file so ``render_grid``
         # emits the same forward-filled 25-register grid the oracle compares.
         super().__init__(b"", 0, subtune)
+
+    @property
+    def simplepulse(self) -> bool:
+        """Whether the packed SIMPLEPULSE pulse code runs."""
+        return self.build.simplepulse
+
+    @property
+    def live_vibrato(self) -> bool:
+        """Whether instrument vibrato reads the current instrument's param."""
+        return self.build.live_vibrato
 
     def _init(self, subtune: int) -> None:
         """Build the playroutine data + state; the first play call inits the song.
@@ -184,7 +155,7 @@ class Player(MemPlayer):
         its song-init call outputs the registers ``state.init`` loads from them.
         Either seeds the channel variables ``state.channels`` init keeps.
         """
-        for reg, value in self._init_regs:
+        for reg, value in self.build.init_regs:
             self._mem[self.SID_BASE + reg] = value
         self._compile(self._song, subtune)
         self._channels = [_Channel() for _ in range(constants.MAX_CHN)]
@@ -224,7 +195,7 @@ class Player(MemPlayer):
         self._filterctrl = 0
         self._filtertime = 0
         self._filterptr = 0
-        self._wrapper_first = self._wrapper_flush
+        self._wrapper_first = self.build.wrapper_flush
         self._state = _INIT
 
     def _frame(self) -> None:
@@ -483,8 +454,8 @@ class Player(MemPlayer):
             self._state = _STOP
 
     def _default_tempo(self) -> int:
-        if self.default_tempo is not None:
-            return self.default_tempo
+        if self.build.default_tempo is not None:
+            return self.build.default_tempo
         last_instr = self._instr[constants.MAX_INSTR - 1]
         if last_instr.ad >= 2 and not last_instr.wave_ptr:
             return last_instr.ad - 1
@@ -691,7 +662,7 @@ class Player(MemPlayer):
             # the note inits -- it vibrates the held (old) frequency with the NEW
             # instrument's param. The full-FX build (NOEFFECTS == 0) and the
             # editor instead use ``cmddata``, the param LATCHED at note-init.
-            if self.live_vibrato:
+            if self.build.live_vibrato:
                 param = self._instr[chan.instr & 0x3F].speed_ptr
             else:
                 param = chan.cmddata
@@ -707,7 +678,7 @@ class Player(MemPlayer):
             self._toneporta(chan, chan.cmddata)
 
     def _pulse_exec(self, chan: _Channel) -> None:
-        if self.simplepulse:
+        if self.build.simplepulse:
             self._pulse_exec_simple(chan)
             return
         ptbl = constants.PTBL
@@ -726,7 +697,7 @@ class Player(MemPlayer):
         speed = self._rt(ptbl, chan.pulse_table_ptr)
         if speed >= 0x80:
             speed -= 0x100
-        chan.pulse = (chan.pulse + speed * self.pulse_step) & 0xFFF
+        chan.pulse = (chan.pulse + speed * self.build.pulse_step) & 0xFFF
         chan.pulsetime = (chan.pulsetime - 1) & 0xFF
         if not chan.pulsetime:
             chan.pulse_table_ptr = (chan.pulse_table_ptr + 1) & 0xFF
@@ -796,8 +767,12 @@ class Player(MemPlayer):
                 if not iptr.gatetimer & 0x40:
                     chan.gate = 0xFE
                     if not iptr.gatetimer & 0x80:
-                        self.regs[constants.AD_REG + 7 * channel] = self.adparam >> 8
-                        self.regs[constants.SR_REG + 7 * channel] = self.adparam & 0xFF
+                        self.regs[constants.AD_REG + 7 * channel] = (
+                            self.build.adparam >> 8
+                        )
+                        self.regs[constants.SR_REG + 7 * channel] = (
+                            self.build.adparam & 0xFF
+                        )
 
     def _write_voice_regs(self, channel: int, chan: _Channel) -> None:
         base = constants.VOICE_REG_SIZE * channel
@@ -839,15 +814,15 @@ class Player(MemPlayer):
                 if chan.gatetimer > chan.tick:
                     self._stop()
             skip_tickn = self._wave_exec(channel, chan)
-        if not skip_tickn and (not self.optimize_realtime or chan.tick):
+        if not skip_tickn and (not self.build.optimize_realtime or chan.tick):
             self._tickn_command(chan)
         # Pulse execution, with the editor's default skip optimizations.
         # A mid-frame stop request still finishes the frame, as in the
         # original (PLAY_STOP only becomes PLAY_STOPPED next call).
         fetch_tick = chan.tick == chan.gatetimer
-        if not (self.optimize_pulse and fetch_tick):
+        if not (self.build.optimize_pulse and fetch_tick):
             if chan.pulse_table_ptr:
-                if self.optimize_pulse and not chan.tick and not chan.pattptr:
+                if self.build.optimize_pulse and not chan.tick and not chan.pattptr:
                     self._write_voice_regs(channel, chan)
                     return
                 self._pulse_exec(chan)

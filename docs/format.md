@@ -28,8 +28,9 @@ byte-identical.
 `.sid` files (PSID/RSID) wrap a 6502 program: the GoatTracker *packed*
 playroutine (as produced by `gt2reloc`) followed by the song data.
 `decompile_sid` locates that data in the loaded image and inverts it back into a
-`Song`. `result.info` carries the packed playroutine options (`freq_table`,
-`simplepulse`) for building a matching `Player`.
+`Song`. `result.info` carries the note table the packed player reads
+(`note_read`) and the playback options it resolves to (`playback`, a `Build`)
+for building a matching `Player`.
 
 `GoatTrackerSidParser` (the `goattracker2` [pysidtracker format](usage.md#pysidtracker-command-line))
 wraps this: `parse(data, subtune=k)` returns the `DecompiledSid` of subtune `k`,
@@ -165,14 +166,16 @@ for note indexes 0-127, which a `Player` takes as its `freq_table`.
 `PackedInfo.state` is the ghost image and the globals the first play call
 starts from, in a full-ghosting build (`GHOSTREGS`), whose `mt_play` copies the
 previous call's ghost to the SID before it runs: a `Player` given a `state`
-outputs each call one call late. `PackedInfo.init_regs` are the SID writes of
+outputs each call one call late. `PackedInfo.playback.init_regs` are the SID writes of
 the tune's own init routine, which the chip holds until the player overwrites
 them. In an image holding several players, the decoded data's own player is the
 code between its jump table and its frequency table (`player_span`); an
 interrupt-driven tune with no play address is probed through that jump table's
 `jmp mt_play`.
-`PlayerBuild.deftempo` (greloc `DEFAULTTEMPO`) is the `Player`'s
-`default_tempo`.
+`PlayerBuild.resolve` gives the `Build` the `Player` runs with: the editor's
+option wherever the player shows no define, plus the options read from the song
+data (`simplepulse`, `live_vibrato`, `init_regs`); `PlayerBuild.deftempo` (greloc
+`DEFAULTTEMPO`) is its `default_tempo`.
 
 ### NinjaTracker 2
 

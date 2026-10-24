@@ -337,11 +337,11 @@ def test_survey_render(packed):
     grid, info = oracle_hvsc.render(packed, 1, 60)
     d = sid.decompile_sid(packed)
     want = Player(
-        d.typed, freq_table=d.info.note_read, simplepulse=d.info.simplepulse
+        d.typed, freq_table=d.info.note_read, simplepulse=d.info.playback.simplepulse
     ).render_grid(60)
     assert grid.shape == (60, 25) and (grid == np.asarray(want)).all()
     assert (np.asarray(oracle_hvsc.player(packed, 1).render_grid(60)) == grid).all()
-    assert json.loads(json.dumps(info))["simplepulse"] == d.info.simplepulse
+    assert json.loads(json.dumps(info))["simplepulse"] == d.info.playback.simplepulse
     assert {"adparam", "firstnohr", "pulseopt", "realtime", "state"} <= set(info)
     with pytest.raises(pysidtracker.SidParseError):
         oracle_hvsc.render(b"PSID" + b"\0" * 200, 1, 10)
@@ -354,29 +354,41 @@ def test_init_regs_are_the_init_routine_s_sid_writes():
     code = bytes.fromhex("A9 20 8D 12 D4 A9 FF 8D 0E D4 8D 0F D4 8D 20 D4 A9 00")
     code += bytes([0x4C, LOAD & 0xFF, LOAD >> 8])
     d = sid.decompile_sid(_psid(data + code, init=stub, play=LOAD + 3))
-    assert d.info.init_regs[:3] == ((0x0E, 0xFF), (0x0F, 0xFF), (0x12, 0x20))
+    assert d.info.playback.init_regs[:3] == ((0x0E, 0xFF), (0x0F, 0xFF), (0x12, 0x20))
     assert all(
         r not in (0x0E, 0x0F, 0x12)
-        for r, _ in sid.decompile_sid(_minimal_packed()).info.init_regs
+        for r, _ in sid.decompile_sid(_minimal_packed()).info.playback.init_regs
+    )
+
+
+def _redefine(d, **defines):
+    """``d`` playing its build with ``defines`` replaced, the song-data options kept."""
+    pb = d.info.playback
+    d.info.build = dataclasses.replace(d.info.build, **defines)
+    d.info.playback = d.info.build.resolve(
+        simplepulse=pb.simplepulse, live_vibrato=pb.live_vibrato, init_regs=pb.init_regs
     )
 
 
 def test_player_uses_the_build_s_hard_restart_adsr():
     d = sid.decompile_sid(_minimal_packed())
     stock = d.player()
-    assert stock.adparam == constants.DEFAULT_ADPARAM
-    d.info.build = dataclasses.replace(d.info.build, adparam=0xFF, srparam=0x01)
+    assert stock.build.adparam == constants.DEFAULT_ADPARAM
+    _redefine(d, adparam=0xFF, srparam=0x01)
     player = d.player()
-    assert player.adparam == 0xFF01
+    assert player.build.adparam == 0xFF01
     assert player.render_grid(60) != stock.render_grid(60)
 
 
 def test_player_uses_the_build_s_pulse_and_realtime_optimizations():
     d = sid.decompile_sid(_minimal_packed())
     stock = d.player()
-    assert (stock.optimize_pulse, stock.optimize_realtime) == (True, True)
-    d.info.build = dataclasses.replace(d.info.build, pulseopt=None, realtime=True)
-    assert d.player().optimize_pulse is True  # None stays the editor default
-    d.info.build = dataclasses.replace(d.info.build, pulseopt=False, realtime=False)
+    assert (stock.build.optimize_pulse, stock.build.optimize_realtime) == (True, True)
+    _redefine(d, pulseopt=None, realtime=True)
+    assert d.player().build.optimize_pulse is True  # None stays the editor default
+    _redefine(d, pulseopt=False, realtime=False)
     player = d.player()
-    assert (player.optimize_pulse, player.optimize_realtime) == (False, False)
+    assert (player.build.optimize_pulse, player.build.optimize_realtime) == (
+        False,
+        False,
+    )

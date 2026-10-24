@@ -122,3 +122,34 @@ def test_a_pattern_reads_one_row_before_its_end_mark():
         T.Row(T.KeyOn(), 0, T.DoNothing()),
         T.Row(T.Rest(), None, None, 1),
     )
+
+
+def test_a_build_showing_no_define_resolves_to_the_editor_s():
+    assert P.PlayerBuild().resolve() == P.Build()
+    assert P.PlayerBuild().resolve(simplepulse=True, init_regs=((1, 2),)) == P.Build(
+        simplepulse=True, init_regs=((1, 2),)
+    )
+
+
+def test_a_build_s_defines_resolve_to_its_playback_options():
+    build = P.PlayerBuild(
+        adparam=0x0F,
+        srparam=0x01,
+        pulseopt=False,
+        pulsestep=4,
+        realtime=False,
+        deftempo=7,
+        wrapper=True,
+    )
+    assert build.resolve(live_vibrato=True) == P.Build(
+        adparam=0x0F01,
+        optimize_pulse=False,
+        optimize_realtime=False,
+        pulse_step=4,
+        live_vibrato=True,
+        default_tempo=7,
+        wrapper_flush=True,
+    )
+    assert (
+        P.PlayerBuild(pulseopt=True, realtime=True, pulsestep=0).resolve() == P.Build()
+    )

@@ -1,19 +1,6 @@
 [
  {
   "compare": "lead",
-  "frames": 10,
-  "id": "2554ab9ef6be",
-  "key": "('first', '6502:edge:1ec93d046777ca00909de6f0', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "2022b13577db91d9938f6fed22171beb",
-  "reason": "$10ED BMI $1124 -> $1124 || vs: pygoattracker/player.py:818 if chan.tick == 0: -> 820: reference frame 1, register $0B v2_ctrl",
-  "relpath": "GAMES/A-F/Doc_Cosmos.sid",
-  "right": "format:auto",
-  "song": 2
- },
- {
-  "compare": "lead",
   "frames": 23,
   "id": "34fb4bcbdec4",
   "key": "('first', '6502:edge:53cee856c20550270dc630ab', '')",

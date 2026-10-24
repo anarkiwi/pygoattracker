@@ -95,8 +95,8 @@ class PlayerBuild:
     ``funk``: the funk tempo table a ghost build's first play call starts from;
     ``channels``: the channels the player inits; ``idle``: those its play never
     runs; ``voices``: each one's register offset from ``$D400`` (``$20`` a chip),
-    None where its registers reach no chip; ``calls``: player calls a play call
-    makes.
+    None where its registers reach no chip; ``overlay``: each one's ``(and, or)``
+    on the control byte it writes; ``calls``: player calls a play call makes.
     """
 
     ghost: int | None = None
@@ -117,6 +117,7 @@ class PlayerBuild:
     channels: int | None = None
     idle: tuple = ()
     voices: tuple | None = None
+    overlay: tuple | None = None
     calls: int = 1
 
     def resolve(self, **decoded) -> "Build":
@@ -136,6 +137,7 @@ class PlayerBuild:
             voices=self.voices or default_voices(self.channels),
             calls=self.calls,
             idle=self.idle,
+            overlay=self.overlay,
             **decoded,
         )
 
@@ -156,7 +158,8 @@ class Build:
     ``init_regs``: ``(reg, value)`` SID writes of the tune's init routine;
     ``voices``: each channel's register offset from ``$D400`` (``$20`` a chip, None:
     silent; None: channel ``c`` on chip ``c // 3``, voice ``c % 3``);
-    ``calls``: player ticks a frame runs; ``idle``: channels the play never runs.
+    ``calls``: player ticks a frame runs; ``idle``: channels the play never runs;
+    ``overlay``: each channel's ``(and, or)`` on its control byte (None: as written).
     """
 
     adparam: int = C.DEFAULT_ADPARAM
@@ -171,6 +174,7 @@ class Build:
     voices: tuple | None = None
     calls: int = 1
     idle: tuple = ()
+    overlay: tuple | None = None
 
 
 @dataclass(frozen=True)

@@ -15,12 +15,12 @@
  {
   "compare": "lead",
   "frames": 11,
-  "id": "b5477d432f8f",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_call:263>265')",
+  "id": "40cebc9eda99",
+  "key": "('first', '', 'python:edge:Player._play_call:d4740da4359f>a721b1dd02ea')",
   "kind": "first",
   "left": "6502",
   "md5": "280e16fe5a0b2c4fe11dab10f87c68d9",
-  "reason": "pygoattracker/player.py:263 if self._state == _STOPPED: -> 265: reference frame 2, register $0E v3_freq_lo",
+  "reason": "pygoattracker/player.py:287 if self._state == _STOPPED: -> 289: reference frame 2, register $0E v3_freq_lo",
   "relpath": "GAMES/S-Z/Space_Game_2024.sid",
   "right": "format:auto",
   "song": 3
@@ -33,7 +33,7 @@
   "kind": "first",
   "left": "6502",
   "md5": "0bbcff7ff49252aae46977043f5cb719",
-  "reason": "$10FF BMI $1131 -> $1131 || vs: pygoattracker/player.py:255 if self._state == _INIT: -> 260: reference frame 1, register $00 v1_freq_lo",
+  "reason": "$10FF BMI $1131 -> $1131 || vs: pygoattracker/player.py:279 if self._state == _INIT: -> 284: reference frame 1, register $00 v1_freq_lo",
   "relpath": "MUSICIANS/N/Nata/Secret_of_Blue_Water.sid",
   "right": "format:auto",
   "song": 1
@@ -41,12 +41,12 @@
  {
   "compare": "lead",
   "frames": 10,
-  "id": "c08d8beb4448",
-  "key": "('first', '', 'python:edge:pygoattracker/player.py:Player._play_call:255>260')",
+  "id": "268dd054a5bc",
+  "key": "('first', '', 'python:edge:Player._play_call:176e368e2b4e>e03420d38078')",
   "kind": "first",
   "left": "6502",
   "md5": "d6d8dc8e9a97fddbde010fba151492e8",
-  "reason": "pygoattracker/player.py:255 if self._state == _INIT: -> 260: reference frame 1, register $15 fc_lo",
+  "reason": "pygoattracker/player.py:279 if self._state == _INIT: -> 284: reference frame 1, register $15 fc_lo",
   "relpath": "MUSICIANS/G/Groepaz/I_Dont_Know_What_I_Am_Doing.sid",
   "right": "format:auto",
   "song": 1

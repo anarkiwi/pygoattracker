@@ -119,4 +119,7 @@ probe measures (or cannot show) across the GoatTracker 2 tunes.
 `scripts/gt1_versions.py $HVSC tunes.csv` tabulates the `GoatTracker_V1.x`
 tunes by embedded playroutine and can write a per-version sample `tunes.csv`.
 
+To diff a single tune against the oracle, use `pysidtracker`'s `whydiff` / `survey diff`
+(`gridcmp.lead_report` / `window_report`).
+
 `.hvsc-survey/` is gitignored; its CSVs derive from copyright tunes.

@@ -9,13 +9,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pysidtracker import registers as reg
-from pysidtracker.emu import observe_data_access, set_iomap, wire_mpu
+from pysidtracker.emu import observe_data_access, run_to_rts
 from pysidtracker.image import SidImage
-from pysidtracker.oracle import DRIVER_VOLUME as _DRIVER_VOLUME
-from pysidtracker.oracle import SID_VOLUME as _VOLUME
-from pysidtracker.poweron import power_on_ram, psid_init_bank, psid_play_bank
+from pysidtracker.oracle import boot_flat
 from vagrant_moses import memmap as mm
-from vagrant_moses.cpu import run_to_rts
 
 from pygoattracker import constants as C
 from pygoattracker.packed import NONE, PlayerBuild, PlayerState, columns, pattern_bytes
@@ -61,7 +58,6 @@ _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
 _BOOT_CYCLES = 8_000_000
-_VIDEO = 0x02A6  # KERNAL PAL/NTSC flag: 1 PAL
 
 
 class ProbeMiss(Exception):
@@ -76,25 +72,25 @@ def _call(mpu, mem, play):
 
 
 def boot(image, subtune=0, buf=None, init_run=None):
-    """``(subject, mpu, mem, play)``: ``image`` after its init, booted as
-    :func:`~pysidtracker.oracle.boot_flat` with the KERNAL's PAL/NTSC flag the PSID
-    driver sets, and ``buf``'s ``{address: byte}`` planted in RAM, where an init
-    that copies song data put it. ``init_run(subject, mpu, mem, address, subtune)``
-    runs the init in place of :func:`~vagrant_moses.cpu.run_to_rts`."""
-    h = image.header
-    subject = power_on_ram()
-    subject[image.load : image.load + len(image.image)] = image.image
-    subject[_VOLUME] = _DRIVER_VOLUME
-    subject[_VIDEO] = int(not (h.version >= 2 and (h.flags >> 2) & 3 == 2))
-    start = h.init_address or h.real_load_address
-    subject[1] = psid_init_bank(start)
-    mpu, mem = wire_mpu(subject, True, reg.sid_model_for_flags(h.flags))
-    if init_run is None:
-        run_to_rts(mpu, mem, start, subtune, _BOOT_CYCLES)
-    else:
-        init_run(subject, mpu, mem, start, subtune)
-    play = h.play_address or start
-    set_iomap(mpu, psid_play_bank(play))
+    """``(subject, mpu, mem, play)``: ``image`` after its init, booted by
+    :func:`~pysidtracker.oracle.boot_flat`, and ``buf``'s ``{address: byte}`` planted
+    in RAM, where an init that copies song data put it. ``init_run(subject, mpu, mem,
+    address, subtune)`` runs the init in place of
+    :func:`~pysidtracker.emu.run_to_rts`."""
+    box = []
+
+    def setup(_mpu, subject):
+        box.append(subject)
+
+    run = None
+    if init_run is not None:
+
+        def run(mpu, mem, address, song, _max_cycles):
+            init_run(box[0], mpu, mem, address, song)
+
+    subject, mpu, mem, play = boot_flat(
+        image, subtune, _BOOT_CYCLES, setup=setup, init_run=run
+    )
     for addr, value in (buf or {}).items():
         subject[addr] = value
     return subject, mpu, mem, play

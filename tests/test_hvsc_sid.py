@@ -25,8 +25,9 @@ parse raises :class:`SidParseError`, which the test tallies rather than
 asserting against):
 
   * GoatTracker **V1.x** tunes, decoded by :mod:`pygoattracker.gt1` instead.
-  * The **GoatTracker 2.0x** precompiled players, whose song tables follow the
-    instrument tables.
+  * The binary-relocator players of **GoatTracker V2.0-V2.28** (before V2.29's
+    assembler-based relocator), whose song tables follow the instrument and
+    wave/pulse/filter tables (#86).
 
 Most of the sampled corpus is in scope and must decompile; the remainder
 raises a clean ``SidParseError`` (never any other exception).
@@ -304,3 +305,40 @@ def test_hvsc_corpus_resolves_overclaimed_songs():
         "no over-claimed song resolved to a decodable subtune; "
         "song selection is not following the player's own init"
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SidParseError,
+    reason="#86: GoatTracker V2.0-V2.28 binary-relocator layout not decoded",
+)
+@pytest.mark.parametrize(
+    "rel",
+    [
+        # player1b (fixed gatetimer/firstwave): 7 instrument columns.
+        "MUSICIANS/R/Rusty46/A_Love_Story.sid",
+        # full 9-column player, no octave 0 (firstnote 12).
+        "MUSICIANS/R/Rusty46/Freestyle.sid",
+        # full 9-column player, full frequency table.
+        "MUSICIANS/R/Rusty46/Grandmas_Toe_Jam.sid",
+    ],
+)
+def test_binary_relocator_players_decompile(rel):
+    result = sid.decompile_sid(_tune(rel))
+    assert result.song.subtunes and result.song.patterns and result.song.instruments
+    assert result.player() is not None
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SidParseError,
+    reason="#87: greloc's empty song (zero-length orderlists) read as an orderlist",
+)
+@pytest.mark.parametrize(
+    "rel",
+    ["MUSICIANS/B/Booker/Hz_Jazz.sid", "MUSICIANS/X/X-agon/Accept_All_Cookies.sid"],
+)
+def test_empty_packed_song_is_not_an_orderlist(rel):
+    result = sid.decompile_sid(_tune(rel))
+    assert len(result.song.subtunes) == result.header.songs == 1
+    assert result.player() is not None

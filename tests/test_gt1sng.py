@@ -16,6 +16,7 @@ from pygoattracker.gt1player import Gt1Player
 from pygoattracker.gt1sng import (
     Gt1Sng,
     LAYOUT_V093,
+    LAYOUT_V153,
     parse_gts1,
     relocate,
     write_gts1,
@@ -628,3 +629,21 @@ def test_to_gt2_requires_an_editor_song():
     v125 = parse_gts1(goatold_song("GOATCLAS.SNG"))
     with pytest.raises(SngParseError):
         v125.to_gt2()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SngParseError,
+    reason="#42: V1.x Stereo GTS! (6 orderlists a subtune) is read as 3 channels",
+)
+def test_v153_stereo_parses_six_channels_and_round_trips():
+    orderlists = [[b"\x00\xff\x00"] * 3 + [b"\x01\xff\x00"] * 3]
+    data = _sng(
+        orderlists=orderlists,
+        patterns=[_REST_ROW + _END_ROW] * 2,
+        filtertable=bytes(256),
+    )
+    song = parse_gts1(data)
+    assert song.sng.layout == LAYOUT_V153
+    assert song.orderlists == orderlists
+    assert write_gts1(song) == data

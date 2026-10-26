@@ -405,3 +405,29 @@ def test_voices_fold_onto_the_chips_the_header_declares():
     assert sid._chips(bytes(raw)) == {0}
     assert sid._mirror((0, 0x27, 0x47, None), {0, 1}) == (0, 0x27, 0x07, None)
     assert sid._mirror(None, {0}) is None
+
+
+def _image(packed):
+    return packed[0x7C + 2 :]
+
+
+def test_prg_and_bin_match_psid(packed, tmp_path):
+    want = sid.decompile_sid(packed)
+    prg = LOAD.to_bytes(2, "little") + _image(packed)
+    for got in (
+        sid.decompile_sid(prg),
+        sid.decompile_sid(_image(packed), load_address=LOAD),
+    ):
+        # no header, so no title/author/copyright
+        assert dataclasses.replace(
+            got.typed, name="", author="", copyright=""
+        ) == dataclasses.replace(want.typed, name="", author="", copyright="")
+        assert got.repack() == want.repack()
+    path = tmp_path / "out.bin"
+    path.write_bytes(_image(packed))
+    assert sid.read_sid(path).subtunes == sid.read_sid(packed).subtunes
+
+
+def test_too_short_prg_rejected():
+    with pytest.raises(sid.SidParseError):
+        sid.decompile_sid(b"\x00\x10")

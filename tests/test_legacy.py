@@ -190,11 +190,11 @@ def test_gts1_arpeggio_conversion(gts1):
 def test_gts1_instrument_flags(gts1):
     assert len(gts1.instruments) == 3
     lead, clone, hat = gts1.instruments
-    # First wave 0 turned into the legato flag for all instruments.
-    assert lead.gateoff_timer == 0x40
-    assert clone.gateoff_timer == 0x40
+    # GT2.76's clearinstr() defaults: gatetimer 2, first wave $09.
+    assert (lead.gateoff_timer, lead.first_wave) == (2, 9)
+    assert (clone.gateoff_timer, clone.first_wave) == (2, 9)
     # GT1's pulse LSB set the no-hardrestart flag.
-    assert hat.gateoff_timer == 0xC0
+    assert (hat.gateoff_timer, hat.first_wave) == (0x82, 9)
     assert hat.name == "HAT"
 
 
@@ -323,3 +323,11 @@ def test_gts4_conversions():
     # No pulse doubling for GTS4, but the legato conversion applies.
     assert parsed.pulsetable.right == [0x05, 0x00]
     assert parsed.instruments[0].gateoff_timer == 0x42
+
+
+def test_gts1_multiplier_seeds_gatetimer():
+    song = parse_sng(build_gts1(), convert=True, multiplier=3)
+    assert all(i.gateoff_timer & 0x3F == 6 for i in song.instruments)
+    assert all(i.first_wave == 9 for i in song.instruments)
+    song = parse_sng(build_gts1(), convert=True, multiplier=0)
+    assert all(i.gateoff_timer & 0x3F == 1 for i in song.instruments)

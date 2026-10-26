@@ -67,10 +67,13 @@ def validate_song(song: Song) -> None:
         f"more than {constants.MAX_INSTR - 1} instruments",
     )
 
+    nchan = len(song.subtunes[0].channels) if song.subtunes else constants.MAX_CHN
     for s_num, subtune in enumerate(song.subtunes):
         _check(
-            len(subtune.channels) == constants.MAX_CHN,
-            f"subtune {s_num} must have {constants.MAX_CHN} channels",
+            len(subtune.channels) == nchan
+            and nchan in (constants.MAX_CHN, constants.MAX_CHN_STEREO),
+            f"subtune {s_num} must have {constants.MAX_CHN} or "
+            f"{constants.MAX_CHN_STEREO} channels, the same in every subtune",
         )
         for c_num, orderlist in enumerate(subtune.channels):
             what = f"orderlist (subtune {s_num}, channel {c_num})"

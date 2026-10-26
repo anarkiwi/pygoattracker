@@ -5,9 +5,10 @@ Hermetic: span images are player.s fragments at fixed addresses; data images are
 """
 
 import itertools
+from dataclasses import replace
 
 import pytest
-from pysidtracker import SidImage
+from pysidtracker import SidImage, TunePlayer
 
 from pygoattracker import constants as C
 from pygoattracker import packed as P
@@ -15,7 +16,7 @@ from pygoattracker import sid
 from pygoattracker import typed as T
 from pygoattracker.model import Orderlist, PlayPattern, Repeat, Transpose
 from pygoattracker.player import Player
-from tests.test_sid import _minimal_packed
+from tests.test_sid import DATA, _minimal_packed
 
 TEMPO = "A9 05 9D 10 20 A9 01 9D 11 20 9D 12 20"
 
@@ -172,3 +173,39 @@ def test_voices_resolve_from_the_channels_shown():
     assert P.PlayerBuild(channels=2).resolve().voices == (0, 7)
     assert P.PlayerBuild(channels=4).resolve().voices == (0, 7, 14, 0x20)
     assert P.PlayerBuild(channels=2, voices=(14, None)).resolve().voices == (14, None)
+
+
+def _without_pattern_effects(raw: bytes) -> bytes:
+    """``raw`` with every pattern command a no-op, packed into its own layout."""
+    d = sid.decompile_sid(raw)
+    plain = tuple(
+        tuple(
+            r if r.command is None else replace(r, command=T.DoNothing())
+            for r in pattern
+        )
+        for pattern in d.typed.patterns
+    )
+    out = bytearray(raw)
+    start = d.header.data_start - d.header.real_load_address
+    for addr, data in P.pack(replace(d.typed, patterns=plain), d.info):
+        out[start + addr : start + addr + len(data)] = data
+    return bytes(out)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#48: NOEFFECTS (live_vibrato) is inferred from the song's commands, "
+    "not read from the player",
+)
+@pytest.mark.parametrize("subtune", [0, 1])
+def test_a_player_keeping_its_effect_code_plays_a_song_without_commands(subtune):
+    # gt2_full's player assembles the full effect path (NOEFFECTS=0); a song
+    # left with no pattern or wavetable command still latches vibrato at note-init.
+    raw = _without_pattern_effects((DATA / "gt2_full.sid").read_bytes())
+    d = sid.decompile_sid(raw, subtune=subtune)
+    assert d.repack() == []
+    frames = 120
+    assert d.player().render_grid(frames) == TunePlayer(raw, subtune).render_grid(
+        frames
+    )

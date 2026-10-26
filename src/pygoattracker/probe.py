@@ -447,6 +447,41 @@ def _vibinit(bench):
     return moves(SetAD(0x0F))
 
 
+def _noeffects(bench):
+    """Whether instrument vibrato reads the channel's current instrument every tick
+    (greloc NOEFFECTS) rather than the parameter latched at note init, of the
+    non-binary players: a second note's fetch flips the current instrument while the
+    first note is held, so a live read vibrates the held frequency with the second
+    instrument's parameter, where a latched one holds it until that note inits (None:
+    no instrument vibrato shows)."""
+    lay = bench.lay
+    if lay.binary or not (lay.vib and lay.num_instr >= 2):
+        return None
+    if not (lay.slen or lay.inline):
+        return None
+    first, second = bench.pitches(2)
+    voice = (Row(first, 1), Row(second, 2), _REST)
+    tables = {"wave": _WAVE}
+    if not lay.inline:
+        tables["speed"] = _SEEN[: 1 + bool(lay.slen)]
+
+    def after(vib):
+        over = {1: {}, 2: {"vib": vib, "vibdelay": 1}}
+        grid = bench.grid([voice], over, tables, 64, _two)
+        notes = _notes(grid)
+        if not notes:
+            return None
+        later = grid[notes[0] + 1 :, :2]
+        moved = np.flatnonzero((later != grid[notes[0], :2]).any(axis=1))
+        return tuple(later[moved[0]]) if moved.size else None
+
+    still = after(0)
+    seen = after(_INLINESEEN if lay.inline else 1)
+    if still is None or seen is None:
+        return None
+    return seen != still
+
+
 def _simplepulse(run):
     """SIMPLEPULSE stores a set row's one byte to both pulse registers."""
     sets = {(0x5C, 0x0A): False, (0x5C, 0x0C): True}
@@ -933,6 +968,7 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         wavedelay=wavedelay,
         lowdelay=None if wavedelay is not False else _shown(_lowdelay, bench),
         vibinit=_shown(_vibinit, bench),
+        noeffects=_shown(_noeffects, bench),
         simplepulse=_simplepulse(run),
         funk=None if row is None or ghost is None else _shown(_funk, bench, row),
         wrapper=wrapper,

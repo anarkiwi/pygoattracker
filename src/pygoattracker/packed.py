@@ -120,7 +120,9 @@ class PlayerBuild:
     ``wavedelay``: waveforms are shifted up $10 behind a delay test of $01-$0F (False:
     stored as they are); ``lowdelay``: a player storing waveforms as they are still
     delays $01-$07, before v2.18; ``vibinit``: a note's init loads the instrument's
-    vibrato parameter (False: only an effect 0 on its row does).
+    vibrato parameter (False: only an effect 0 on its row does);
+    ``noeffects``: instrument vibrato reads the current instrument live (greloc
+    NOEFFECTS), not the parameter latched at note init.
     """
 
     ghost: int | None = None
@@ -138,6 +140,7 @@ class PlayerBuild:
     lowdelay: bool | None = None
     vibinit: bool | None = None
     simplepulse: bool | None = None
+    noeffects: bool | None = None
     funk: tuple | None = None
     wrapper: bool = False
     channels: int | None = None

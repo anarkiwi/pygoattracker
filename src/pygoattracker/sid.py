@@ -414,6 +414,16 @@ def _all_anchors(image):
     return kept
 
 
+def _played_anchor(after, anchor, pcs):
+    """The frequency-table anchor of the player whose jump table the init ran, else
+    ``anchor``: a wrapper bundling several players runs the one its song selects."""
+    for found in _all_anchors(after):
+        start = player_span(after, found[0]).start
+        if start is not None and start in pcs:
+            return found
+    return anchor
+
+
 def _finish(decoded, song):
     """``decoded`` narrowed to the selected song, else a clean ``SidParseError``."""
     if not 0 <= song < len(decoded.song.subtunes):
@@ -510,6 +520,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     for addr, (org, exact, *_) in traced[0].cells.items():
         if exact and org is not None and org != addr:
             copies.setdefault(org, []).append(addr)
+    anchor = _played_anchor(after, anchor, traced[0].pcs)
     t = song_tables((*booted[:3], play or booted[3]), traced[0])
 
     def pointers(lo, hi, n):
@@ -529,6 +540,11 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
         olist, nxt = decode_packed_orderlist(mem, addr)
         orderlists.append(olist)
         orders.append(nxt - addr)
+    # a player sequencing fewer channels than greloc lays leaves the rest's pointers
+    # unread, where a packer may point them anywhere, into the player's own code
+    for k in range(len(orders)):
+        if k % t.stride >= t.channels:
+            orders[k] = 0
     sizes = tuple(pattern_rows(mem, a)[1] - a for a in patt_addrs)
     lay = PackedLayout(
         *anchor,

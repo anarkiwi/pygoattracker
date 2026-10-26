@@ -23,6 +23,7 @@ from pygoattracker.typed import (
     PortamentoUp,
     Rest,
     Row,
+    SetAD,
     SetTempo,
     TonePortamento,
     Vibrato,
@@ -41,11 +42,15 @@ _BASE = dict(ad=0x5A, sr=0xC3, wave=1, pulse=0, filt=0, vib=0, vibdelay=0)
 _BASE.update(gate=1, first=0x09)
 _WAVE = ((0x51, 0x80), (C.TABLEJUMP, 0))  # waveform $41 after mt_wavexec's sbc #$10
 _SETPULSE = ((0x8A, 0x5C), (C.TABLEJUMP, 0))  # set $A5C, stop
+_LOWDELAY = ((0x02, 0x80), (0x51, 0x80), (C.TABLEJUMP, 0))  # a delay, else waveform 2
 _MODPULSE = ((0x7F, 0x01), (C.TABLEJUMP, 1))  # +1 a frame, looping
 _TOGGLEPULSE = ((0x88, 0x11), (0x89, 0x22), (C.TABLEJUMP, 1))  # two sets, looping
 _FILTER = ((0x90, _FILTCTRL), (C.TABLEJUMP, 0))  # lowpass, resonance and voice 1
 _CALCSPEED = (0x81, 0x01)  # half the note's semitone step (or 1) a call
 _SLOWVIB = (0x40, 0x01)  # a vibrato turning only after 32 calls
+_INLINEVIB = 0x0F  # an inline vibrato parameter of depth 15 and speed 0
+_SEEN = ((0x01, 0x10), (0x01, 0x10))  # a vibrato row that moves the frequency at once
+_INLINESEEN = 0x11  # the same inline: depth 1, speed $10
 _VIBDELAYS = (0x30, 0x28)
 _REST = Row(Rest(), None, None, 24)
 _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
@@ -135,7 +140,11 @@ class Bench:
             "pulse": (pulse, lay.plen, lay.plen),
             "filt": (filt, lay.flen, lay.flen),
             # parameter p reads mt_speedlefttbl-1+p and mt_speedrighttbl-1+p
-            "speed": (speed + lay.zeros - 1, lay.slen + 1, lay.slen + lay.zeros),
+            "speed": (
+                (speed, 0, 0)
+                if lay.inline
+                else (speed + lay.zeros - 1, lay.slen + 1, lay.slen + lay.zeros)
+            ),
         }
 
     def pitches(self, count):
@@ -402,6 +411,41 @@ def _wavedelay(run, wave=_WAVE[0][0]):
     )
 
 
+def _lowdelay(bench):
+    """Before v2.18 a player storing waveforms as they are delays a left byte of
+    $01-$07: it holds the first frame's waveform, where a build without delays
+    sounds the byte as a waveform (None: no wavetable shows it)."""
+    run = _melody(bench, wave=_LOWDELAY)
+    if not len(run.notes):
+        return None
+    span = run.grid[run.notes[0] : run.notes[0] + 4, _CTRL]
+    return not (span == _LOWDELAY[0][0] | 1).any()
+
+
+def _vibinit(bench):
+    """Whether a note's init loads the instrument's vibrato parameter: a note under
+    another effect vibrates only then, where it takes the instrument vibrato's own
+    effect 0 on the row to load it (None: no instrument vibrato shows)."""
+    lay = bench.lay
+    if not (lay.vib and (lay.slen or lay.inline)):
+        return None
+    note = bench.pitches(1)[0]
+    over = {"vib": _INLINESEEN if lay.inline else 1, "vibdelay": 1}
+    tables = {"wave": _WAVE}
+    if not lay.inline:
+        tables["speed"] = _SEEN[: 1 + bool(lay.slen)]
+
+    def moves(command):
+        voice = (Row(note, 1, command), _REST)
+        grid = bench.grid([voice], {1: over}, tables, 16)
+        notes = _notes(grid)
+        return bool(notes) and len({tuple(r) for r in grid[notes[0] :, :2]}) > 1
+
+    if not moves(None):
+        return None
+    return moves(SetAD(0x0F))
+
+
 def _simplepulse(run):
     """SIMPLEPULSE stores a set row's one byte to both pulse registers."""
     sets = {(0x5C, 0x0A): False, (0x5C, 0x0C): True}
@@ -570,12 +614,13 @@ def _steps(start, step, count=4):
     )
 
 
-def _countdown(start):
-    """A match for stores counting ``start`` down to zero, where they stay."""
-    want = list(range(start, -1, -1))
+def _countdown(start, floor=0):
+    """A match for stores counting ``start`` down to ``floor``, where they stay."""
+    want = list(range(start, floor - 1, -1))
+    after = (floor - 1) & 0xFF
     return lambda seq, _: any(
-        seq[k : k + start + 1] == want and 0xFF not in seq[k + start + 1 :]
-        for k in range(len(seq) - start)
+        seq[k : k + len(want)] == want and after not in seq[k + len(want) :]
+        for k in range(len(seq) - len(want) + 1)
     )
 
 
@@ -598,43 +643,107 @@ def _lastnote(bench):
     return first & second
 
 
-def _vibtime(bench):
+def _vib(lay):
+    """The instrument vibrato column byte of a probe: speed row 1, or the inline
+    parameter where the player has no speed table."""
+    return _INLINEVIB if lay.inline else 1
+
+
+def _held(subject, base, bias=0):
+    """Each channel's byte of the variable at ``base`` (channel 0's), by the
+    Player's count."""
+    values = (subject[base + c * C.VOICE_REG_SIZE] for c in range(C.MAX_CHN))
+    return tuple(v + bias for v in values)
+
+
+def _unique(bases):
+    """The one base of ``bases``, else None."""
+    return next(iter(bases)) if len(bases) == 1 else None
+
+
+def _lastnote_var(bench, subject):
+    base = _unique(_lastnote(bench))
+    return None if base is None else _held(subject, base)
+
+
+def _vibtime(bench, subject):
     """``mt_chnvibtime``: the store a vibrato steps by two each call, from an
     instrument vibrato where the build has one, else the pattern command."""
     lay = bench.lay
-    tables = {"wave": _WAVE, "speed": (_SLOWVIB,) * (1 + bool(lay.slen))}
-    if lay.vib and lay.slen:
-        voice, over = (Row(bench.pitches(1)[0], 1), _REST), {"vib": 1}
+    tables = {"wave": _WAVE}
+    if not lay.inline:
+        tables["speed"] = (_SLOWVIB,) * (1 + bool(lay.slen))
+    if lay.vib and (lay.slen or lay.inline):
+        voice, over = (Row(bench.pitches(1)[0], 1), _REST), {"vib": _vib(lay)}
     else:
         voice, over = (Row(bench.pitches(1)[0], 1, Vibrato(1)), _REST), {}
-    return _stores(bench, bench.plant([voice], {1: over}, tables), _steps(2, 2))
+    base = _unique(
+        _stores(bench, bench.plant([voice], {1: over}, tables), _steps(2, 2))
+    )
+    return None if base is None else _held(subject, base)
 
 
-def _vibdelay(bench):
+def _vibdelay(bench, subject):
     """``mt_chnvibdelay``: the store two instrument vibrato delays each count down
-    to zero and stop at, under a vibrato of speed two so no register slides alike."""
+    to zero and stop at, under a vibrato of speed two so no register slides alike;
+    the binary relocator's players keep the delay as it is and stop at one, which
+    :class:`~pygoattracker.player.Player` counts the same."""
     lay = bench.lay
-    if not (lay.vib and lay.slen):
+    if not (lay.vib and (lay.slen or lay.inline)):
         raise ProbeMiss("no instrument vibrato")
-    tables = {"wave": _WAVE, "speed": ((_SLOWVIB[0], 2),) * 2}
+    tables = {"wave": _WAVE}
+    if not lay.inline:
+        tables["speed"] = ((_SLOWVIB[0], 2),) * 2
     rows = [(Row(bench.pitches(1)[0], 1), _REST)]
+    floor = int(lay.binary)
     first, second = (
         _stores(
             bench,
-            bench.plant(rows, {1: {"vib": 1, "vibdelay": delay}}, tables),
-            _countdown(delay),
+            bench.plant(rows, {1: {"vib": _vib(lay), "vibdelay": delay}}, tables),
+            _countdown(delay, floor),
         )
         for delay in _VIBDELAYS
     )
-    return first & second
+    base = _unique(first & second)
+    return None if base is None else _held(subject, base, 1 - floor)
 
 
-# Channel variables init leaves as loaded: the Player field each seeds, the probe
-# locating its store, and what the Player's count adds to the byte.
+def _pulse(bench, subject):
+    """``mt_chnpulselo`` and ``mt_chnpulsehi``: the bytes read last before voice 1's
+    pulse registers are written the values a set row loads, as each channel's width."""
+    lay = bench.lay
+    if not lay.pulse or lay.plen < len(_SETPULSE):
+        raise ProbeMiss("no pulsetable")
+    rows = [(Row(bench.pitches(1)[0], 1), _REST)]
+    buf = bench.plant(rows, {1: {"pulse": 1}}, {"wave": _WAVE, "pulse": _SETPULSE})
+    log = _Writes()
+    for _ in bench.frames(buf, cap=_ROUTE, writes=log):
+        pass
+    left, right = _SETPULSE[0]
+    lo, hi = (
+        _unique(
+            {
+                w[1]
+                for call in log.calls
+                for w in call
+                if w[0] == reg and w[3] & mask == value & mask
+            }
+            - {None}
+        )
+        for reg, value, mask in ((_PLO, right, 0xFF), (_PHI, left, 0x0F))
+    )
+    if lo is None or hi is None:
+        return None
+    return tuple(a | b << 8 for a, b in zip(_held(subject, lo), _held(subject, hi)))
+
+
+# Channel variables init leaves as loaded: the Player field each seeds and the probe
+# locating its store.
 _CHANNEL_VARS = (
-    ("lastnote", _lastnote, 0),
-    ("vibtime", _vibtime, 0),
-    ("vibdelay", _vibdelay, 1),
+    ("lastnote", _lastnote_var),
+    ("vibtime", _vibtime),
+    ("vibdelay", _vibdelay),
+    ("pulse_init", _pulse),
 )
 
 
@@ -645,12 +754,10 @@ def _channels(bench):
     subject, mpu, mem, play = bench.boot()
     _call(mpu, mem, play)
     out = []
-    for name, probe, bias in _CHANNEL_VARS:
-        bases = _shown(probe, bench) or set()
-        if len(bases) == 1:
-            base = bases.pop()
-            values = (subject[base + c * C.VOICE_REG_SIZE] for c in range(C.MAX_CHN))
-            out.append((name, tuple(v + bias for v in values)))
+    for name, probe in _CHANNEL_VARS:
+        values = _shown(probe, bench, subject)
+        if values is not None:
+            out.append((name, values))
     return tuple(out)
 
 
@@ -800,6 +907,7 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         off = np.flatnonzero(span & 1 == 0)
         if off.size:
             fixed = len(span) - int(off[0]), int(run.grid[run.notes[0] - 1, _CTRL])
+    wavedelay = _wavedelay(run)
     return PlayerBuild(
         ghost=ghost,
         alt=alt,
@@ -819,7 +927,9 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
             if row is None
             else _first_shown(lambda: _realtime(bench, row), lambda: _tie(bench, run))
         ),
-        wavedelay=_wavedelay(run),
+        wavedelay=wavedelay,
+        lowdelay=None if wavedelay is not False else _shown(_lowdelay, bench),
+        vibinit=_shown(_vibinit, bench),
         simplepulse=_simplepulse(run),
         funk=None if row is None or ghost is None else _shown(_funk, bench, row),
         wrapper=wrapper,

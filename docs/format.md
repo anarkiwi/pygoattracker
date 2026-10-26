@@ -106,12 +106,39 @@ The song data is read from the RAM the player reads after init (booted with
 the KERNAL's PAL/NTSC flag the PSID driver sets, which some inits retune by),
 so the decompiled song is the one the player plays.
 
+### Binary-relocator players (V2.0-V2.28)
+
+Before V2.29's assembler-based relocator, `greloc.c` patched a prebuilt
+`player*.bin` and emitted the player, the instrument columns, the wave, pulse
+and filter tables (a speed table too from V2.2), the song and pattern tables,
+the orderlists and the patterns, in that order. The song tables therefore
+follow the instruments, which the layout reader takes from where the player
+reads them (`PackedLayout.binary`); the tables then end at the song table, not at
+the first orderlist. What differs from the V2.29+ packer is measured from the
+player or taken from the layout, never from the tune's name:
+
+- **columns**: a player with a gate timer and first wave per instrument keeps
+  nine; one with the same pair on every instrument keeps seven and holds the two in
+  code. A player without a speed table keeps the vibrato delay and then the
+  vibrato parameter; one with it, the speed pointer and then the delay.
+- **no speed table (before V2.2)**: vibrato, portamento and funktempo parameters
+  are the data itself (vibrato's nibbles swapped, funktempo's tempos one less).
+  They become speedtable rows as GoatTracker 2.76 makes of them when it loads such a
+  song (`legacy.make_speed_entry`), so the decompiled song plays in 2.76's terms.
+- **wavetable (before V2.18)**: waveforms are stored as they are, `$01-$07` delay
+  and `$08-$0F` are silent waveforms (`probe.PlayerBuild.lowdelay`).
+- **instrument vibrato**: the delay is kept as it is and counts down to one, zero
+  stops the vibrato (`Build.vibstop`); a note's init leaves the vibrato
+  parameter to an effect 0 on its row (`Build.vibinit`, told from a note under
+  another effect); the pulse width variable init leaves is not on the chip until a
+  pulse program runs (`PlayerState` channel `pulse_init`).
+
+A note below the frequency table reads the player's variables, which change as
+it plays; a static table of what the image holds there cannot follow them.
+
 **Out of scope.** GoatTracker **V1.x** (a distinct earlier format, see
-[gt1.md](gt1.md)). The **GoatTracker 2.0x** precompiled players (2.0–2.06,
-`player1.s`–`player4.s`) put the song and pattern tables after the instrument
-tables and have different instrument and table semantics (no speed table); they
-raise a clean `SidParseError` naming them. So do players whose sequencer does
-not read GoatTracker 2's song and pattern tables (interleaved pointer tables).
+[gt1.md](gt1.md)), and players whose sequencer does not read GoatTracker 2's song and
+pattern tables (interleaved pointer tables).
 
 Direct-load images decompile with the standard library only. Crunched or
 relocated images have their init routine run in a 6502 emulator first (jennings,

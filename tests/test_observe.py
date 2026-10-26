@@ -6,6 +6,7 @@ must read the same way (fetched like :mod:`tests.test_hvsc_sid`, never committed
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pysidtracker.emu import wire_mpu
@@ -212,10 +213,33 @@ def test_song_data_past_the_image_is_read_where_the_player_reads_it(rel, addr):
     assert d.image.end <= addr and addr in lay.order_addrs + lay.patt_addrs
 
 
-def test_a_goattracker_2_0_player_is_named():
-    rel = "MUSICIANS/R/Rusty46/Shadowboxin.sid"
-    path = resolve_tune(rel)
-    if path is None:
-        pytest.skip(f"{rel} unavailable (local or mirror)")
-    with pytest.raises(SidParseError, match="2.0x"):
-        sid.decompile_sid(path.read_bytes())
+def _columns_trace(pointers):
+    """A trace of seven 16-byte-spaced columns: AD and SR reach their registers,
+    pulse and filter are table pointers (``pointers``: column to the row 1 read),
+    the vibrato delay and parameter reach nothing."""
+    cols = [0x1500 + 0x10 * k for k in range(7)]
+    sid = [(0xD405, cols[0]), (0xD406, cols[1])]
+    reads = [
+        SimpleNamespace(origin=cols[c], addr=row, value=1, exact=True)
+        for c, row in pointers.items()
+    ]
+    stores = [SimpleNamespace(origin=cols[3], indexed=True)]
+    stores += [SimpleNamespace(origin=cols[4], indexed=False)]
+    trace = SimpleNamespace(sid=sid, reads=reads, stores=stores, counted=set())
+    return trace, cols
+
+
+def test_a_player_without_a_speed_table_keeps_the_vibrato_parameter_in_its_column():
+    trace, cols = _columns_trace({3: 0x1600, 4: 0x1640})
+    roles = observe._roles(trace, cols, cols[2], 0x1600, True)
+    assert roles == {
+        "wave": cols[2],
+        "ad": cols[0],
+        "sr": cols[1],
+        "pulse": cols[3],
+        "filt": cols[4],
+        "vibdelay": cols[5],
+        "vib": cols[6],
+    }
+    with pytest.raises(SidParseError, match="not greloc's"):
+        observe._roles(trace, cols, cols[2], 0x1600)

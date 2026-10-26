@@ -61,11 +61,15 @@ def main(argv=None) -> int:
         )
     tally = collections.Counter(version for version, _ in results)
     subtunes = collections.Counter()
-    for row, (version, _) in zip(rows, results):
+    decoded = collections.Counter()
+    for row, (version, detail) in zip(rows, results):
         subtunes[version] += int(row["songs"])
-    print("| version | tunes | subtunes |\n| --- | ---: | ---: |")
+        decoded[version] += detail == "decompiled"
+    print(
+        "| playroutine | tunes | subtunes | decompiled |\n| --- | ---: | ---: | ---: |"
+    )
     for version, count in sorted(tally.items(), key=lambda kv: -kv[1]):
-        print(f"| {version} | {count} | {subtunes[version]} |")
+        print(f"| {version} | {count} | {subtunes[version]} | {decoded[version]} |")
     if args.out:
         with args.out.open("w", newline="") as fh:
             out = csv.writer(fh)

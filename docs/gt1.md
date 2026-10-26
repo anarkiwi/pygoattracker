@@ -172,27 +172,36 @@ the V1.4b–V1.53 layout; the V0.9x and V1.25 bodies are native only.
 
 ## HVSC coverage
 
-`scripts/gt1_versions.py` classifies the HVSC `GoatTracker_V1.x` tunes:
+`scripts/gt1_versions.py` classifies the HVSC `GoatTracker_V1.x` tunes by the
+embedded playroutine and counts those the public `decompile_gt1` accepts:
 
 | playroutine | tunes | subtunes | decompiled |
 | --- | ---: | ---: | ---: |
-| V1.52 | 294 | 301 | 294 |
-| V1.53 | 168 | 171 | 168 |
-| V1.51 | 59 | 60 | 59 |
-| V1.50 | 31 | 34 | 31 |
-| V1.50b | 10 | 10 | 10 |
-| 11.4 | 54 | 55 | 54 |
+| none | 363 | 429 | 0 |
+| 1.52 | 294 | 301 | 294 |
+| 1.4b | 181 | 210 | 181 |
+| 1.53 | 168 | 171 | 168 |
+| 1.51 | 59 | 60 | 59 |
+| 11.4 | 54 | 55 | 53 |
+| 1.21 | 47 | 70 | 46 |
+| 1.01 | 43 | 53 | 43 |
 | 11.3 | 42 | 43 | 41 |
+| 1.50 | 31 | 34 | 31 |
+| 1.16 | 22 | 27 | 22 |
+| 0.96 | 16 | 22 | 16 |
 | 11.5 | 15 | 15 | 15 |
 | 11.1 | 12 | 12 | 12 |
-| 1.22 | 2 | 2 | 2 |
-| 1.21 | 47 | 70 | 47 |
-| 1.16 | 22 | 27 | 22 |
-| 1.15 | 2 | 2 | 2 |
+| 1.4b-multi | 12 | 12 | 11 |
+| 1.50b | 10 | 10 | 10 |
+| 1.4b-hr1 | 9 | 11 | 9 |
 | 1.1 | 5 | 5 | 5 |
-| 1.01 | 43 | 53 | 43 |
-| 0.96 | 16 | 22 | 16 |
-| none of the above | 565 | 662 | 0 |
+| 1.22 | 2 | 2 | 2 |
+| 1.15 | 2 | 2 | 2 |
 
-The unmatched tunes embed playroutines with no archived source (V1.3–V1.4f,
-the V1.1–V1.24 playroutines 2–4) or hand-modified players.
+`none` tunes embed playroutines with no archived source (V1.3–V1.4f, musicroutines
+11.2–11.5 as shipped in V1.15–V1.22, a 11.4 alternate build, V1.4b and V1.53
+Stereo, hand-modified 1.5x builds) or a player away from the load address
+(tracked in #35). Recognised but rejected: one tune whose packed pattern size
+is inconsistent, and three whose play address is not the packed entry.
+
+Recount: `python -m pysidtracker.survey find $HVSC --player goattracker --out tunes.csv && python scripts/gt1_versions.py $HVSC tunes.csv --jobs 64`.

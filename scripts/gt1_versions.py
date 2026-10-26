@@ -19,7 +19,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from pygoattracker.errors import SidParseError
-from pygoattracker.gt1 import decompile_image, find_player
+from pygoattracker.gt1 import decompile_gt1, find_player
 from pygoattracker.sid import _load_image
 
 GT1 = "GoatTracker_V1.x"
@@ -27,15 +27,16 @@ GT1 = "GoatTracker_V1.x"
 
 def classify(path: str) -> tuple[str, str]:
     """``(version, detail)`` for one ``.sid``: the matched playroutine or ``none``."""
+    raw = Path(path).read_bytes()
     try:
-        image = _load_image(Path(path).read_bytes())
+        image = _load_image(raw)
     except SidParseError as exc:
         return "unreadable", str(exc)
     found = find_player(image.mem)
     if found is None:
         return "none", ""
     try:
-        decompile_image(image.mem, found, image.end)
+        decompile_gt1(raw)
     except SidParseError as exc:
         return found.ref.name, str(exc)
     return found.ref.name, "decompiled"

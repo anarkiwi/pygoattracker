@@ -356,3 +356,17 @@ def test_empty_packed_song_is_not_an_orderlist(rel):
     result = sid.decompile_sid(_tune(rel))
     assert len(result.song.subtunes) == result.header.songs == 1
     assert result.player() is not None
+
+
+_IRQ_DRIVEN = (
+    "MUSICIANS/J/Jammer/Come_at_Me_Bro.sid",
+    "MUSICIANS/J/Jammer/El_Loco_Challenge_intro.sid",
+)
+
+
+@pytest.mark.parametrize("rel", _IRQ_DRIVEN)
+def test_rsid_whose_init_never_returns_decompiles(rel):
+    """An RSID without a play address runs its player from an IRQ, so its init ends
+    in an idle loop instead of an RTS."""
+    result = sid.decompile_sid(_tune(rel))
+    assert result.song.subtunes and result.song.patterns and result.song.instruments

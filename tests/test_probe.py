@@ -202,6 +202,8 @@ def test_planted_data_lands_at_the_layout_or_misses():
     assert {0x1100, 0x1120} <= set(planted) and 0x1110 not in planted
     with pytest.raises(probe.ProbeMiss):
         probe.Bench(bench.image, lay, (8,), (2, 3, 3)).plant([rows])
+    unread = probe.Bench(bench.image, lay, (8,), (3, 3, 0)).plant([rows])
+    assert {0x1100, 0x1110} <= set(unread) and 0x1120 not in unread
     copied = probe.Bench(bench.image, lay, (8,), (3, 3, 3), copies={0x1100: [0x0900]})
     planted = copied.plant([rows])
     assert planted[0x0900] == planted[0x1100]

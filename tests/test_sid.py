@@ -11,6 +11,7 @@ import os
 import re
 import struct
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -431,3 +432,17 @@ def test_prg_and_bin_match_psid(packed, tmp_path):
 def test_too_short_prg_rejected():
     with pytest.raises(sid.SidParseError):
         sid.decompile_sid(b"\x00\x10")
+
+
+def test_the_anchor_is_that_of_the_player_the_init_ran(monkeypatch):
+    anchors = [(0x1B2A, 0x17, 0x21), (0x202B, 0, 0x60)]
+    monkeypatch.setattr(sid, "_all_anchors", lambda image: anchors)
+    monkeypatch.setattr(
+        sid,
+        "player_span",
+        lambda image, data: types.SimpleNamespace(
+            start=0x1800 if data < 0x2000 else None
+        ),
+    )
+    assert sid._played_anchor(None, anchors[1], {0x1800}) == anchors[0]
+    assert sid._played_anchor(None, anchors[1], {0x1000}) == anchors[1]

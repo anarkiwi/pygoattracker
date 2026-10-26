@@ -18,6 +18,7 @@ from pysidtracker.mos6502 import disasm_len
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SidParseError, SngParseError
 from pygoattracker.sid import _load_image, parse_sid_header
+from pygoattracker.variant import release_refs
 
 if TYPE_CHECKING:
     from pygoattracker.gt1player import Gt1Player
@@ -61,21 +62,16 @@ _TAGS_11 = {
     0x90: "patttblhi",
 }
 
-# V1.4x playroutines that start a note one frame after the hard restart.
-HARDRESTART_1FRAME = frozenset(("1.4b-hr1",))
-# Playroutine variants that differ in behaviour from V1.53.
-FILTER_STEP0 = frozenset(("1.50", "1.50b"))
-ORDERLIST_LOOP_AFTER = frozenset(("1.50",))
-MUSICROUTINE11_SFX = frozenset(("11.2", "11.4"))
-MUSICROUTINE11_TIMING = frozenset(("11.3", "11.4", "11.5"))
-# Standard playroutines before V1.25 (musicroutine 11.1 with edits), oldest first,
-# and the behaviours each later release changed.
-PRE125 = ("0.96", "1.01", "1.1", "1.15", "1.16", "1.21", "1.22")
-ORDERLIST_ENDSONG = frozenset(PRE125[:3])
-PULSE_ALWAYS = frozenset(PRE125[:4])
-INIT_WAVE = frozenset(PRE125[:5])
-INIT_GATE = frozenset(PRE125[:6])
-PULSEDIR_RESET = frozenset(PRE125)
+HARDRESTART_1FRAME = release_refs("hardrestart_1frame")
+FILTER_STEP0 = release_refs("filter_step0")
+ORDERLIST_LOOP_AFTER = release_refs("orderlist_loop_after")
+MUSICROUTINE11_SFX = release_refs("sfx")
+MUSICROUTINE11_TIMING = release_refs("timing")
+ORDERLIST_ENDSONG = release_refs("orderlist_endsong")
+PULSE_ALWAYS = release_refs("pulse_always")
+INIT_WAVE = release_refs("init_wave")
+INIT_GATE = release_refs("init_gate")
+PULSEDIR_RESET = release_refs("pulsedir_reset")
 
 SEGMENTS_V15 = (
     "instruments",

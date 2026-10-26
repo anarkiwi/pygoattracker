@@ -423,11 +423,12 @@ def _lowdelay(bench):
 
 
 def _vibinit(bench):
-    """Whether a note's init loads the instrument's vibrato parameter: a note under
-    another effect vibrates only then, where it takes the instrument vibrato's own
-    effect 0 on the row to load it (None: no instrument vibrato shows)."""
+    """Whether a note's init loads the instrument's vibrato parameter, of the binary
+    relocator's players: a note under another effect vibrates only then, where it
+    takes the instrument vibrato's own effect 0 on the row to load it (None: no
+    instrument vibrato shows)."""
     lay = bench.lay
-    if not (lay.vib and (lay.slen or lay.inline)):
+    if not (lay.binary and lay.vib and (lay.slen or lay.inline)):
         return None
     note = bench.pitches(1)[0]
     over = {"vib": _INLINESEEN if lay.inline else 1, "vibdelay": 1}
@@ -710,9 +711,11 @@ def _vibdelay(bench, subject):
 
 def _pulse(bench, subject):
     """``mt_chnpulselo`` and ``mt_chnpulsehi``: the bytes read last before voice 1's
-    pulse registers are written the values a set row loads, as each channel's width."""
+    pulse registers are written the values a set row loads, as each channel's width,
+    of the binary relocator's players, which write the pulse registers only when a
+    pulse program runs."""
     lay = bench.lay
-    if not lay.pulse or lay.plen < len(_SETPULSE):
+    if not (lay.binary and lay.pulse and lay.plen >= len(_SETPULSE)):
         raise ProbeMiss("no pulsetable")
     rows = [(Row(bench.pitches(1)[0], 1), _REST)]
     buf = bench.plant(rows, {1: {"pulse": 1}}, {"wave": _WAVE, "pulse": _SETPULSE})

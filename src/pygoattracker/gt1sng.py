@@ -13,6 +13,7 @@ from pysidtracker import SidParseError as BaseSidParseError
 
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SngParseError, SngValidationError
+from pygoattracker.variant import release_refs
 from pygoattracker.gt1 import (
     DEFAULT_PARAMS,
     Gt1Instrument,
@@ -33,8 +34,8 @@ _REST_PREFIX = 0x60
 _REST = 0x5F
 _LOOPSONG = 0xFF
 _OLD_ENDMARK = 0xFE
-_STRIP_TIMING = frozenset(("11.1", "11.2"))
-_AUTHOR_PLAYERS = frozenset(("11.3", "11.4", "11.5"))
+_STRIP_TIMING = release_refs("strip_timing")
+_AUTHOR_PLAYERS = release_refs("author")
 _V15_PATTREF = 208  # V1.4b-V1.53 MAX_PATT; orderlist entries above are commands
 _V15_FILT = 256
 _V15_FILTSTEPS = 64

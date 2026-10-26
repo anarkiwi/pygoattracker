@@ -114,11 +114,17 @@ def parse_sng(
         from pygoattracker import legacy
 
         if magic == b"GTS!":
-            if convert:
-                return legacy.parse_gts1(data, multiplier=multiplier)
             from pygoattracker import gt1sng
 
-            return gt1sng.parse_gts1(data)
+            if not convert:
+                return gt1sng.parse_gts1(data)
+            try:
+                native = gt1sng.parse_gts1(data)
+            except SngParseError:
+                native = None  # the GT2 import reports what is malformed
+            if native is not None and native.sng.layout == gt1sng.LAYOUT_V093:
+                data = gt1sng.v093_to_v125(native)
+            return legacy.parse_gts1(data, multiplier=multiplier)
         return legacy.parse_gts2(data, finevibrato=finevibrato)
     cur = _Cursor(data)
     cur.take(4, "identifier")

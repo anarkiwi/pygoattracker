@@ -202,17 +202,26 @@ def parse_gts1(data: bytes, player: str | None = None) -> Gt1Song:
 
 
 def _detect_layout(data: bytes, body: int, num_subtunes: int) -> str:
-    """Which editor layout the body uses, decided by the first wavetable.
+    """Which editor layout the body uses.
 
+    An orderlist ending ``$FF`` with no restart byte after it is V0.9x: the
+    later bodies end ``$FF`` + restart, and a restart is never ``$FF``. This
+    decides hybrids whose wavetables already carry V1.x ``$FF`` jump rows.
     ``$FE`` endmark orderlists are byte-identical between V0.9x and the
     V1.25/V1.4b-V1.53 bodies, so they cannot decide; the first instrument
     can -- its last wave row is ``$00`` (V0.9x) or ``$FF`` (the later bodies).
     """
     off = body
+    v093 = False
     for _ in range(num_subtunes * 3):
         if off >= len(data):
             return LAYOUT_V125  # truncated; the full parse reports it
-        off += data[off] + 2  # one orderlist: length byte + length+1 stored
+        end = off + data[off] + 2  # one orderlist: length byte + length+1 stored
+        if end <= len(data) and data[end - 1] == _LOOPSONG:
+            v093 = v093 or data[end - 2] != _LOOPSONG
+        off = end
+    if v093:
+        return LAYOUT_V093
     if off + 8 > len(data):
         return LAYOUT_V125
     wavelen = data[off + 7]
@@ -223,7 +232,8 @@ def _detect_layout(data: bytes, body: int, num_subtunes: int) -> str:
 
 def _parse_v093(cur: _Cursor, num_subtunes: int, sng: Gt1Sng) -> Gt1Song:
     """Parse a V0.9x body: orderlists with no restart byte, and inline
-    wavetables terminated by a ``$00`` waveform row (at most 64 rows)."""
+    wavetables terminated by a ``$00`` waveform row, or by the ``$FF`` jump row
+    of V0.9x/V1.x hybrid songs (at most 64 rows)."""
     orderlists = []
     for subtune in range(num_subtunes):
         chans = []
@@ -247,9 +257,10 @@ def _parse_v093(cur: _Cursor, num_subtunes: int, sng: Gt1Sng) -> Gt1Song:
         if wavelen & 1 or not 2 <= wavelen <= _V093_WAVEMAX:
             raise SngParseError(f"{what} has bad wavetable size {wavelen}")
         wave = cur.take(wavelen, f"{what} wavetable")
-        if wave[-2] != 0:
+        if wave[-2] not in (0, _LOOPSONG):
             raise SngParseError(
-                f"{what} wavetable is not $00-terminated, last row {wave[-2]:#04x}"
+                f"{what} wavetable is not $00- or $FF-terminated, "
+                f"last row {wave[-2]:#04x}"
             )
         pointer = len(wavetable) + 1
         wavetable.extend(zip(wave[0::2], wave[1::2]))
@@ -293,6 +304,36 @@ def _parse_v093(cur: _Cursor, num_subtunes: int, sng: Gt1Sng) -> Gt1Song:
         segments=SEGMENTS_V11,
         sng=sng,
     )
+
+
+def v093_to_v125(song: Gt1Song) -> bytes:
+    """A V0.9x editor song as the V1.x ``GTS!`` bytes GoatTracker 2.76 imports.
+
+    Orderlists gain restart 0, each ``$00``-terminated wavetable ends in an
+    ``$FF $00`` jump (stop) row instead, and the absent filtertable is zeroed.
+    """
+    pointers = [ins.wave_ptr for ins in song.instruments]
+    bounds = pointers[1:] + [len(song.wavetable) + 1]
+    wavetable = list(song.wavetable)
+    for end in bounds:
+        if end > 1 and wavetable[end - 2][0] == 0:
+            wavetable[end - 2] = (_LOOPSONG, 0)
+    orderlists = [
+        [blob + b"\x00" if blob[-1] == _LOOPSONG else blob for blob in chans]
+        for chans in song.orderlists
+    ]
+    flat = Gt1Song(
+        player=song.player,
+        address=song.address,
+        params=song.params,
+        instruments=song.instruments,
+        wavetable=wavetable,
+        orderlists=orderlists,
+        patterns=song.patterns,
+        segments=song.segments,
+        sng=song.sng,
+    )
+    return write_gts1(flat) + bytes(_V15_FILT)
 
 
 def _instrument_rows(song: Gt1Song) -> list:

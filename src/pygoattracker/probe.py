@@ -197,7 +197,7 @@ class Bench:
         if every and len({lay.order_addrs[k] for k in song}) < lay.channels:
             raise ProbeMiss("the song's channels share an orderlist")
         for k, addr in enumerate(lay.order_addrs):
-            if every and k not in song:
+            if (every and k not in song) or not self.order_sizes[k]:
                 continue
             order = orders[k % lay.channels % len(orders)]
             if len(order) <= self.order_sizes[k]:

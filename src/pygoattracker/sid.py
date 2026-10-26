@@ -54,6 +54,7 @@ from pygoattracker.packed import (
 from pygoattracker.player import Player
 from pygoattracker.probe import Bench, ProbeMiss, boot, calls, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
+from pygoattracker.variant import heuristic_entry
 from pygoattracker.model import (
     Orderlist,
     PlayPattern,
@@ -289,14 +290,14 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
     addr, firstnote, length = anchor
     tstart, wlen, plen = lay.tstart, lay.wlen, lay.plen
     pleft = list(mem[tstart + 2 * wlen : tstart + 2 * wlen + plen]) if plen else []
-    nowavedelay = (
-        _detect_nowavedelay(mem[tstart : tstart + wlen])
-        if build.wavedelay is None
-        else not build.wavedelay
-    )
-    simplepulse = (
-        _detect_simplepulse(pleft) if build.simplepulse is None else build.simplepulse
-    )
+    nowavedelay = heuristic_entry(
+        None if build.wavedelay is None else not build.wavedelay,
+        lambda: _detect_nowavedelay(mem[tstart : tstart + wlen]),
+        "wavetable",
+    ).value
+    simplepulse = heuristic_entry(
+        build.simplepulse, lambda: _detect_simplepulse(pleft), "pulse table"
+    ).value
     n = lay.channels
     subtunes = [
         Subtune(channels=orderlists[s * n : s * n + n])

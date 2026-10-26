@@ -337,17 +337,35 @@ def test_v093_is_native_only(member):
             call()
     with pytest.raises(SngParseError, match="playroutine"):
         Gt1Player(song)
-    with pytest.raises(SngParseError):
-        song.to_gt2()
 
 
-def test_reader_reads_v093_natively_and_gt2_import_rejects():
+@pytest.mark.parametrize("member", V093_SONGS)
+def test_v093_converts_to_gt2(member):
+    from pygoattracker.reader import parse_sng
+
+    data = goattrk093_song(member)
+    song = parse_gts1(data).to_gt2()
+    assert len(song.subtunes) == 1
+    assert len(song.instruments) <= 31
+    assert parse_sng(data, convert=True).patterns == song.patterns
+
+
+def test_reader_reads_v093_natively_and_converts():
     from pygoattracker.reader import parse_sng
 
     data = goattrk093_song("examples/example.sng")
     assert isinstance(parse_sng(data), Gt1Song)
-    with pytest.raises(SngParseError):
-        parse_sng(data, convert=True)
+    assert parse_sng(data, convert=True).name == parse_gts1(data).to_gt2().name
+
+
+def test_v093_hybrid_with_ff_wavetable_terminator():
+    body = _v093_body(wave=b"\x01\x00\xff\x00", orderlist=b"\x00\xff")
+    song = parse_gts1(body)
+    assert song.sng.layout == LAYOUT_V093
+    assert write_gts1(song) == body
+    gt2 = song.to_gt2()
+    assert gt2.subtunes[0].channels[0].restart == 0
+    assert gt2.wavetable.left[:2] == [0x01, 0xFF]
 
 
 def test_v093_layouts_stay_distinct():

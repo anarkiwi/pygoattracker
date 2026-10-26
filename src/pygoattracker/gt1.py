@@ -357,6 +357,8 @@ class Gt1Song:
         """GoatTracker 2 import of this editor song (lossy, semantic)."""
         from pygoattracker import gt1sng, legacy
 
+        if self.sng is not None and self.sng.layout == gt1sng.LAYOUT_V093:
+            return legacy.parse_gts1(gt1sng.v093_to_v125(self))
         return legacy.parse_gts1(gt1sng.write_gts1(self))
 
     def _sizes(self) -> dict:

@@ -364,11 +364,6 @@ def _gts2_body(instruments: bytes, notes) -> bytes:
     return data + bytes([1]) + gts5_pattern(rows)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=SngParseError,
-    reason="#44: GT2.0 beta GTS2 (47 instruments, no count byte) is misparsed",
-)
 def test_gts2_beta_matches_betaconv():
     instruments = gts2_instrument(
         ad=0x09, wave_ptr=1, pulse_ptr=1, vibrato=0xB4, firstwave=0x89, name="LEAD"

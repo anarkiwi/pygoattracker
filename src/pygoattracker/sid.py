@@ -21,6 +21,7 @@ Images that are crunched or relocated on init are unpacked first by
 running the init routine in a 6502 emulator (:mod:`jennings`).
 """
 
+import struct
 from dataclasses import dataclass, field, replace
 
 from pysidtracker import (
@@ -156,9 +157,41 @@ def parse_sid_header(raw: bytes) -> SidHeader:
     return _as_sid_parse_error(_parse_sid_header, raw)
 
 
-def _load_image(raw: bytes) -> SidImage:
-    """Load ``raw`` ``.sid`` bytes into a :class:`~pysidtracker.SidImage`, over
-    the power-on RAM the player finds around them."""
+PACKER_LOAD = 0x1000  # where the GoatTracker packer places the player by default
+
+
+def as_psid(raw: bytes, load_address: int | None = None) -> bytes:
+    """``raw`` as PSID bytes: a PSID/RSID passes through, a bare packer ``.prg``
+    (2-byte load address, then the image) or ``.bin`` (the image alone, at
+    ``load_address``) is wrapped in a header whose init/play are the packer's
+    jump table at the load address (+0 and +3)."""
+    raw = bytes(raw)
+    if raw[:4] in (b"PSID", b"RSID"):
+        return raw
+    if load_address is None:
+        if len(raw) < 3:
+            raise SidParseError("not a PSID/RSID file or a .prg image")
+        load_address, raw = int.from_bytes(raw[:2], "little"), raw[2:]
+    header = bytearray(0x7C)
+    header[0:4] = b"PSID"
+    struct.pack_into(
+        ">HHHHHHH", header, 4, 2, 0x7C, 0, load_address, load_address + 3, 1, 1
+    )
+    return bytes(header) + load_address.to_bytes(2, "little") + raw
+
+
+def _bin_default(src, load_address):
+    """``load_address``, or the packer's default for a path ending in ``.bin``."""
+    if load_address is None and str(getattr(src, "name", src)).lower().endswith(".bin"):
+        return PACKER_LOAD
+    return load_address
+
+
+def _load_image(raw: bytes, load_address: int | None = None) -> SidImage:
+    """Load ``raw`` ``.sid`` (or packer ``.prg``/``.bin``) bytes into a
+    :class:`~pysidtracker.SidImage`, over the power-on RAM the player finds
+    around them."""
+    raw = as_psid(raw, load_address)
     image = _as_sid_parse_error(SidImage.from_sid, raw)
     ram = power_on_ram()
     ram[image.load : image.end] = image.mem[image.load : image.end]
@@ -370,14 +403,16 @@ def _finish(decoded, song):
     return decoded
 
 
-def decompile_sid(src, subtune=0) -> DecompiledSid:
+def decompile_sid(src, subtune=0, load_address=None) -> DecompiledSid:
     """Decompile a packed GoatTracker ``.sid`` into a :class:`DecompiledSid`.
 
-    ``src`` may be a path, ``bytes``, or a binary file object. Crunched images
+    ``src`` may be a path, ``bytes``, or a binary file object, holding a PSID/RSID
+    or the packer's bare ``.prg`` (load address first) or ``.bin`` (raw image at
+    ``load_address``, ``$1000`` for a ``.bin`` path). Crunched images
     are unpacked via shared playroutine detection (emulated init); the song data
     is where the player the header song runs reads it (:mod:`pygoattracker.observe`).
     """
-    raw = read_bytes(src)
+    raw = as_psid(read_bytes(src), _bin_default(src, load_address))
     image = _load_image(raw)
     detection = detect_playroutine(image, _recognize, subtune=subtune)
     if detection.anchor is None:
@@ -517,9 +552,9 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     return _finish(decoded, t.song)
 
 
-def read_sid(src, subtune=0) -> Song:
-    """Read a packed GoatTracker ``.sid`` and return its :class:`Song`."""
-    return decompile_sid(src, subtune=subtune).song
+def read_sid(src, subtune=0, load_address=None) -> Song:
+    """Read a packed GoatTracker ``.sid``/``.prg``/``.bin`` and return its :class:`Song`."""
+    return decompile_sid(src, subtune=subtune, load_address=load_address).song
 
 
 class GoatTrackerSidParser(BaseSidParser):

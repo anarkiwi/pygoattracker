@@ -119,6 +119,9 @@ probe measures (or cannot show) across the GoatTracker 2 tunes.
 `scripts/gt1_versions.py $HVSC tunes.csv` tabulates the `GoatTracker_V1.x`
 tunes by embedded playroutine and can write a per-version sample `tunes.csv`.
 
+Python edge keys are digests of the branch statement (not line numbers), so they
+survive edits to `player.py`; `xfails` re-keys any case whose key goes stale.
+
 To diff a single tune against the oracle, use `pysidtracker`'s `whydiff` / `survey diff`
 (`gridcmp.lead_report` / `window_report`).
 

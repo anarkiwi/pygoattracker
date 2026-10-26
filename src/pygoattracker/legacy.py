@@ -19,6 +19,8 @@ Loading an old song therefore gives a normal
 :class:`~pygoattracker.model.Song` that plays and writes back as GTS5.
 """
 
+from dataclasses import replace
+
 from pysidtracker import decode_cstr
 
 from pygoattracker import constants
@@ -193,9 +195,11 @@ def parse_gts2(data: bytes, finevibrato: bool = True) -> Song:
 class _Gts1Converter:
     """State for the GoatTracker 1.x conversion (a port of gsong.c)."""
 
-    def __init__(self, song: Song):
+    def __init__(self, song: Song, multiplier: int = 1):
         self.song = song
-        self.instruments = [Instrument() for _ in range(constants.MAX_INSTR)]
+        # GT2.76 clears the song with clearinstr() before a GT1 import.
+        self.blank = Instrument(gateoff_timer=2 * multiplier or 1, first_wave=0x09)
+        self.instruments = [replace(self.blank) for _ in range(constants.MAX_INSTR)]
         self.raw_patterns: list[list[Row]] = []
         self.numfilter = 0
         self.filtermap = [0] * 64
@@ -479,16 +483,18 @@ class _Gts1Converter:
         self.convert_filtertable(filtertable)
         self.fix_patterns()
         instruments = self.instruments[1:]
-        _trim_instruments(instruments, self._highest_used_instrument())
+        _trim_instruments(instruments, self._highest_used_instrument(), self.blank)
         self.song.instruments = instruments
         self.song.patterns = [_strip_end_marker(rows) for rows in self.raw_patterns]
         apply_legacy_conversions(self.song, GTS1_MAGIC)
         return self.song
 
 
-def _trim_instruments(instruments: list[Instrument], lowest: int) -> None:
+def _trim_instruments(
+    instruments: list[Instrument], lowest: int, blank: Instrument
+) -> None:
     """Drop trailing empty instruments (but keep at least ``lowest``)."""
-    while len(instruments) > max(lowest, 0) and instruments[-1] == Instrument():
+    while len(instruments) > max(lowest, 0) and instruments[-1] == blank:
         instruments.pop()
 
 
@@ -499,12 +505,16 @@ def _strip_end_marker(rows: list[Row]) -> Pattern:
     return Pattern(rows=rows)
 
 
-def parse_gts1(data: bytes) -> Song:
-    """Parse and convert a GoatTracker 1.x (GTS!) song."""
+def parse_gts1(data: bytes, multiplier: int = 1) -> Song:
+    """Parse and convert a GoatTracker 1.x (GTS!) song.
+
+    ``multiplier`` is the editor's speed multiplier, which seeds each
+    instrument's gateoff timer as GoatTracker 2.76 does.
+    """
     cur = _Cursor(data)
     cur.take(4, "identifier")
     song = _parse_header(cur)
-    converter = _Gts1Converter(song)
+    converter = _Gts1Converter(song, multiplier)
     for num in range(1, _GTS1_INSTRUMENTS + 1):
         converter.read_instrument(num, cur)
     num_patterns = cur.u8("pattern count")

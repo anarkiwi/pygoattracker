@@ -41,6 +41,18 @@ def test_wrong_channel_count():
     expect_invalid(song, "channels")
 
 
+def test_channel_count_must_match_across_subtunes():
+    song = basic_song()
+    song.subtunes.append(Subtune(channels=[Orderlist() for _ in range(6)]))
+    expect_invalid(song, "same in every subtune")
+
+
+def test_stereo_song_validates():
+    song = basic_song()
+    song.subtunes[0].channels *= 2
+    assert build_sng(song)
+
+
 def test_empty_orderlist():
     song = basic_song()
     song.subtunes[0].channels[0].entries = []

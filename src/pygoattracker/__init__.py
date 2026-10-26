@@ -65,7 +65,7 @@ from pygoattracker.writer import build_sng, validate_song, write_sng
 from pygoattracker.packed import Build, PackedLayout, PlayerBuild, PlayerState
 from pygoattracker.typed import TypedSong
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 
 __all__ = [
     "Build",

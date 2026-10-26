@@ -17,7 +17,7 @@ from pysidtracker.mos6502 import disasm_len
 
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SidParseError, SngParseError
-from pygoattracker.sid import _load_image, parse_sid_header
+from pygoattracker.sid import _load_image, as_psid, parse_sid_header
 from pygoattracker.variant import release_refs
 
 if TYPE_CHECKING:
@@ -612,13 +612,16 @@ def speedcode_timer(mem, init: int) -> int | None:
     return hit and hit.group(1)[0] | hit.group(2)[0] << 8
 
 
-def decompile_gt1(raw: bytes, subtune: int = 0) -> Gt1Song:
+def decompile_gt1(
+    raw: bytes, subtune: int = 0, load_address: int | None = None
+) -> Gt1Song:
     """Decompile a GoatTracker V1.x packed ``.sid`` into a :class:`Gt1Song`.
 
+    Bare packer ``.prg``/``.bin`` (at ``load_address``) are accepted too.
     A tune whose header init is not the packed entry (an init stub) is decompiled
     from memory after running that init for ``subtune`` in a 6502 emulator.
     """
-    image = _load_image(raw)
+    image = _load_image(raw, load_address)
     found = find_player(image.mem)
     if found is None:
         raise SidParseError("no GoatTracker V1.x playroutine found")
@@ -671,8 +674,11 @@ class Gt1SidParser(BaseSidParser):
     error_class = SidParseError
 
     def parse(self, data, subtune=0, **kwargs) -> DecompiledGt1:
-        song = decompile_gt1(data, subtune)
-        return DecompiledGt1(song, parse_sid_header(data), subtune)
+        load_address = kwargs.get("load_address")
+        song = decompile_gt1(data, subtune, load_address)
+        return DecompiledGt1(
+            song, parse_sid_header(as_psid(data, load_address)), subtune
+        )
 
     def recognize(self, image: SidImage):
         return find_player(image.mem)

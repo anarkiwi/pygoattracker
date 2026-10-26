@@ -39,9 +39,19 @@ GT1_ARCHIVES = {
     "goattracker_v1.4b.zip": (
         "815c1519da43f3428b6129d3184163c9c9286191210e1e5e4b74c606c1a3356e"
     ),
+    # GoatTracker 2 releases: CSDb 152431 (V2.06), 152434 (V2.35), 152433 (V2.61).
+    "goattrk2_206.zip": (
+        "1516fff307af6f35a5c88b792ee00a1cc24d56bc34a2e7593c7aba0989b380f1"
+    ),
+    "goattrk2_235.zip": (
+        "f6ace73655ee1b5a5efffd3aad6189065f46f9593d8a7011bae41d87076bb1f1"
+    ),
+    "goattrk2_261.zip": (
+        "8f3640b77094c09ee3050a1a3a3b720653e78b8d351448b9f06a3490d8c0774e"
+    ),
 }
-# goattrk093.zip and the V1.4b release are not on the cadaver tools mirror; they
-# ship in CSDb 152697 and 7582.
+# goattrk093.zip, the V1.4b release and the GoatTracker 2 releases are not on the
+# cadaver tools mirror; they ship on CSDb.
 _GT1_ARCHIVE_URLS = {
     "goattrk.zip": f"{_GT1_URL}/goattrk.zip",
     "goatold.zip": f"{_GT1_URL}/goatold.zip",
@@ -49,6 +59,9 @@ _GT1_ARCHIVE_URLS = {
     "goattracker_v1.4b.zip": (
         "https://csdb.dk/getinternalfile.php/143294/goattracker_v1.4b.zip"
     ),
+    "goattrk2_206.zip": "https://csdb.dk/getinternalfile.php/153899/goattrk2.zip",
+    "goattrk2_235.zip": "https://csdb.dk/getinternalfile.php/153872/goattrk2.zip",
+    "goattrk2_261.zip": "https://csdb.dk/getinternalfile.php/42238/goattrk2_61.zip",
 }
 
 # GoatTracker V1.25 editor example songs (musicroutine 11.x layout).

@@ -6,6 +6,7 @@ Hermetic: span images are player.s fragments at fixed addresses; data images are
 
 import itertools
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from pysidtracker import SidImage, TunePlayer
@@ -67,17 +68,42 @@ def test_a_packed_orderlist_puts_a_repeat_after_its_pattern():
     assert P.orderlist_bytes(ol) == bytes([0xEF, 0x04, 0xD2, 0xD1, 0xFF, 0x02])
 
 
-@pytest.mark.parametrize("nwd", [False, True])
-def test_the_packed_wavetable_byte_is_greloc_s(nwd):
-    # NOWAVEDELAY packs no waveform to $E0-$EF: silent ones are their low nibble
-    lefts = [b for b in range(256) if not (nwd and 0xE0 <= b < 0xF0)]
-    for left, right in itertools.product(lefts, range(256)):
-        row = T.wave_row(*P._wave_editor(left, right, nwd))
-        assert P._wave_packed(*T.wave_bytes(row), nwd) == (left, right)
-    assert T.wave_row(*P._wave_editor(0x00, 0x00, True)) == T.WaveStep(None, None)
-    assert T.wave_row(*P._wave_editor(0x13, 0x00, False)) == T.WaveStep(T.SetWave(3))
-    assert T.wave_row(*P._wave_editor(0x51, 0x0C, False)) == T.WaveStep(
+def _unpacked_wave_bytes(wave):
+    """The packed left bytes a player of ``wave`` reads that unpack and pack to
+    themselves."""
+    if wave == P.WAVE_NEW:
+        return list(range(256))
+    # no waveform packs to $E0-$EF: silent ones are the nibble (as $08-$0F from V2.0
+    # to V2.17, where only $01-$07 delay)
+    return [b for b in range(256) if not 0xE0 <= b < 0xF0]
+
+
+@pytest.mark.parametrize("wave", [P.WAVE_NEW, P.WAVE_NONE, P.WAVE_OLD])
+def test_the_packed_wavetable_byte_is_greloc_s(wave):
+    for left, right in itertools.product(_unpacked_wave_bytes(wave), range(256)):
+        row = T.wave_row(*P._wave_editor(left, right, wave))
+        assert P._wave_packed(*T.wave_bytes(row), wave) == (left, right)
+    assert T.wave_row(*P._wave_editor(0x00, 0x00, P.WAVE_NONE)) == T.WaveStep(
+        None, None
+    )
+    assert T.wave_row(*P._wave_editor(0x13, 0x00, P.WAVE_NEW)) == T.WaveStep(
+        T.SetWave(3)
+    )
+    assert T.wave_row(*P._wave_editor(0x51, 0x0C, P.WAVE_NEW)) == T.WaveStep(
         T.SetWave(0x41), T.WaveNote(12, False)
+    )
+
+
+def test_a_player_before_v2_18_reads_its_wavetable_as_stored():
+    # waveforms as they are, $01-$07 delays and $08-$0F the silent waveforms
+    assert T.wave_row(*P._wave_editor(0x51, 0x8C, P.WAVE_OLD)) == T.WaveStep(
+        T.SetWave(0x51), T.WaveNote(12, True)
+    )
+    assert T.wave_row(*P._wave_editor(0x03, 0x80, P.WAVE_OLD)) == T.WaveStep(
+        T.Delay(3), T.WaveNote(0, True)
+    )
+    assert T.wave_row(*P._wave_editor(0x09, 0x80, P.WAVE_OLD)) == T.WaveStep(
+        T.SetWave(0x09), T.WaveNote(0, True)
     )
 
 
@@ -209,3 +235,64 @@ def test_a_player_keeping_its_effect_code_plays_a_song_without_commands(subtune)
     assert d.player().render_grid(frames) == TunePlayer(raw, subtune).render_grid(
         frames
     )
+
+
+def _binary_layout(**fields):
+    """A binary-relocator layout: one instrument of seven columns, a wave row, the
+    song table after them."""
+    base = dict(freq_addr=0, firstnote=0, notes=0, songtbl=0x60, songs=1)
+    base.update(order_addrs=(0x70,) * 3, patt_lo=0x66, patt_addrs=(0x80,))
+    base.update(ins_start=0x10, num_instr=1, pulse=True, filt=True, vib=True)
+    base.update(gate=False, tstart=0x17, wlen=1, plen=0, flen=0, slen=0, zeros=0)
+    base.update(cols=("ad", "sr", "wave", "pulse", "filt", "vibdelay", "vib"))
+    base.update(fields)
+    return P.PackedLayout(**base)
+
+
+def test_a_layout_with_the_song_table_after_the_instruments_is_binary():
+    assert _binary_layout().binary
+    assert not _binary_layout(songtbl=0x04, ins_start=0x10).binary
+
+
+def test_a_player_without_a_speed_table_states_its_parameters_as_speed_rows():
+    mem = bytearray(0x100)
+    mem[0x10:0x17] = bytes((0x09, 0xF0, 1, 0, 0, 3, 0x61))  # AD SR wave .. delay vib
+    mem[0x17:0x19] = bytes((0x51, 0x8C))
+    lay = _binary_layout(patt_addrs=(0x80,), inline=True)
+    header = SimpleNamespace(name="", author="", released="")
+    typed = P.decode(mem, lay, P.PlayerBuild(), header, [], P.WAVE_OLD, False)
+    # the delay is as stored; vibrato $61 swapped is $16: depth 1, speed $60
+    assert typed.instruments[0].vibrato_delay == 3
+    assert typed.speedtable[typed.instruments[0].vibrato_speed - 1] == T.FixedSpeed(
+        0x0160
+    )
+    assert typed.wavetable[0] == T.WaveStep(T.SetWave(0x51), T.WaveNote(12, True))
+    assert typed.speed0 is None
+
+
+def test_inline_effect_parameters_become_speedtable_rows_as_gt_2_76_makes_them():
+    ins = (T.Instrument(vibrato_speed=0x61, vibrato_delay=2), T.Instrument())
+    rows = (
+        T.Row(T.Note(1), 1, T.PortamentoUp(0x10)),
+        T.Row(T.Note(2), 1, T.Vibrato(0x61)),
+        T.Row(T.Rest(), None, T.FunkTempo(0x23)),
+        T.Row(T.Note(3), 1, T.TonePortamento(0)),
+        T.Row(T.Rest(), None, T.SetAD(5)),
+        T.Row(T.Rest()),
+    )
+    instruments, (patterns,), table = P._speeds(ins, (rows,))
+    # vibrato $61 swaps to $16: depth 1, speed $60; portamento $10 << 2; funk +$11
+    assert table == (T.FixedSpeed(0x0160), T.FixedSpeed(0x0040), T.FixedSpeed(0x0304))
+    assert instruments[0].vibrato_speed == 1 and instruments[1].vibrato_speed == 0
+    assert patterns[0].command == T.PortamentoUp(2)
+    assert patterns[1].command == T.Vibrato(1)
+    assert patterns[2].command == T.FunkTempo(3)
+    assert patterns[3].command == T.TonePortamento(0)
+    assert patterns[4].command == T.SetAD(5) and patterns[5].command is None
+
+
+def test_a_player_without_a_speed_table_cannot_be_packed():
+    d = sid.decompile_sid(_minimal_packed())
+    info = replace(d.info, layout=replace(d.info.layout, inline=True))
+    with pytest.raises(ValueError, match="speed table"):
+        P.pack(d.typed, info)

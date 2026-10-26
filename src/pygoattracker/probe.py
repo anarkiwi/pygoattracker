@@ -64,6 +64,28 @@ _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
 _BOOT_CYCLES = 8_000_000
+_SPIN_STEPS = 1024
+_SPIN_PCS = 8
+
+
+class Spin:
+    """Called with each executed ``pc``, True once the last :data:`_SPIN_STEPS` of
+    them stayed within :data:`_SPIN_PCS` addresses: the idle loop an IRQ-driven
+    init ends in."""
+
+    def __init__(self):
+        self.pcs = set()
+        self.steps = 0
+
+    def __call__(self, pc):
+        self.pcs.add(pc)
+        self.steps += 1
+        if self.steps < _SPIN_STEPS:
+            return False
+        spun = len(self.pcs) <= _SPIN_PCS
+        self.pcs.clear()
+        self.steps = 0
+        return spun
 
 
 class ProbeMiss(Exception):
@@ -75,6 +97,22 @@ def _call(mpu, mem, play):
     run_to_rts(mpu, mem, play, 0, _CYCLES)
     if mpu.processorCycles - start > _CYCLES:
         raise ProbeMiss("play call did not return")
+
+
+def _idle_init(_subject, mpu, mem, address, song):
+    """Run an RSID's init that never returns (an IRQ-driven player ends in a loop
+    in a loop) to that loop or :data:`_BOOT_CYCLES`."""
+    start_sp = mpu.sp
+    for byte in (0x00, 0x01):
+        mem[0x0100 + mpu.sp] = byte
+        mpu.sp = (mpu.sp - 1) & 0xFF
+    mpu.a, mpu.pc = song & 0xFF, address
+    start = mpu.processorCycles
+    spun = Spin()
+    while mpu.sp < start_sp and mpu.processorCycles - start <= _BOOT_CYCLES:
+        mpu.step()
+        if spun(mpu.pc):
+            break
 
 
 def boot(image, subtune=0, buf=None, init_run=None):
@@ -89,6 +127,8 @@ def boot(image, subtune=0, buf=None, init_run=None):
         box.append(subject)
 
     run = None
+    if init_run is None and not image.header.play_address:
+        init_run = _idle_init
     if init_run is not None:
 
         def run(mpu, mem, address, song, _max_cycles):

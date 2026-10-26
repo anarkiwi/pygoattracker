@@ -501,7 +501,9 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
 
     def init_run(subject, mpu, mem, address, song):
         traced.append(Trace(subject, mpu, mem))
-        traced[0].call(address, song, _INIT_CYCLES)
+        traced[0].call(
+            address, song, _INIT_CYCLES, "init", idle=not header.play_address
+        )
 
     booted = boot(image, subtune, init_run=init_run)
     mem = bytes(booted[0])

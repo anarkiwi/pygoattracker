@@ -13,7 +13,7 @@ from vagrant_moses import memmap as mm
 
 from pygoattracker.errors import SidParseError
 from pygoattracker.packed import channel_count, pattern_bytes, stride
-from pygoattracker.probe import ProbeMiss
+from pygoattracker.probe import ProbeMiss, Spin
 from pygoattracker.typed import PortamentoUp, Rest, Row, Vibrato
 
 A, X, Y = 0, 1, 2
@@ -132,9 +132,12 @@ class Trace:
             for addr in wr:
                 self.cells[addr] = _UNKNOWN
 
-    def call(self, pc, a=0, cycles=_CYCLES):
-        """Run the subroutine at ``pc`` with ``A = a`` to its final RTS."""
+    def call(self, pc, a=0, cycles=_CYCLES, what="play", idle=False):
+        """Run the subroutine at ``pc`` with ``A = a`` to its final RTS, or, with
+        ``idle``, to the idle loop (:class:`~pygoattracker.probe.Spin`) or ``cycles`` budget an IRQ-driven init ends
+        in instead; ``what`` names the call in the error when it does not return."""
         mpu, mem = self.mpu, self.mem
+        spun = Spin()
         start_sp = mpu.sp
         for byte in (0x00, 0x01):
             mem[0x0100 + mpu.sp] = byte
@@ -144,8 +147,12 @@ class Trace:
         start = mpu.processorCycles
         while mpu.sp < start_sp:
             if mpu.processorCycles - start > cycles:
-                raise SidParseError("play call did not return")
+                if idle:
+                    return
+                raise SidParseError(f"{what} call did not return")
             self._step()
+            if idle and spun(mpu.pc):
+                return
 
 
 _HORIZON = 512

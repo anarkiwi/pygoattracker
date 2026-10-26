@@ -44,6 +44,25 @@ def _parse_orderlist(cur: _Cursor, subtune: int, channel: int) -> Orderlist:
     return Orderlist(entries=entries, restart=data[length])
 
 
+def determine_channels(data: bytes, pos: int, num_subtunes: int) -> int:
+    """3 or 6 orderlists a subtune, as GoatTracker 2 Stereo's ``determinechannels``.
+
+    ``pos`` is the offset of the first orderlist. Six is chosen only when
+    every one of ``num_subtunes * 6`` orderlists ends ``$FF`` + an in-range
+    restart.
+    """
+    for _ in range(num_subtunes * constants.MAX_CHN_STEREO):
+        if pos >= len(data):
+            return constants.MAX_CHN
+        length = data[pos]
+        if length < 1 or pos + length + 2 > len(data):
+            return constants.MAX_CHN
+        if data[pos + length] != constants.LOOPSONG or data[pos + length + 1] > length:
+            return constants.MAX_CHN
+        pos += length + 2
+    return constants.MAX_CHN_STEREO
+
+
 def _parse_instrument(cur: _Cursor, num: int) -> Instrument:
     what = f"instrument {num}"
     params = cur.take(9, what)
@@ -135,11 +154,11 @@ def parse_sng(
     num_subtunes = cur.u8("subtune count")
     if not 1 <= num_subtunes <= constants.MAX_SONGS:
         raise SngParseError(f"bad subtune count {num_subtunes}")
+    nchan = determine_channels(data, cur.pos, num_subtunes)
     subtunes = [
         Subtune(
             channels=[
-                _parse_orderlist(cur, subtune, channel)
-                for channel in range(constants.MAX_CHN)
+                _parse_orderlist(cur, subtune, channel) for channel in range(nchan)
             ]
         )
         for subtune in range(num_subtunes)

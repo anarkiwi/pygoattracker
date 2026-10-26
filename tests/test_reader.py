@@ -125,11 +125,6 @@ def _stereo_gts5(mono: bytes, extra: bytes) -> bytes:
     return bytes(out + mono[off:])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=SngParseError,
-    reason="#43: GT2 Stereo GTS5 (6 orderlists a subtune) is read as 3 channels",
-)
 def test_gt2_stereo_gts5_parses_six_channels_and_round_trips():
     song = basic_song()
     song.patterns.append(Pattern.empty(4))

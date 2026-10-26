@@ -511,6 +511,13 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
         return [mem[lo + i] | mem[hi + i] << 8 for i in range(n)]
 
     order_addrs = pointers(t.song_lo, t.song_hi, t.stride * t.songs)
+    # greloc lays out an empty song (all its channels' orderlists zero-length, so
+    # their pointers coincide) when a song in its range has a zero-length channel;
+    # a real orderlist is at least 2 bytes, so drop such trailing songs.
+    songs = t.songs
+    while songs > 1 and len(set(order_addrs[(songs - 1) * t.stride :])) == 1:
+        songs -= 1
+        del order_addrs[songs * t.stride :]
     patt_addrs = pointers(t.patt_lo, t.patt_hi, t.patterns)
     orderlists, orders = [], []
     for addr in order_addrs:
@@ -521,7 +528,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     lay = PackedLayout(
         *anchor,
         songtbl=t.song_lo,
-        songs=t.songs,
+        songs=songs,
         order_addrs=tuple(order_addrs),
         patt_lo=t.patt_lo,
         patt_addrs=tuple(patt_addrs),

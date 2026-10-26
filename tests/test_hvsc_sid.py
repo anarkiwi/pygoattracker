@@ -348,11 +348,6 @@ def test_binary_relocator_players_play_as_their_6502(rel):
     assert np.array_equal(np.asarray(got), np.asarray(want))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=SidParseError,
-    reason="#87: greloc's empty song (zero-length orderlists) read as an orderlist",
-)
 @pytest.mark.parametrize(
     "rel",
     ["MUSICIANS/B/Booker/Hz_Jazz.sid", "MUSICIANS/X/X-agon/Accept_All_Cookies.sid"],

@@ -42,6 +42,9 @@ from pygoattracker import constants
 from pygoattracker.errors import SidParseError
 from pygoattracker.observe import Trace, instrument_layout, song_tables
 from pygoattracker.packed import (
+    WAVE_NEW,
+    WAVE_NONE,
+    WAVE_OLD,
     Build,
     PackedLayout,
     PlayerBuild,
@@ -73,9 +76,13 @@ _TRANSUP = 0xF0
 _LOOPSONG = 0xFF
 
 # The packed player's pattern fetch, ``lda patttbllo,y; sta zp; lda patttblhi,y;
-# sta zp; ldy chn,x; lda (zp),y; cmp #FX``: :meth:`GoatTrackerSidParser.recognize`
+# sta zp; ldy chn,x; lda (zp),y; cmp #FX`` (the binary relocator's
+# players step the index between the last two): :meth:`GoatTrackerSidParser.recognize`
 # tells a GoatTracker image by it, the frequency table being common to most trackers.
-_P_PATTTBL = CodePattern("B9 {lo:w} 85 ?? B9 {hi:w} 85 ?? BC ?? ?? B1 ?? C9 40")
+_P_PATTTBL = (
+    CodePattern("B9 {lo:w} 85 ?? B9 {hi:w} 85 ?? BC ?? ?? B1 ?? C9 40"),
+    CodePattern("B9 {lo:w} 85 ?? B9 {hi:w} 85 ?? BC ?? ?? B1 ?? C8 C9 40"),
+)
 
 
 @dataclass
@@ -93,11 +100,16 @@ class PackedInfo:
     lastnote: int = constants.MAX_NOTES - 1
     freq_table: tuple = ()
     note_read: tuple = ()
-    nowavedelay: bool = False
+    wave: int = WAVE_NEW
     layout: PackedLayout | None = None
     build: PlayerBuild = field(default_factory=PlayerBuild)
     playback: Build = field(default_factory=Build)
     state: PlayerState | None = None
+
+    @property
+    def nowavedelay(self) -> bool:
+        """Whether the wavetable has no delays (greloc NOWAVEDELAY)."""
+        return self.wave == WAVE_NONE
 
     @property
     def channels(self) -> int:
@@ -328,6 +340,7 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
         lambda: _detect_nowavedelay(mem[tstart : tstart + wlen]),
         "wavetable",
     ).value
+    wave = WAVE_OLD if build.lowdelay else WAVE_NONE if nowavedelay else WAVE_NEW
     simplepulse = heuristic_entry(
         build.simplepulse, lambda: _detect_simplepulse(pleft), "pulse table"
     ).value
@@ -336,7 +349,7 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
         Subtune(channels=orderlists[s * n : s * n + n])
         for s in range(len(orderlists) // n)
     ]
-    typed = decode(mem, lay, build, header, subtunes, nowavedelay, simplepulse)
+    typed = decode(mem, lay, build, header, subtunes, wave, simplepulse)
     noeffects = not any(isinstance(r, WaveCommand) for r in typed.wavetable) and all(
         isinstance(r.command, (DoNothing, type(None)))
         for p in typed.patterns
@@ -347,10 +360,14 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
         lastnote=firstnote + length - 1,
         freq_table=typed.freq,
         note_read=_freq_table(mem, addr, firstnote, length, bases),
-        nowavedelay=nowavedelay,
+        wave=wave,
         layout=lay,
         build=build,
-        playback=build.resolve(simplepulse=simplepulse, live_vibrato=noeffects),
+        playback=build.resolve(
+            simplepulse=simplepulse,
+            live_vibrato=noeffects and not lay.binary,
+            vibstop=lay.binary,
+        ),
     )
     return typed.to_song(), info, typed
 
@@ -575,6 +592,6 @@ class GoatTrackerSidParser(BaseSidParser):
         return decompile_sid(data, subtune=subtune)
 
     def recognize(self, image: SidImage):
-        if find_code_first(image, _P_PATTTBL) is None:
+        if all(find_code_first(image, p) is None for p in _P_PATTTBL):
             return None
         return _recognize(image)

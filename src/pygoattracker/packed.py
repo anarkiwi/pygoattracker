@@ -14,18 +14,29 @@ from pysidtracker import find_code_all
 from pysidtracker.facets import Entry, Variant, inferred
 
 from pygoattracker import constants as C
-from pygoattracker.model import PlayPattern, Repeat
+from pygoattracker.legacy import (
+    MST_FINEVIB,
+    MST_FUNKTEMPO,
+    MST_PORTAMENTO,
+    make_speed_entry,
+)
+from pygoattracker.model import PlayPattern, Repeat, Table
 from pygoattracker.variant import tristate_entry
 from pygoattracker.typed import (
     FilterSet,
+    FunkTempo,
     GateOff,
     GateOn,
     Instrument,
+    PortamentoDown,
+    PortamentoUp,
     Rest,
     Row,
     SetTempo,
     SetWave,
+    TonePortamento,
     TypedSong,
+    Vibrato,
     command_bytes,
     command_of,
     filter_bytes,
@@ -69,10 +80,17 @@ class PackedLayout:
     slen: int
     zeros: int
     gate_flags: bool = False  # the gate column keeps the hard-restart/legato bits
+    inline: bool = False  # no speed table: effect parameters are the data itself
     songtbl_hi: int | None = None  # None: right after the low column
     patt_hi: int | None = None
     cols: tuple | None = None  # column names in memory order; None: greloc's
     channels: int = C.MAX_CHN  # orderlist pointers a song
+
+    @property
+    def binary(self) -> bool:
+        """Whether the binary relocator of GoatTracker 2.0-2.28 laid the data out:
+        its song and pattern tables follow the instruments and tables."""
+        return self.songtbl > self.ins_start
 
 
 def default_voices(channels: int | None) -> tuple | None:
@@ -98,7 +116,11 @@ class PlayerBuild:
     ``channels``: the channels the player inits; ``idle``: those its play never
     runs; ``voices``: each one's register offset from ``$D400`` (``$20`` a chip),
     None where its registers reach no chip; ``overlay``: each one's ``(and, or)``
-    on the control byte it writes; ``calls``: player calls a play call makes.
+    on the control byte it writes; ``calls``: player calls a play call makes;
+    ``wavedelay``: waveforms are shifted up $10 behind a delay test of $01-$0F (False:
+    stored as they are); ``lowdelay``: a player storing waveforms as they are still
+    delays $01-$07, before v2.18; ``vibinit``: a note's init loads the instrument's
+    vibrato parameter (False: only an effect 0 on its row does).
     """
 
     ghost: int | None = None
@@ -113,6 +135,8 @@ class PlayerBuild:
     pulsestep: int | None = None
     realtime: bool | None = None
     wavedelay: bool | None = None
+    lowdelay: bool | None = None
+    vibinit: bool | None = None
     simplepulse: bool | None = None
     funk: tuple | None = None
     wrapper: bool = False
@@ -141,6 +165,7 @@ class PlayerBuild:
             "calls": Entry(self.calls, inferred("probe")),
             "idle": Entry(self.idle, inferred("probe")),
             "overlay": tristate_entry(self.overlay, None),
+            "vibinit": tristate_entry(self.vibinit, True),
         }
         return Variant(entries)
 
@@ -168,7 +193,10 @@ class Build:
     ``voices``: each channel's register offset from ``$D400`` (``$20`` a chip, None:
     silent; None: channel ``c`` on chip ``c // 3``, voice ``c % 3``);
     ``calls``: player ticks a frame runs; ``idle``: channels the play never runs;
-    ``overlay``: each channel's ``(and, or)`` on its control byte (None: as written).
+    ``overlay``: each channel's ``(and, or)`` on its control byte (None: as written);
+    ``vibstop``: a vibrato delay of zero stops the instrument vibrato (the binary
+    relocator's players, which count the delay as stored down to one);
+    ``vibinit``: a note's init loads the instrument's vibrato parameter.
     """
 
     adparam: int = C.DEFAULT_ADPARAM
@@ -184,6 +212,8 @@ class Build:
     calls: int = 1
     idle: tuple = ()
     overlay: tuple | None = None
+    vibstop: bool = False
+    vibinit: bool = True
 
 
 @dataclass(frozen=True)
@@ -325,11 +355,21 @@ def pattern_bytes(rows) -> bytes:
     return bytes(out + b"\0")
 
 
-def _wave_editor(left, right, nwd):
+# How a player reads a wavetable's left bytes: ``WAVE_NEW`` delays $01-$0F and
+# shifts waveforms up $10, ``WAVE_NONE`` has no delays, ``WAVE_OLD`` (before v2.18)
+# delays $01-$07 and takes the rest as waveforms.
+WAVE_NEW, WAVE_NONE, WAVE_OLD = 0, 1, 2
+_OLD_DELAYS = 0x07
+
+
+def _wave_editor(left, right, wave):
     """A packed wavetable row in editor form: waveforms $10 up, silent ones by nibble."""
     if left == C.TABLEJUMP or left >= C.WAVECMD:
         return left, right
-    if nwd:
+    if wave == WAVE_OLD:
+        silent = _OLD_DELAYS < left <= C.WAVELASTDELAY
+        return (C.WAVESILENT | left if silent else left), right ^ 0x80
+    if wave:
         return (
             C.WAVESILENT | left if 0 < left <= C.WAVELASTDELAY else left
         ), right ^ 0x80
@@ -339,11 +379,13 @@ def _wave_editor(left, right, nwd):
     return (C.WAVESILENT | w if w <= C.WAVELASTDELAY else w), right ^ 0x80
 
 
-def _wave_packed(left, right, nwd):
+def _wave_packed(left, right, wave):
     if left == C.TABLEJUMP or left >= C.WAVECMD:
         return left, right
     w = left & 0x0F if left >= C.WAVESILENT else left
-    return (w + 0x10 if left > C.WAVELASTDELAY and not nwd else w), right ^ 0x80
+    return (
+        w + 0x10 if left > C.WAVELASTDELAY and wave == WAVE_NEW else w
+    ), right ^ 0x80
 
 
 def _filter_packed(row):
@@ -366,11 +408,13 @@ def columns(lay):
     return names + ["vib", "vibdelay"] * lay.vib + ["gate", "first"] * lay.gate
 
 
-def _instrument(i, col, build, fixed, flags):
-    """Instrument ``i`` from its packed columns: greloc's ``vibdelay - 1`` undone,
-    FIXEDPARAMS' immediates, the hard-restart and legato classes from the gate
-    column's own bits where it keeps them, else from the build's class bounds."""
+def _instrument(i, col, build, fixed, lay):
+    """Instrument ``i`` from its packed columns: greloc's ``vibdelay - 1`` undone (the
+    binary relocator's players count the delay as stored), FIXEDPARAMS' immediates,
+    the hard restart and legato classes from the gate column's own bits where it keeps
+    them, else from the build's class bounds."""
     gate, first = (col["gate"], col["first"]) if "gate" in col else fixed
+    flags = lay.gate_flags
     return Instrument(
         col["ad"],
         col["sr"],
@@ -378,7 +422,7 @@ def _instrument(i, col, build, fixed, flags):
         col.get("pulse", 0),
         col.get("filt", 0),
         col.get("vib", 0),
-        (col.get("vibdelay", 0xFF) + 1) & 0xFF,
+        (col.get("vibdelay", 0xFF) + (not lay.binary)) & 0xFF,
         gate & 0x3F,
         not gate & 0x80 if flags else i < (build.firstnohr or NONE),
         bool(gate & 0x40) if flags else i >= (build.firstlegato or NONE),
@@ -387,7 +431,50 @@ def _instrument(i, col, build, fixed, flags):
     )
 
 
-def decode(mem, lay, build, header, orderlists, nowavedelay, simplepulse) -> TypedSong:
+def _swapped(byte):
+    return (byte >> 4 | byte << 4) & 0xFF
+
+
+def _speeds(instruments, patterns):
+    """``(instruments, patterns, speedtable)`` of a player without a speed table,
+    its vibrato, portamento and funktempo parameters made the speedtable rows
+    GoatTracker 2.76 makes of them on loading such a song (``legacy.parse_gts2``),
+    undoing the nibble swap and funktempo bias greloc applied."""
+    table = Table()
+
+    def command(cmd):
+        match cmd:
+            case PortamentoUp(x) | PortamentoDown(x) | TonePortamento(x):
+                return replace(cmd, speed=make_speed_entry(table, x, MST_PORTAMENTO))
+            case Vibrato(x):
+                return Vibrato(make_speed_entry(table, _swapped(x), MST_FINEVIB))
+            case FunkTempo(x):
+                return FunkTempo(
+                    make_speed_entry(table, (x + 0x11) & 0xFF, MST_FUNKTEMPO)
+                )
+        return cmd
+
+    instruments = tuple(
+        replace(
+            i,
+            vibrato_speed=make_speed_entry(
+                table, _swapped(i.vibrato_speed), MST_FINEVIB
+            ),
+        )
+        for i in instruments
+    )
+    patterns = tuple(
+        tuple(replace(r, command=command(r.command)) if r.command else r for r in p)
+        for p in patterns
+    )
+    return (
+        instruments,
+        patterns,
+        tuple(speed_row(*r) for r in zip(table.left, table.right)),
+    )
+
+
+def decode(mem, lay, build, header, orderlists, wave, simplepulse) -> TypedSong:
     """The packed song data at ``lay`` as a :class:`TypedSong`."""
     n, cols = lay.num_instr, columns(lay)
     base = lay.ins_start
@@ -398,7 +485,7 @@ def decode(mem, lay, build, header, orderlists, nowavedelay, simplepulse) -> Typ
             {k: v[i] for k, v in arrays.items()},
             build,
             build.fixed or (2, 9),
-            lay.gate_flags,
+            lay,
         )
         for i in range(n)
     )
@@ -410,24 +497,28 @@ def decode(mem, lay, build, header, orderlists, nowavedelay, simplepulse) -> Typ
     fpos = ppos + 2 * lay.plen
     spos = fpos + 2 * lay.flen + lay.zeros
     limit = C.MAX_STR - 1
+    patterns = tuple(pattern_rows(mem, a)[0] for a in lay.patt_addrs)
+    speeds = tuple(
+        speed_row(mem[spos + k], mem[spos + lay.slen + lay.zeros + k])
+        for k in range(lay.slen)
+    )
+    if lay.inline:
+        instruments, patterns, speeds = _speeds(instruments, patterns)
     return TypedSong(
         name=header.name[:limit],
         author=header.author[:limit],
         copyright=header.released[:limit],
         subtunes=tuple(orderlists),
-        patterns=tuple(pattern_rows(mem, a)[0] for a in lay.patt_addrs),
+        patterns=patterns,
         instruments=instruments,
         wavetable=table(
             lay.tstart,
             lay.wlen,
-            lambda a, b: wave_row(*_wave_editor(a, b, nowavedelay)),
+            lambda a, b: wave_row(*_wave_editor(a, b, wave)),
         ),
         pulsetable=table(ppos, lay.plen, lambda a, b: pulse_row(a, b, simplepulse)),
         filtertable=table(fpos, lay.flen, _filter_typed),
-        speedtable=tuple(
-            speed_row(mem[spos + k], mem[spos + lay.slen + lay.zeros + k])
-            for k in range(lay.slen)
-        ),
+        speedtable=speeds,
         simplepulse=simplepulse,
         speed0=speed_row(mem[spos - 1], mem[spos + lay.slen]) if lay.zeros else None,
         firstnote=lay.firstnote,
@@ -463,7 +554,7 @@ def _instrument_bytes(ins, lay):
         "pulse": raw.pulse_ptr,
         "filt": raw.filter_ptr,
         "vib": raw.vibrato_param,
-        "vibdelay": (raw.vibrato_delay - 1) & 0xFF,
+        "vibdelay": (raw.vibrato_delay - (not lay.binary)) & 0xFF,
         "gate": raw.gateoff_timer & (0x3F | flags),
         "first": raw.first_wave,
     }
@@ -475,7 +566,9 @@ def pack(song: TypedSong, info) -> list[tuple[int, bytes]]:
 
     ``info`` is the :class:`~pygoattracker.sid.PackedInfo` decompiling the image left.
     """
-    lay, nowavedelay = info.layout, info.nowavedelay
+    lay, wave = info.layout, info.wave
+    if lay.inline:
+        raise ValueError("a player without a speed table cannot be packed")
 
     def split(lo, hi, addrs):
         hi = lo + len(addrs) if hi is None else hi
@@ -502,7 +595,7 @@ def pack(song: TypedSong, info) -> list[tuple[int, bytes]]:
         (lay.ins_start, cells),
         (
             lay.tstart,
-            pairs(song.wavetable, lambda r: _wave_packed(*wave_bytes(r), nowavedelay)),
+            pairs(song.wavetable, lambda r: _wave_packed(*wave_bytes(r), wave)),
         ),
         (lay.tstart + 2 * lay.wlen, pairs(song.pulsetable, pulse_bytes)),
         (

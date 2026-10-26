@@ -224,3 +224,19 @@ def test_control_overlay_is_the_and_or_each_voice_shows():
         probe._mask({0xCD: 0x32, 0x02: 0xFD, 0x30: 0xCF})
     build = _decompiled("GAMES/A-F/Doc_Cosmos.sid", 1).info.build
     assert build.overlay == ((0, 0), (0x0F, 0x10), (0x0F, 0x10))
+
+
+def test_a_countdown_stops_at_its_floor_and_does_not_pass_it():
+    assert probe._countdown(3)([3, 2, 1, 0, 0], None)
+    assert probe._countdown(3, 1)([3, 2, 1, 1, 1], None)
+    assert not probe._countdown(3, 1)([3, 2, 1, 0], None)
+    assert not probe._countdown(3)([3, 2, 1, 0, 0xFF], None)
+    assert not probe._countdown(3, 1)([4, 3, 1], None)
+
+
+def test_a_variable_is_the_one_base_a_probe_finds():
+    assert probe._unique({0x1400}) == 0x1400
+    assert probe._unique(set()) is None and probe._unique({1, 2}) is None
+    subject = bytes(range(32))
+    assert probe._held(subject, 2) == (2, 9, 16)
+    assert probe._held(subject, 2, 1) == (3, 10, 17)

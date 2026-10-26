@@ -1035,3 +1035,50 @@ def test_overlay_masks_each_channel_s_control_byte(song):
     for want, got in zip(plain, masked):
         assert got[4] == 0 and got[11] == want[11]
         assert got[18] == want[18] & 0x0F | 0x10
+
+
+def _vibrato_after_another_effect():
+    """Instrument 2's vibrato (instrument 1 has none, which the first tick loads), a
+    note under a set AD command on every row and no vibrato command."""
+    rows = {r: Row(command=constants.CMD_SETAD, data=0x0F) for r in range(8)}
+    song = basic_song(rows)
+    vibrato = add_test_instrument(song, vibrato_delay=1)
+    song.instruments[vibrato - 1].vibrato_param = song.speedtable.add(3, 0x40)
+    rows[0] = Row(
+        note=note("C-4"), instrument=vibrato, command=constants.CMD_SETAD, data=0x0F
+    )
+    song.patterns[0].rows[0] = rows[0]
+    return song
+
+
+def test_a_note_under_another_effect_vibrates_where_its_init_loads_the_parameter():
+    song = _vibrato_after_another_effect()
+    assert len(set(freq_history(song, 40)[7:])) > 1
+    assert set(freq_history(song, 40, vibinit=False)[7:]) == {C4_FREQ}
+
+
+def test_a_vibrato_stopped_by_a_zero_delay_steps_without_a_parameter_otherwise():
+    player = started(basic_song(), vibstop=True)
+    chan = player._channels[0]
+    chan.command, chan.cmddata, chan.vibdelay, chan.vibtime = 0, 0, 1, 0
+    player._tickn_command(chan)
+    assert chan.vibtime == 2  # the parameter is zero: it still steps
+    chan.vibdelay = 0
+    player._tickn_command(chan)
+    assert chan.vibtime == 2  # a delay of zero stops it
+    chan.vibtime = 0
+    other = started(basic_song())._channels[0]
+    other.command, other.cmddata, other.vibdelay = 0, 0, 1
+    started(basic_song())._tickn_command(other)
+    assert other.vibtime == 0  # a parameter of zero is no vibrato
+
+
+def test_the_pulse_width_init_left_reaches_the_chip_with_the_first_pulse_program():
+    song = basic_song()
+    song.instruments[0].pulse_ptr = song.pulsetable.add(0x7F, 0x01)
+    state = PlayerState(
+        (0,) * 25, 0, 0, 15, (8, 5), False, (), (("pulse_init", (0xB90, 0, 0)),)
+    )
+    high = reg_history(song, 40, constants.PULSE_HI_REG, state=state)
+    assert high[:6] == [0] * 6 and set(high[7:]) == {0x0B}
+    assert set(reg_history(song, 40, constants.PULSE_HI_REG)) == {0}

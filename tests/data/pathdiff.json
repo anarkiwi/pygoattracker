@@ -14,19 +14,6 @@
  },
  {
   "compare": "lead",
-  "frames": 11,
-  "id": "40cebc9eda99",
-  "key": "('first', '', 'python:edge:Player._play_call:d4740da4359f>a721b1dd02ea')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "280e16fe5a0b2c4fe11dab10f87c68d9",
-  "reason": "pygoattracker/player.py:287 if self._state == _STOPPED: -> 289: reference frame 2, register $0E v3_freq_lo",
-  "relpath": "GAMES/S-Z/Space_Game_2024.sid",
-  "right": "format:auto",
-  "song": 3
- },
- {
-  "compare": "lead",
   "frames": 10,
   "id": "ba869ad646cb",
   "key": "('first', '6502:edge:30f4c5cc470c9f8aafdaa23e', '')",

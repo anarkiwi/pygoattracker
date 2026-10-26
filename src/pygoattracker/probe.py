@@ -55,6 +55,7 @@ _VIBDELAYS = (0x30, 0x28)
 _REST = Row(Rest(), None, None, 24)
 _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
 _CAP = 256
+_LDA_ABS_Y, _STA_ABS_X = 0xB9, 0x9D
 _CALLS = (0x20, 0x4C)  # jsr, jmp abs
 _ROUTE = 32
 _HELD = 96
@@ -445,6 +446,29 @@ def _vibinit(bench):
     if not moves(None):
         return None
     return moves(SetAD(0x0F))
+
+
+def _noeffects(bench):
+    """Whether instrument vibrato reads the channel's current instrument every tick
+    (greloc NOEFFECTS) rather than the parameter latched at note init, of the
+    non-binary players: a latching player loads the instrument's vibrato column into
+    a channel variable (``lda mt_insvibparam-1,y / sta mt_chnparam,x``), which a
+    NOEFFECTS build does not assemble (False: that code shows; None: it does not, or
+    no instrument vibrato column does)."""
+    lay = bench.lay
+    if lay.binary or not lay.vib:
+        return None
+    col = lay.ins_start + columns(lay).index("vib") * lay.num_instr - 1
+    mem = bench.image.mem
+    start, end = bench.span
+    load = bytes((_LDA_ABS_Y, col & 0xFF, col >> 8))
+    code = bytes(mem[0 if start is None else start : 0x10000 if end is None else end])
+    at = code.find(load)
+    while at >= 0:
+        if code[at + 3 : at + 4] == bytes((_STA_ABS_X,)):
+            return False
+        at = code.find(load, at + 1)
+    return None
 
 
 def _simplepulse(run):
@@ -933,6 +957,7 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         wavedelay=wavedelay,
         lowdelay=None if wavedelay is not False else _shown(_lowdelay, bench),
         vibinit=_shown(_vibinit, bench),
+        noeffects=_shown(_noeffects, bench),
         simplepulse=_simplepulse(run),
         funk=None if row is None or ghost is None else _shown(_funk, bench, row),
         wrapper=wrapper,

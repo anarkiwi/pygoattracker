@@ -350,11 +350,16 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
         for s in range(len(orderlists) // n)
     ]
     typed = decode(mem, lay, build, header, subtunes, wave, simplepulse)
-    noeffects = not any(isinstance(r, WaveCommand) for r in typed.wavetable) and all(
-        isinstance(r.command, (DoNothing, type(None)))
-        for p in typed.patterns
-        for r in p
-    )
+    noeffects = heuristic_entry(
+        build.noeffects,
+        lambda: not any(isinstance(r, WaveCommand) for r in typed.wavetable)
+        and all(
+            isinstance(r.command, (DoNothing, type(None)))
+            for p in typed.patterns
+            for r in p
+        ),
+        "patterns",
+    ).value
     info = PackedInfo(
         firstnote=firstnote,
         lastnote=firstnote + length - 1,

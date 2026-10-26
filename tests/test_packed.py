@@ -218,12 +218,6 @@ def _without_pattern_effects(raw: bytes) -> bytes:
     return bytes(out)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#48: NOEFFECTS (live_vibrato) is inferred from the song's commands, "
-    "not read from the player",
-)
 @pytest.mark.parametrize("subtune", [0, 1])
 def test_a_player_keeping_its_effect_code_plays_a_song_without_commands(subtune):
     # gt2_full's player assembles the full effect path (NOEFFECTS=0); a song

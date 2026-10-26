@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pysidtracker import registers as reg
-from pysidtracker.emu import observe_data_access, run_to_rts
+from pysidtracker.emu import observe_data_access, run_to_rts, run_to_rts_until
 from pysidtracker.image import SidImage
 from pysidtracker.oracle import boot_flat
 from vagrant_moses import memmap as mm
@@ -729,24 +729,32 @@ def _overlay(bench, voices):
     return tuple(out) if any(out) else None
 
 
+class _Entries:
+    """The addresses a play call runs through, seen as :func:`run_to_rts_until`'s
+    ``pcs``: learns the target of the first ``jsr``/``jmp`` and counts its visits."""
+
+    def __init__(self, mem):
+        self.mem = mem
+        self.count = 0
+        self.entry = None
+
+    def __contains__(self, pc):
+        mem = self.mem
+        self.count += pc == self.entry
+        if self.entry is None and mem[pc] in _CALLS:
+            self.entry = mem[pc + 1] | mem[pc + 2] << 8
+        return False
+
+
 def calls(image, subtune, play, entries):
     """How many times one play call at ``play`` after the song-init one runs the
     target of its first ``jsr``/``jmp``, where that is one of the player's play
     ``entries`` (else 1)."""
-    subject, mpu, mem, play = boot(image, subtune)[:3] + (play,)
+    subject, mpu, mem = boot(image, subtune)[:3]
     _call(mpu, mem, play)
-    start_sp, count, entry = mpu.sp, 0, None
-    for byte in (0x00, 0x01):
-        mem[0x0100 + mpu.sp] = byte
-        mpu.sp = (mpu.sp - 1) & 0xFF
-    mpu.pc, start = play, mpu.processorCycles
-    while mpu.sp < start_sp and mpu.processorCycles - start <= _CYCLES:
-        pc = mpu.pc
-        count += pc == entry
-        if entry is None and subject[pc] in _CALLS:
-            entry = subject[pc + 1] | subject[pc + 2] << 8
-        mpu.step()
-    return max(count, 1) if entry in entries else 1
+    seen = _Entries(subject)
+    run_to_rts_until(mpu, mem, play, mpu.a, seen, _CYCLES)
+    return max(seen.count, 1) if seen.entry in entries else 1
 
 
 def _shown(probe, *args, default=None):

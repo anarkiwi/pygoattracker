@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.36.0",
+    "pysidtracker>=0.38.0",
 ]
 
 [project.optional-dependencies]

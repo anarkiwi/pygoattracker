@@ -11,9 +11,11 @@ from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from pysidtracker import find_code_all
+from pysidtracker.facets import Entry, Variant, inferred
 
 from pygoattracker import constants as C
 from pygoattracker.model import PlayPattern, Repeat
+from pygoattracker.variant import tristate_entry
 from pygoattracker.typed import (
     FilterSet,
     GateOff,
@@ -120,26 +122,33 @@ class PlayerBuild:
     overlay: tuple | None = None
     calls: int = 1
 
+    def variant(self) -> Variant:
+        """The defines as facets: those the player shows are ``inferred`` from the
+        probe, the rest ``default`` to the editor's."""
+        adparam = (
+            None if self.adparam is None else self.adparam << 8 | (self.srparam or 0)
+        )
+        entries = {
+            "adparam": tristate_entry(adparam, C.DEFAULT_ADPARAM),
+            "optimize_pulse": tristate_entry(self.pulseopt, True),
+            "optimize_realtime": tristate_entry(self.realtime, True),
+            "pulse_step": tristate_entry(self.pulsestep or None, 1),
+            "default_tempo": tristate_entry(self.deftempo, None),
+            "wrapper_flush": Entry(self.wrapper, inferred("probe")),
+            "voices": tristate_entry(
+                self.voices or default_voices(self.channels), None
+            ),
+            "calls": Entry(self.calls, inferred("probe")),
+            "idle": Entry(self.idle, inferred("probe")),
+            "overlay": tristate_entry(self.overlay, None),
+        }
+        return Variant(entries)
+
     def resolve(self, **decoded) -> "Build":
         """The :class:`Build` these defines play with, the editor's where not shown;
         ``decoded`` the options read from the song data rather than the player."""
-        return Build(
-            adparam=(
-                C.DEFAULT_ADPARAM
-                if self.adparam is None
-                else self.adparam << 8 | self.srparam
-            ),
-            optimize_pulse=True if self.pulseopt is None else self.pulseopt,
-            optimize_realtime=True if self.realtime is None else self.realtime,
-            pulse_step=self.pulsestep or 1,
-            default_tempo=self.deftempo,
-            wrapper_flush=self.wrapper,
-            voices=self.voices or default_voices(self.channels),
-            calls=self.calls,
-            idle=self.idle,
-            overlay=self.overlay,
-            **decoded,
-        )
+        variant = self.variant()
+        return Build(**{name: variant[name] for name in variant}, **decoded)
 
 
 @dataclass(frozen=True)

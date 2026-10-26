@@ -465,21 +465,21 @@ def _noeffects(bench):
     if not lay.inline:
         tables["speed"] = _SEEN[: 1 + bool(lay.slen)]
 
-    def after(vib):
+    def change(vib):
+        """The first call after the first note whose frequency moves."""
         over = {1: {}, 2: {"vib": vib, "vibdelay": 1}}
         grid = bench.grid([voice], over, tables, 64, _two)
         notes = _notes(grid)
         if not notes:
             return None
-        later = grid[notes[0] + 1 :, :2]
-        moved = np.flatnonzero((later != grid[notes[0], :2]).any(axis=1))
-        return tuple(later[moved[0]]) if moved.size else None
+        moved = np.flatnonzero((grid[notes[0] + 1 :, :2] != grid[notes[0], :2]).any(1))
+        return notes[0] + 1 + int(moved[0]) if moved.size else None
 
-    still = after(0)
-    seen = after(_INLINESEEN if lay.inline else 1)
+    still = change(0)
+    seen = change(_INLINESEEN if lay.inline else 1)
     if still is None or seen is None:
         return None
-    return seen != still
+    return seen < still
 
 
 def _simplepulse(run):

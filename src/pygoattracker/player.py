@@ -64,6 +64,7 @@ class _Channel:
     gate: int = 0
     wave: int = 0
     pulse: int = 0
+    pulse_init: int | None = None  # the width variable init left, not yet on the chip
     wave_table_ptr: int = 0
     pulse_table_ptr: int = 0
     pulsetime: int = 0
@@ -597,7 +598,8 @@ class Player(MemPlayer):
         chan.note = (chan.newnote - constants.FIRSTNOTE) & 0xFF
         chan.command = 0
         chan.vibdelay = iptr.vibdelay
-        chan.cmddata = iptr.speed_ptr
+        if self.build.vibinit:
+            chan.cmddata = iptr.speed_ptr
         if chan.newcommand == constants.CMD_TONEPORTA:
             return
         if iptr.firstwave:
@@ -705,7 +707,7 @@ class Player(MemPlayer):
                 param = self._instr[chan.instr & 0x3F].speed_ptr
             else:
                 param = chan.cmddata
-            if not param:
+            if not (chan.vibdelay if self.build.vibstop else param):
                 return
             if chan.vibdelay > 1:
                 chan.vibdelay -= 1
@@ -713,6 +715,8 @@ class Player(MemPlayer):
             self._vibrato(chan, param)
 
     def _pulse_exec(self, chan: _Channel) -> None:
+        if chan.pulse_init is not None:
+            chan.pulse, chan.pulse_init = chan.pulse_init, None
         ptbl = constants.PTBL
         if self._lt(ptbl, chan.pulse_table_ptr) == constants.TABLEJUMP:
             chan.pulse_table_ptr = self._rt(ptbl, chan.pulse_table_ptr)

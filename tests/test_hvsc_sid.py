@@ -18,16 +18,15 @@ variable (otherwise it fetches from ``$HVSC_MIRROR``)::
 Scope. The decompiler targets gt2reloc-*packed* GoatTracker 2 images (the
 ``decompile_sid`` path). Where the song data lies is read off the player by
 running it (:mod:`pygoattracker.observe`), so packer revisions that move or
-reorder it still decode.
+reorder it still decode. So do the binary-relocator players of GoatTracker
+V2.0-V2.28 (before V2.29's assembler-based relocator), whose song tables follow the
+instrument and wave/pulse/filter tables.
 
 A residual cluster remains *out of scope* and is *excluded* here (the public
 parse raises :class:`SidParseError`, which the test tallies rather than
 asserting against):
 
   * GoatTracker **V1.x** tunes, decoded by :mod:`pygoattracker.gt1` instead.
-  * The binary-relocator players of **GoatTracker V2.0-V2.28** (before V2.29's
-    assembler-based relocator), whose song tables follow the instrument and
-    wave/pulse/filter tables (#86).
 
 Most of the sampled corpus is in scope and must decompile; the remainder
 raises a clean ``SidParseError`` (never any other exception).
@@ -36,9 +35,11 @@ raises a clean ``SidParseError`` (never any other exception).
 import functools
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from pysidtracker import PlayroutineKind
+from pysidtracker.oracle import register_grid
 from pysidtracker.testing import resolve_tune
 
 from pygoattracker import sid
@@ -259,7 +260,8 @@ def test_hvsc_corpus_round_trips_through_the_typed_model():
         except SidParseError:
             continue
         patterns = set(result.info.layout.patt_addrs)
-        for addr, packed, held in result.repack():
+        # inline effect parameters become speed rows, which cannot be packed back
+        for addr, packed, held in [] if result.info.layout.inline else result.repack():
             assert addr in patterns, rel
             assert pattern_rows(packed, 0)[0] == pattern_rows(held, 0)[0], rel
         typed = TypedSong.from_song(result.song, result.info.playback.simplepulse)
@@ -307,26 +309,43 @@ def test_hvsc_corpus_resolves_overclaimed_songs():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=SidParseError,
-    reason="#86: GoatTracker V2.0-V2.28 binary-relocator layout not decoded",
+# GoatTracker V2.0-V2.28 binary-relocator players: ``(HVSC path, what it shows)``.
+_BINARY_RELOCATOR = (
+    # player1b (fixed gatetimer and first wave): 7 instrument columns, 3 tables,
+    # effect parameters inline, waveforms as stored (delays $01-$07).
+    ("MUSICIANS/R/Rusty46/A_Love_Story.sid", "7 columns"),
+    ("MUSICIANS/R/Rusty46/Baked_and_Boiled.sid", "an empty filtertable"),
+    ("MUSICIANS/F/Freedom/Planets_intro_version.sid", "7 columns"),
+    ("MUSICIANS/F/Freedom/Tough_Boy_Remake.sid", "7 columns"),
+    ("MUSICIANS/Z/Zabutom/Nordic_Scene_Review.sid", "fine vibrato, effect 0 on a row"),
+    ("MUSICIANS/B/Bayliss_Richard/Sub_Hunter_preview.sid", "pulse width left by init"),
+    ("MUSICIANS/T/Tomaes/Sid_Vicious.sid", "7 columns"),
+    # the full 9 columns, 3 tables.
+    ("MUSICIANS/M/Morton_Adam/Arpo4.sid", "9 columns, inline parameters"),
+    # V2.2x: 4 tables, the speedtable and a waveform shift of $10.
+    ("MUSICIANS/R/Rusty46/Freestyle.sid", "no octave 0 (firstnote 12)"),
+    ("MUSICIANS/R/Rusty46/Grandmas_Toe_Jam.sid", "instrument vibrato from effect 0"),
+    ("MUSICIANS/Z/Zabutom/Sad_Pillow_Cyber_Prophecy.sid", "7 columns, init $2642"),
+    ("MUSICIANS/R/Radiantx/Insects.sid", "9 columns"),
+    ("MUSICIANS/R/Rusty46/Shadowboxin.sid", "9 columns, instrument vibrato"),
 )
-@pytest.mark.parametrize(
-    "rel",
-    [
-        # player1b (fixed gatetimer/firstwave): 7 instrument columns.
-        "MUSICIANS/R/Rusty46/A_Love_Story.sid",
-        # full 9-column player, no octave 0 (firstnote 12).
-        "MUSICIANS/R/Rusty46/Freestyle.sid",
-        # full 9-column player, full frequency table.
-        "MUSICIANS/R/Rusty46/Grandmas_Toe_Jam.sid",
-    ],
-)
+_BINARY_FRAMES = 1500
+
+
+@pytest.mark.parametrize("rel", [rel for rel, _ in _BINARY_RELOCATOR])
 def test_binary_relocator_players_decompile(rel):
     result = sid.decompile_sid(_tune(rel))
     assert result.song.subtunes and result.song.patterns and result.song.instruments
+    assert result.info.layout.binary
     assert result.player() is not None
+
+
+@pytest.mark.parametrize("rel", [rel for rel, _ in _BINARY_RELOCATOR])
+def test_binary_relocator_players_play_as_their_6502(rel):
+    raw = _tune(rel)
+    want = register_grid(raw, _BINARY_FRAMES)
+    got = sid.decompile_sid(raw).player().render_grid(_BINARY_FRAMES)
+    assert np.array_equal(np.asarray(got), np.asarray(want))
 
 
 @pytest.mark.xfail(

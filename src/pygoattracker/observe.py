@@ -336,13 +336,15 @@ def _tiling(lefts, last, speed, end):
     return [int(n) for n in lens], max(0, int(rest) // 2 - 1), int(rest > 0)
 
 
-def _roles(trace, cols, wave, tables):
+def _roles(trace, cols, wave, tables, binary=False):
     """``{column: address}`` of the instrument columns besides the ``wave`` pointer,
     the tables starting at ``tables``, each told by what the player does with instrument 1's byte: the SID register it
     reaches or the table it indexes, the speed table last and the filter's pointer
     kept globally (read or not: a player can store it where nothing reads it), the
     pulse's per voice. Of the counters, the gate timer pairs
     with the first wave and the vibrato delay is the one whose copy counts down.
+    A ``binary`` relocator player without a speed table keeps the vibrato parameter
+    in its column, after the vibrato delay's.
     """
     sid = {}
     for addr, org, *_ in trace.sid:
@@ -361,6 +363,11 @@ def _roles(trace, cols, wave, tables):
             roles["filt"] = c
             inert.remove(c)
     gate = "first" in roles
+    if binary and len(inert) - gate == 2:
+        timer = roles["first"] - (cols[1] - cols[0]) if gate else None
+        roles["vibdelay"], roles["vib"] = (c for c in inert if c != timer)
+        roles.update({"gate": timer} if gate else {})
+        inert, gate = [], 0
     if len(inert) - gate not in (0, 1) or len(inert) - gate > len(pointers):
         raise SidParseError("instrument columns are not greloc's")
     if len(inert) > gate:
@@ -463,12 +470,11 @@ def instrument_layout(bench, anchors, tables) -> dict:
 
     trace = run({}, held)
     cols, num = _columns(trace, planted)
-    if max(tables) > cols[0]:
-        raise SidParseError(
-            "the song tables follow the instruments: a GoatTracker 2.0x player"
-        )
+    binary = max(tables) > cols[0]
     tstart = cols[0] + num * len(cols)
-    end = min((a for a in lay.order_addrs if a > tstart), default=None)
+    end = min(tables) if binary else None
+    if end is None:
+        end = min((a for a in lay.order_addrs if a > tstart), default=None)
     if end is None:
         raise SidParseError("no orderlist follows the tables")
     ours = planted | set(range(tstart, end))
@@ -500,7 +506,7 @@ def instrument_layout(bench, anchors, tables) -> dict:
         raise SidParseError("the planted note does not play")
     buf = plant
     params = {a for a in rooms & set(buf) if buf[a] == 1} - planted
-    roles = _roles(trace, cols, wave[0], tstart)
+    roles = _roles(trace, cols, wave[0], tstart, binary)
     bases = bases or _note_bases(trace)
     lefts = {"wave": tstart}
     lefts.update(
@@ -510,6 +516,7 @@ def instrument_layout(bench, anchors, tables) -> dict:
             if k in roles
         }
     )
+    lefts = {k: v for k, v in lefts.items() if v is None or v < end}
     speed = _speed(trace.reads, params | {roles.get("vib")}, end)
     dead = lefts.get("filt", 0) is None
     if dead:
@@ -541,4 +548,5 @@ def instrument_layout(bench, anchors, tables) -> dict:
         flen=lens.get("filt", 0),
         slen=slen,
         zeros=zeros,
+        inline=binary and not zeros,
     )

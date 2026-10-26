@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from pysidtracker.oracle import EmuPlayer
+from pysidtracker.testing import resolve_tune
 
 from pygoattracker import SidParseError
 from pygoattracker.errors import GoatTrackerError
@@ -24,8 +25,9 @@ from pygoattracker.gt1 import (
     speedcode_timer,
 )
 from pygoattracker.gt1player import Gt1Player
-from pygoattracker.sid import parse_sid_header
+from pygoattracker.sid import _load_image, parse_sid_header
 from pygoattracker._gt1_refs import PLAYERS
+from tests._fixture_cache import _archive_member
 
 REPO = Path(__file__).resolve().parent.parent
 V15_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "1.5"]
@@ -558,3 +560,64 @@ def test_generated_references_are_current():
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+# One HVSC tune per playroutine cluster no assembled reference recognizes.
+UNMATCHED_HVSC = {
+    "MUSICIANS/B/Butka/Eargasm.sid": "V1.4c-V1.4f: 1.4b plus the and #$ff/sta $d418 fader",
+    "DEMOS/A-F/Dont_You_Want_Me.sid": "V1.3-V1.4: 1.4b without the 1-frame hard restart",
+    "MUSICIANS/D/Dr_Fiemost/Mr_Tod.sid": "musicroutine 11.3 with the pre-V1.22 edits",
+    "MUSICIANS/C/Chapelier/Antti_Goes_to_Berkeley.sid": (
+        "musicroutine 11.4 with the pre-V1.21 edits"
+    ),
+    "MUSICIANS/C/Cerror/Christmass_02.sid": "11.4 whose set-sustain bmi skips the lda",
+    "MUSICIANS/K/Kozaki_Soft/Sawlarmes_2SID.sid": "V1.4b Stereo, second SID at $d420",
+    "MUSICIANS/B/Bayliss_Richard/Summer_Timebooze_2SID.sid": "V1.53 Stereo",
+    "MUSICIANS/N/Nata/Advanced_Chemistry.sid": "V1.4b Stereo, second-SID stores nopped",
+}
+
+# GoatTracker V0.93 packed examples (musicroutine 11, goattrk093.zip src/PLAYER.S).
+GOATTRK093_SIDS = {
+    "examples/example.sid": (
+        "4548b3bbb761efe30902d615a5c6d2f6adcc57da3202084f97fbca948bafa6dc"
+    ),
+    "examples/drumtest.sid": (
+        "aea6bed968e31296ceeae32c0efc43265d47acf9ff4842f80a16d223b2d8d3fd"
+    ),
+}
+
+
+def _assert_decompiles(raw: bytes):
+    """``raw`` decompiles and packs back its recognized playroutine byte for byte."""
+    image = _load_image(raw)
+    song = decompile_gt1(raw)
+    found = find_player(image.mem)
+    address, packed = song.pack()
+    end = address + found.ref.code_end
+    assert address == found.address
+    assert packed[: found.ref.code_end] == bytes(image.mem[address:end])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SidParseError,
+    reason="#35: playroutine with no assembled reference",
+)
+@pytest.mark.parametrize("rel", sorted(UNMATCHED_HVSC))
+def test_unmatched_hvsc_playroutine(rel):
+    path = resolve_tune(rel)
+    if path is None:
+        pytest.skip(f"{rel} unavailable (local or mirror)")
+    _assert_decompiles(Path(path).read_bytes())
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SidParseError,
+    reason="#35: V0.93 src/PLAYER.S is not an assembled reference",
+)
+@pytest.mark.parametrize("member", sorted(GOATTRK093_SIDS))
+def test_goattrk093_example_sid(member):
+    _assert_decompiles(
+        _archive_member("goattrk093.zip", member, GOATTRK093_SIDS[member])
+    )

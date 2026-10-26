@@ -3,6 +3,7 @@
 import pytest
 
 from pygoattracker.errors import SngParseError
+from pygoattracker.model import Pattern, PlayPattern
 from pygoattracker.reader import parse_sng, read_sng
 from pygoattracker.writer import build_sng
 
@@ -111,3 +112,32 @@ def test_bad_pattern_count():
     full[pattern_count_at] = 0
     with pytest.raises(SngParseError, match="pattern count"):
         parse_sng(bytes(full[: pattern_count_at + 1]))
+
+
+def _stereo_gts5(mono: bytes, extra: bytes) -> bytes:
+    """``mono`` with ``extra`` appended as orderlists 4-6 of every subtune."""
+    out, off = bytearray(mono[:101]), 101
+    for _ in range(mono[100]):
+        for _ in range(3):
+            out += mono[off : off + mono[off] + 2]
+            off += mono[off] + 2
+        out += extra * 3
+    return bytes(out + mono[off:])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SngParseError,
+    reason="#43: GT2 Stereo GTS5 (6 orderlists a subtune) is read as 3 channels",
+)
+def test_gt2_stereo_gts5_parses_six_channels_and_round_trips():
+    song = basic_song()
+    song.patterns.append(Pattern.empty(4))
+    data = _stereo_gts5(build_sng(song), bytes([2, 0x01, 0xFF, 0x00]))
+    stereo = parse_sng(data)
+    channels = stereo.subtunes[0].channels
+    assert len(channels) == 6
+    assert channels[:3] == song.subtunes[0].channels
+    assert all(chan.entries == [PlayPattern(1)] for chan in channels[3:])
+    assert stereo.patterns == song.patterns
+    assert build_sng(stereo) == data

@@ -331,3 +331,53 @@ def test_gts1_multiplier_seeds_gatetimer():
     assert all(i.first_wave == 9 for i in song.instruments)
     song = parse_sng(build_gts1(), convert=True, multiplier=0)
     assert all(i.gateoff_timer & 0x3F == 1 for i in song.instruments)
+
+
+def _stereo_gts1(mono: bytes) -> bytes:
+    """``mono`` (one subtune) with channels 4-6 playing pattern 0 too."""
+    end = 101 + 3 * 4
+    return mono[:end] + bytes([2, 0x00, 0xFF, 0x00]) * 3 + mono[end:]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SngParseError,
+    reason="#42: V1.x Stereo GTS! (6 orderlists a subtune) is read as 3 channels",
+)
+def test_gts1_stereo_converts_six_channels():
+    mono = parse_sng(build_gts1(), convert=True)
+    song = parse_sng(_stereo_gts1(build_gts1()), convert=True)
+    channels = song.subtunes[0].channels
+    assert len(channels) == 6
+    assert channels[:3] == mono.subtunes[0].channels
+    assert channels[3:] == mono.subtunes[0].channels
+    assert song.instruments == mono.instruments
+    assert song.patterns == mono.patterns
+    assert song.filtertable == mono.filtertable
+
+
+def _gts2_body(instruments: bytes, notes) -> bytes:
+    """GTS2 tables and one pattern of ``notes`` after the instrument block."""
+    rows = [(n, 1 if i == 0 else 0, 0, 0) for i, n in enumerate(notes)]
+    data = instruments + table([0x41, 0xFF], [0x00, 0x00])
+    data += table([0x88, 0x10, 0xFF], [0x00, 0x05, 0x00]) + table([], [])
+    return data + bytes([1]) + gts5_pattern(rows)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=SngParseError,
+    reason="#44: GT2.0 beta GTS2 (47 instruments, no count byte) is misparsed",
+)
+def test_gts2_beta_matches_betaconv():
+    instruments = gts2_instrument(
+        ad=0x09, wave_ptr=1, pulse_ptr=1, vibrato=0xB4, firstwave=0x89, name="LEAD"
+    )
+    instruments += gts2_instrument() * 45 + gts2_instrument(sr=0xF0, name="LAST")
+    beta = [0x50, 0x5F, 0xAF, 0xB0, constants.KEYOFF]
+    remapped = [0x60, 0x6F, constants.REST, constants.REST, constants.KEYOFF]
+    prefix = header(b"GTS2") + orderlists()
+    song = parse_sng(prefix + _gts2_body(instruments, beta))
+    assert [row.note for row in song.patterns[0].rows] == remapped
+    assert len(song.instruments) == 47
+    assert song == parse_sng(prefix + _gts2_body(bytes([47]) + instruments, remapped))

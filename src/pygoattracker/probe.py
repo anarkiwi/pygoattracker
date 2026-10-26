@@ -55,6 +55,7 @@ _VIBDELAYS = (0x30, 0x28)
 _REST = Row(Rest(), None, None, 24)
 _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
 _CAP = 256
+_LDA_ABS_Y, _STA_ABS_X = 0xB9, 0x9D
 _CALLS = (0x20, 0x4C)  # jsr, jmp abs
 _ROUTE = 32
 _HELD = 96
@@ -450,36 +451,24 @@ def _vibinit(bench):
 def _noeffects(bench):
     """Whether instrument vibrato reads the channel's current instrument every tick
     (greloc NOEFFECTS) rather than the parameter latched at note init, of the
-    non-binary players: a second note's fetch flips the current instrument while the
-    first note is held, so a live read vibrates the held frequency with the second
-    instrument's parameter, where a latched one holds it until that note inits (None:
-    no instrument vibrato shows)."""
+    non-binary players: a latching player loads the instrument's vibrato column into
+    a channel variable (``lda mt_insvibparam-1,y / sta mt_chnparam,x``), which a
+    NOEFFECTS build does not assemble (False: that code shows; None: it does not, or
+    no instrument vibrato column does)."""
     lay = bench.lay
-    if lay.binary or not (lay.vib and lay.num_instr >= 2):
+    if lay.binary or not lay.vib:
         return None
-    if not (lay.slen or lay.inline):
-        return None
-    first, second = bench.pitches(2)
-    voice = (Row(first, 1), Row(second, 2), _REST)
-    tables = {"wave": _WAVE}
-    if not lay.inline:
-        tables["speed"] = _SEEN[: 1 + bool(lay.slen)]
-
-    def change(vib):
-        """The first call after the first note whose frequency moves."""
-        over = {1: {}, 2: {"vib": vib, "vibdelay": 1}}
-        grid = bench.grid([voice], over, tables, 64, _two)
-        notes = _notes(grid)
-        if not notes:
-            return None
-        moved = np.flatnonzero((grid[notes[0] + 1 :, :2] != grid[notes[0], :2]).any(1))
-        return notes[0] + 1 + int(moved[0]) if moved.size else None
-
-    still = change(0)
-    seen = change(_INLINESEEN if lay.inline else 1)
-    if still is None or seen is None:
-        return None
-    return seen < still
+    col = lay.ins_start + columns(lay).index("vib") * lay.num_instr - 1
+    mem = bench.image.mem
+    start, end = bench.span
+    load = bytes((_LDA_ABS_Y, col & 0xFF, col >> 8))
+    code = bytes(mem[0 if start is None else start : 0x10000 if end is None else end])
+    at = code.find(load)
+    while at >= 0:
+        if code[at + 3 : at + 4] == bytes((_STA_ABS_X,)):
+            return False
+        at = code.find(load, at + 1)
+    return None
 
 
 def _simplepulse(run):

@@ -98,6 +98,11 @@ def convert_legacy_instruments(song: Song) -> None:
             instrument.gateoff_timer |= 0x40
 
 
+_BETA_INSTRUMENTS = 47  # betaconv's fixed instrument count
+_BETA_FIRSTNOTE = 0x50
+_BETA_REST = 0xB0
+
+
 def apply_legacy_conversions(song: Song, magic: bytes) -> None:
     """The shared post-load conversions for pre-GTS5 songs."""
     if magic[3:] < b"4":
@@ -132,12 +137,36 @@ def _parse_header(cur: _Cursor) -> Song:
 
 
 def parse_gts2(data: bytes, finevibrato: bool = True) -> Song:
-    """Parse a GTS2 (early GoatTracker 2.xx, 3-table) song."""
+    """Parse a GTS2 (early GoatTracker 2.xx, 3-table) song.
+
+    A GoatTracker 2.0 beta song (no instrument count, 47 instruments, old
+    note numbering) is read as betaconv converts it when it does not parse
+    as a released-layout song.
+    """
+    try:
+        return _parse_gts2(data, finevibrato, beta=False)
+    except SngParseError as released:
+        try:
+            return _parse_gts2(data, finevibrato, beta=True)
+        except SngParseError:
+            raise released from None
+
+
+def _beta_note(note: int) -> int:
+    """betaconv's note renumbering: ``$B0`` rest, ``$50-$AF`` shifted up ``$10``."""
+    if note == _BETA_REST:
+        return constants.REST
+    if _BETA_FIRSTNOTE <= note < _BETA_REST:
+        return min(note + 0x10, constants.REST)
+    return note
+
+
+def _parse_gts2(data: bytes, finevibrato: bool, beta: bool) -> Song:
     cur = _Cursor(data)
     cur.take(4, "identifier")
     song = _parse_header(cur)
 
-    num_instruments = cur.u8("instrument count")
+    num_instruments = _BETA_INSTRUMENTS if beta else cur.u8("instrument count")
     if num_instruments >= constants.MAX_INSTR:
         raise SngParseError(f"bad instrument count {num_instruments}")
     vibrato_mode = MST_FINEVIB if finevibrato else MST_NOFINEVIB
@@ -171,6 +200,10 @@ def parse_gts2(data: bytes, finevibrato: bool = True) -> Song:
     song.patterns = [_parse_pattern(cur, num) for num in range(num_patterns)]
     if cur.pos != len(data):
         raise SngParseError(f"{len(data) - cur.pos} unexpected trailing bytes")
+    if beta:
+        for pattern in song.patterns:
+            for row in pattern.rows:
+                row.note = _beta_note(row.note)
 
     for instrument, vibrato in zip(song.instruments, vibratos):
         instrument.vibrato_param = make_speed_entry(

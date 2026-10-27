@@ -28,7 +28,7 @@ jobs:
       - name: Cache downloads
         # HVSC tunes and pinned GoatTracker/NinjaTracker fixtures are copyright
         # and never committed; pysidtracker's cache action persists them.
-        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.36.0
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.37.0
         with:
           key: ${{ hashFiles('tests/data/hvsc_goattracker_sample.txt', 'tests/_fixture_cache.py') }}
           tunes: tests/data/hvsc_goattracker_sample.txt
@@ -52,7 +52,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Cache tunes and oracle traces
-        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.36.0
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.37.0
         with:
           key: ${{ hashFiles('tests/test_oracle_hvsc.py', 'tests/data/pathdiff.json') }}
           sidtrace: "true"

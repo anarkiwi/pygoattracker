@@ -84,7 +84,7 @@ matching it, data block included, against them:
 before the table)
 and checks that the tables tile the memory after the player: instruments (8
 bytes each), the wave and note columns, the song table (low then high bytes),
-the pattern table, the filter table (V1.5x only), the orderlists and the packed
+the pattern table, the filter table (V1.4x and V1.5x), the orderlists and the packed
 patterns. Packers placed the orderlists before or after the pattern table, so
 the order found is kept in `Gt1Song.segments`. The `Gt1Song` keeps the player's state as saved in the image (operands it
 modifies, zero-page operands, channel variables and frequency tables), so
@@ -129,8 +129,8 @@ share the body — name/author/copyright, orderlists, 31 instruments with inline
 places: the V0.9x orderlists carry the endmark with no restart byte and their
 wavetables end in a `$00` waveform row (at most 64 rows), while the V1.4b–V1.53
 editors append a 256-byte filtertable, 64 four-byte steps the playroutine
-glides through (step 0 starts the glide, each later step's fourth byte its
-duration). The layout is detected from the first wavetable's terminator (which
+glides through: control, mode/volume (a slide: its time), cutoff (a slide: its
+speed) and the next step; step 0 starts the glide. The layout is detected from the first wavetable's terminator (which
 the orderlists alone cannot decide, since `$FE` endmarks are byte-identical),
 and by the filtertable tail.
 

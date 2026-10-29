@@ -179,7 +179,7 @@ pygoattracker reglog tune.sng tune.reglog --seconds 30
 pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
 pygoattracker nt2 tune.sng tune.nt2 --lenient
 pygoattracker sid2sng tune.sid tune.sng   # decompile a packed GoatTracker .sid
-pygoattracker text tune.sng tune.txt     # the song in the grammar of song.lark (docs/grammar.md)
+pygoattracker text tune.sng tune.txt     # the song in its grammar, GT2 or V1.x (docs/grammar.md)
 pygoattracker fromtext tune.txt tune.sng # and back
 ```
 

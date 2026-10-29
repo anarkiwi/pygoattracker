@@ -126,19 +126,27 @@ def _sid2sng(args) -> None:
     print(f"wrote {args.output}")
 
 
-def _totext(args) -> None:
-    from pygoattracker import sid, text
+def _typed(data: bytes, subtune: int):
+    """The typed song of a .sng, or of a packed GoatTracker 2 or V1.x .sid."""
+    from pygoattracker import gt1, sid
+    from pygoattracker.gt1typed import Gt1TypedSong
     from pygoattracker.typed import TypedSong
 
-    data = Path(args.song).read_bytes()
     if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
         song = read_sng(data)
         if isinstance(song, Gt1Song):
-            raise GoatTrackerError("GoatTracker V1.x songs have no GT2 text form")
-        typed = TypedSong.from_song(song)
-    else:
-        typed = sid.decompile_sid(data, subtune=args.subtune).typed
-    out = text.dumps(typed)
+            return Gt1TypedSong.from_song(song)
+        return TypedSong.from_song(song)
+    try:
+        return sid.decompile_sid(data, subtune=subtune).typed
+    except GoatTrackerError:
+        return Gt1TypedSong.from_song(gt1.decompile_gt1(data, subtune))
+
+
+def _totext(args) -> None:
+    from pygoattracker import text
+
+    out = text.dumps(_typed(Path(args.song).read_bytes(), args.subtune))
     if args.output:
         Path(args.output).write_text(out)
     else:
@@ -147,9 +155,18 @@ def _totext(args) -> None:
 
 def _fromtext(args) -> None:
     from pygoattracker import text
-    from pygoattracker.writer import write_sng
+    from pygoattracker.gt1sng import write_gts1
+    from pygoattracker.gt1typed import Gt1TypedSong
+    from pygoattracker.writer import build_sng
 
-    write_sng(text.loads(Path(args.text).read_text()).to_song(), args.output)
+    song = text.loads(Path(args.text).read_text())
+    if not isinstance(song, Gt1TypedSong):
+        data = build_sng(song.to_song())
+    elif song.editor:
+        data = write_gts1(song.to_song())
+    else:
+        data = song.to_song().to_sid()
+    Path(args.output).write_bytes(data)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -196,18 +213,20 @@ def _parser() -> argparse.ArgumentParser:
     sid2sng.set_defaults(func=_sid2sng)
 
     totext = commands.add_parser(
-        "text", help="print a .sng or packed .sid in the song grammar (song.lark)"
+        "text", help="print a .sng or packed .sid in its song grammar"
     )
-    totext.add_argument("song", help=".sng or packed GoatTracker .sid file")
+    totext.add_argument("song", help=".sng or packed GoatTracker 2 or V1.x .sid file")
     totext.add_argument(
         "output", nargs="?", help="text file to write (default: stdout)"
     )
     totext.add_argument("--subtune", type=int, default=0)
     totext.set_defaults(func=_totext)
 
-    fromtext = commands.add_parser("fromtext", help="write song grammar text as a .sng")
+    fromtext = commands.add_parser(
+        "fromtext", help="write song text as a .sng (a packed V1.x song as a .sid)"
+    )
     fromtext.add_argument("text", help="song text file")
-    fromtext.add_argument("output", help=".sng file to write")
+    fromtext.add_argument("output", help=".sng or .sid file to write")
     fromtext.set_defaults(func=_fromtext)
     return parser
 

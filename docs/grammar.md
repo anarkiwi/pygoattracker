@@ -1,6 +1,7 @@
-# GoatTracker 2 tune grammar
+# GoatTracker song grammars
 
-The grammar of a GoatTracker 2 song in three layers:
+Sections 1–3 give the grammar of a GoatTracker 2 song;
+[GoatTracker V1.x](#goattracker-v1x) gives the V1.x one. Each is in three layers:
 
 1. **concrete syntax**: the bytes. There are two encodings of one tree: the
    editor's `.sng` (GTS5, `reader.py`/`writer.py`) and greloc's packed player
@@ -9,8 +10,9 @@ The grammar of a GoatTracker 2 song in three layers:
 3. **semantics**: the playroutine state machine that turns the tree into SID
    register writes, one tick at a time (`player.Player`).
 
-Older generations (GTS2–GTS4, GoatTracker 1.x `GTS!`) are dialects that load
-into the same tree. See [Dialects](#dialects).
+The older GT2 generations (GTS2–GTS4) are dialects that load into the same
+tree. See [Dialects](#dialects). GoatTracker 1.x (`GTS!` and its packed
+tunes) has a tree of its own.
 
 ## 1. Abstract syntax
 
@@ -47,10 +49,17 @@ pattern 0
   ...                              # no command: keep the held one (packed form)
 ```
 
-Constraints the grammar does not state, because they are counts, are checked
-when the song is written as bytes. Those are the list sizes (subtunes ≤ 32,
-patterns ≤ 208, instruments ≤ 63, table rows ≤ 255, pattern rows ≤ 128) and
-the value ranges in section 2.
+`loads` then checks every value against its field (`TypedSong.check`): a value
+fits only if its bytes read back as it, so widths are checked in context.
+`SetMasterVolume($20)` reads back as `TimingMark`, wavetable `SetWave($E5)` as
+`SetWave(5)`, and an out-of-byte value has no bytes at all. A value is accepted
+if it fits the `.sng` or the packed form. Constraints the grammar does not
+state, because they are counts, are checked when the song is written as bytes. Those are the list sizes (subtunes ≤ 32,
+patterns ≤ 208, instruments ≤ 63, table rows ≤ 255, pattern rows ≤ 128,
+orderlist entries ≤ 254) and the value ranges in section 2. The order the
+player needs in an orderlist (`Transpose? Repeat? PlayPattern`) is not
+enforced; it stops on a violation. `Repeat(n)` plays the next pattern n+1
+times, shown by the editor as R(n+1)&$F.
 
 The tree has four kinds of node:
 
@@ -83,7 +92,7 @@ sng          = "GTS5" cstr32 cstr32 cstr32                 -- name, author, copy
                u8:npatt pattern^npatt  EOF
 orderlist    = u8:L  entry^(L-1)  $FF  u8:restart          -- L counts the $FF
 entry        = $00-$CF  PlayPattern(b)
-             | $D0-$DF  Repeat(b - $D0)
+             | $D0-$DF  Repeat(b - $D0)                    -- n+1 plays
              | $E0-$FE  Transpose(b - $F0)
 instrument   = AD SR wave_ptr pulse_ptr filter_ptr vibparam vibdelay gatetimer firstwave cstr16
 table        = u8:N  left[N]  right[N]                     -- column-major
@@ -100,11 +109,12 @@ lossless):
 | gatetimer | bits 0–5 timer · `$40` legato · `$80` **no** hard restart |
 | firstwave | `$00` None · `$FE` GateOff · `$FF` GateOn · else SetWave |
 | wave left | `$00` none · `$01-$0F` Delay · `$10-$DF` SetWave(b) · `$E0-$EF` SetWave(b&$0F) · `$F0-$FE` WaveCommand(cmd b&$0F, data=right) · `$FF` Jump/Stop |
-| wave right | `$80` none · `$00-$5F` +n relative · `$60-$7F` −32..−1 relative · `$81-$FF` absolute (b&$7F) |
-| pulse | left `$80-$FF` PulseSet((l&$7F)<<8 \| r) · `$00-$7F` PulseMod(l, s8 r) · `$FF` Jump(r)/Stop(r=0) |
-| filter | left `$80-$FE` FilterSet(l&$70, r>>4, r&$0F) · `$01-$7F` FilterMod(l, s8 r) · `$00` CutoffSet(r) · `$FF` Jump/Stop |
-| speed | left bit 7 set: CalculatedSpeed(l&$7F, r) · else FixedSpeed(l<<8 \| r) |
-| BXY / DXY / FXY | `B`: res=X, chans=Y · `D`: XY<$10 volume, else timing mark · `F`: bit 7 = this channel only |
+| wave right | `$80` none · `$00-$5F` +n relative · `$60-$7F` −32..−1 relative · `$81-$DF` absolute C#0–B-7 (b&$7F; `$E0-$FF` read the zero-padded frequency table) |
+| pulse | left `$80-$FE` PulseSet((l&$7F)<<8 \| r; the chip reads the low 12 bits) · `$01-$7F` PulseMod(l, s8 r), `$00` 256 ticks · `$FF` Jump(r)/Stop(r=0) |
+| filter | left `$80-$FE` FilterSet(l&$7F, r>>4, r&$0F) · `$01-$7F` FilterMod(l, s8 r) · `$00` CutoffSet(r) · `$FF` Jump/Stop |
+| speed | left bit 7 set: CalculatedSpeed(l&$7F, r) · else FixedSpeed(l<<8 \| r). A row means what its reader makes of it: funktempo reads (l, r) as two tempos whatever bit 7 holds; portamento uses only r of a calculated row |
+| BXY / DXY / FXY | `B`: res=X, chans=Y · `D`: XY<$10 volume, else timing mark · `F`: bit 7 = this channel only; tempo 0/1 recalls the funk pair (that phase first), 2 plays as 3 |
+| wave command | `$F0-$FE` run commands 0-E; FXY cannot be reached, so the grammar refuses `WaveCommand(SetTempo(…))` |
 
 ### 2.2 Packed player data (greloc)
 
@@ -140,7 +150,9 @@ row time         = tempo ticks (per channel), or alternating funk pair when temp
 
 Tempo is per channel. `SetTempo(t, channel=False)` sets every channel and
 `channel=True` sets only its own. `FunkTempo(s)` loads the pair from speedtable
-row `s` and sets tempo 0. The default tempo is 6; an instrument 63 with AD ≥ 2
+row `s` (`FunkTempo(0)` keeps the current pair) and sets tempo 0 on every
+channel. An instrument's `legato` ($40) also skips the hard restart, whatever
+`hard_restart` says. The default tempo is 6; an instrument 63 with AD ≥ 2
 and no wavetable sets it to AD (the editor's convention).
 
 ### State scopes
@@ -194,5 +206,74 @@ and no wavetable sets it to AD (the editor's convention).
 | `GTS5` | the native encoding |
 | `GTS4`, `GTS3` | same layout; values are converted after load (`legacy.apply_legacy_conversions`) |
 | `GTS2` | three tables (no speedtable): inline instrument wavetables, synthesized pulse programs, 0XY arpeggios extracted, effect parameters turned into speedtable rows |
-| `GTS!` (V0.9x, V1.25, V1.4b–1.53) | a different tree, `Gt1Song`, played natively by `Gt1Player` ([gt1.md](gt1.md)); `convert=True` gives the lossy GT2 import |
+| `GTS!` (V0.9x, V1.25, V1.4b–1.53) | a different tree ([GoatTracker V1.x](#goattracker-v1x)); `convert=True` gives the lossy GT2 import |
 | packed `.sid` | the encoding in section 2.2; build defines are measured from the player ([format.md](format.md)) |
+
+## GoatTracker V1.x
+
+The abstract syntax is
+[`src/pygoattracker/gt1.lark`](../src/pygoattracker/gt1.lark), the tree
+`gt1typed.Gt1TypedSong`. `text.loads` reads either grammar, picking `gt1.lark`
+when the text opens with `player`. For every `Gt1Song`,
+`Gt1TypedSong.from_song(s).to_song(s) == s`, and the text round-trips. The
+tests cover every byte of every column in each form and family, the editor
+songs of every layout, and the packed songs of every playroutine.
+
+```
+player "1.53" packed params $04 $02 $0F $00   # or: editor "1.4b-V1.53" name … author … copyright …
+subtune 0
+  orderlist Transpose(-2) Repeat(1) PlayPattern(0) Loop(0)
+  orderlist PlayPattern(0) Loop(0)
+  orderlist PlayPattern(0) Loop(0)
+instrument 1 "" ad $09 sr 0 pulse $08 speed $20 low $01 high $0E filter 0 wave 1
+wavetable
+  1: WaveStep($41, WaveNote(0, relative))
+  2: Stop
+filtertable
+  0: FilterSet($F1, $1F, $40, 4)
+  1: FilterSlide(16, 1, 0)
+pattern 0
+  C-4 1 Vibrato($24)
+  D-4                  # packed: no command, keep the held one
+  ... *4
+  --- SetTempo(5)
+```
+
+Two parameters decide what a byte is:
+
+| | decides | values |
+| --- | --- | --- |
+| **family** (from `player`) | command numbers; orderlist bytes `$D0-$FE`; wave bytes `$01-$07` | standard (V1.3–V1.5x; delays `Delay(n)` from V1.5): `PortamentoUp`/`PortamentoDown` at 1/2, `SetFilter` (a filtertable step) at 5, `Repeat`/`Transpose` in orderlists · musicroutine (11.x, V0.9x): `FreqSlide`/`CutoffSlide` at 1/2, `SetFilterCtrl` at 5, every orderlist byte a pattern |
+| **form** (`editor` layout or `packed`) | row encoding; orderlist end; units of data | editor: three-byte rows, an `$FF` end row, data as the editor shows it · packed: also note-only rows that keep the held command and rest runs (`*n`), data as the player reads it. The F9 relocator converts editor data to packed (tempo −1, vibrato nibbles swapped, filter step ×4, arpeggio bit 7), so it is not folded into the tree |
+
+Compared with GT2, V1.x has:
+
+- **no command parameters table.** A command's data byte is the parameter
+  itself; there is no speedtable.
+- **instrument-relative wavetable jumps.** `Jump(n)` in the wavetable goes to
+  row `n` of the instrument's own table.
+- **a pulse program in the instrument.** The pulse is set by `pulse`/`speed`/
+  `low`/`high`, not by a pulse table.
+- **one filter program.** It is a chain of four-byte steps (standard family
+  only; V1.4x slides subtract the speed, V1.5x add it, and V1.5x step 0 holds
+  the funktempo pair); the musicroutine family has a filter byte per instrument.
+- **eight commands.** Command 7 is tempo below `$80` on every channel, else on
+  this one. `$C0-$FF` is a timing mark in 11.3–11.5 and V1.4x. In V1.5x, `$00`/`$01`
+  is funktempo, `$EF` a timing mark and `$F0-$FF` the volume.
+- **the data as stored.** Arpeggio bit 7 (half speed), tone portamento (standard
+  step ×4, 0 ties; musicroutine bit 7 the direction) and vibrato (half-period
+  and step nibbles, swapped by the relocator) are described on their constructors.
+- **release quirks folded in.** V1.50's orderlists store transposes one higher
+  (`$EF` is zero); `Transpose(n)` is the semitones it plays. `End($FE)` repeats
+  the last pattern; before V1.15, `End($FF)` loops to the start.
+
+`Gt1TypedSong.check` holds every value to the bytes of its own form and
+playroutine: a musicroutine command in a standard song, a `Delay` outside
+V1.5x, a long rest in an editor song, or a packed orderlist entry that is its
+end mark is refused.
+
+The player image (load address, author block, operands the tune modifies) is
+not song data. `to_song(image)` takes it from a decompiled `Gt1Song`, and
+`to_song()` uses the playroutine as assembled at `$1000`. `Pattern.end` keeps
+the bytes after the rows, so a last pattern cut short by the end of the file
+round-trips too.

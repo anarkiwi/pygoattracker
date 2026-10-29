@@ -33,6 +33,7 @@ raises a clean ``SidParseError`` (never any other exception).
 """
 
 import functools
+import re
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +44,7 @@ from pysidtracker.oracle import register_grid
 from pysidtracker.testing import resolve_tune
 
 from pygoattracker import sid
-from pygoattracker.errors import GoatTrackerError, SidParseError
+from pygoattracker.errors import SidParseError
 from pygoattracker.packed import pattern_rows
 from pygoattracker.reader import parse_sng
 from pygoattracker.typed import TypedSong
@@ -51,10 +52,71 @@ from pygoattracker.writer import build_sng
 
 _SAMPLE_FILE = Path(__file__).parent / "data" / "hvsc_goattracker_sample.txt"
 
-# Fraction of the (present) sample that must decompile, the rest the documented
-# out-of-scope variants above; and the floor when the whole sample is present.
-_MIN_PASS_RATE = 0.70
-_FULL_SAMPLE_MIN_PASS = 235
+# Sample tunes the packed path does not decode, by the SidParseError each raises.
+_NOT_DECODED = {
+    "DEMOS/M-R/Oldschool_Streamer.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/A/Ames_John/MMX-Storm_Eagle.sid": "instrument columns are not evenly spaced",
+    "MUSICIANS/B/B0rje/Interlude.sid": "instrument columns are not evenly spaced",
+    "MUSICIANS/B/Beyond_Reproach/Sexy_Robot_3_Intro.sid": "play call did not return",
+    "MUSICIANS/C/Cadaver/Metal_Warrior_4_preview.sid": "note byte 0xe9 sets gate 0xf9",
+    "MUSICIANS/C/Cerror/Dintrosid.sid": "instrument columns are not evenly spaced",
+    "MUSICIANS/C/Chapelier/Swamp_Walk.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/C/Ciaran/Turrican_3_World_1_Level_1.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/D/Deizi/Bubble_Bobble_cover.sid": "instrument columns are not evenly spaced",
+    "MUSICIANS/D/Dexter/As_Usual.sid": "note byte 0xe5 sets gate 0xf5",
+    "MUSICIANS/D/Dexter/Speedlimit.sid": "note byte 0xf9 sets gate 0xf9",
+    "MUSICIANS/G/Garvalf/Bransle_de_Champaigne_1.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/G/Ghormak/Percy_88_Remix.sid": "instrument columns are not evenly spaced",
+    "MUSICIANS/H/Hoffmann_Michal/Sahara_Takeover.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/H/Holt_Hein/Apollo_vs_Mr_T.sid": "note byte 0xf8 sets gate 0xf8",
+    "MUSICIANS/H/Holt_Hein/Dialogue_Wallys_Tetris_Poem.sid": "note byte 0xfc sets gate 0xfc",
+    "MUSICIANS/H/Hukka/Rove-Sidigi.sid": "the player reads no song and pattern tables",
+    "MUSICIANS/J/Jammer/Cloud_Swimming_2x.sid": "note byte 0xfa sets gate 0xfa",
+    "MUSICIANS/J/Josstintimberlake/Fudgepackerz.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/J/Josstintimberlake/o2.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/L/Laserboy/Juhon_Faijan_Kupla.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/L/Linus/SYS64738_Days.sid": "the player reads no song and pattern tables",
+    "MUSICIANS/L/Linus/Yoshi-blutig_bis_medium_bitte.sid": "note byte 0xcb sets gate 0xfb",
+    "MUSICIANS/M/Magnar/Star_Wars-Imperial_March_Upbeat.sid": "play call did not return",
+    "MUSICIANS/M/Maktone/Crusin.sid": "note byte 0xc7 sets gate 0xf7",
+    "MUSICIANS/M/Maktone/King_Size.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/M/Maktone/Simple.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/M/Maktone/fairlight_20_years.sid": "note byte 0xe9 sets gate 0xf9",
+    "MUSICIANS/M/Mankeli/Martti_on_Jopen_Kaveri.sid": "note byte 0xf7 sets gate 0xf7",
+    "MUSICIANS/M/Mice/Sexty4.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/M/Morton_Adam/Jive_Witit.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/M/Mueller_Manuel/Way_of_the_Saint.sid": "note byte 0xfc sets gate 0xfc",
+    "MUSICIANS/N/Nata/Dreamers_of_Mirage.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/N/Nata/Maja.sid": "note byte 0xf2 sets gate 0xf2",
+    "MUSICIANS/N/Nata/Stereoid_Loader.sid": "instrument columns are not evenly spaced",
+    "MUSICIANS/N/Ne7/Boys.sid": "note byte 0xf9 sets gate 0xf9",
+    "MUSICIANS/N/Ne7/Glitch_Bitch.sid": "note byte 0xe1 sets gate 0xf1",
+    "MUSICIANS/N/Ne7/Manifold_tune_05.sid": "note byte 0xf1 sets gate 0xf1",
+    "MUSICIANS/N/Ne7/Oyss_Window.sid": "note byte 0xf5 sets gate 0xf5",
+    "MUSICIANS/N/Ne7/Thru_Horizons_Edge.sid": "note byte 0xfb sets gate 0xfb",
+    "MUSICIANS/N/Necrophobic/Undead_Again_part_2.sid": "note byte 0xe5 sets gate 0xf5",
+    "MUSICIANS/N/Nordischsound/Ghostbusters.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/O/Oedipus/Hybris.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/O/Oedipus/Worktunes/Other_Side.sid": "note byte 0xc7 sets gate 0xf7",
+    "MUSICIANS/P/Pontonius/Poke.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/R/Radiantx/Hacked_to_Oblivion.sid": "note byte 0xfd sets gate 0xfd",
+    "MUSICIANS/R/Rupert_Dissident/Subterfuge_Pastime.sid": "no column indexes the wavetable after the instruments",
+    "MUSICIANS/S/Six/GC_cover.sid": "song and pattern tables do not tile one block",
+    "MUSICIANS/S/Speedball/Banarnold.sid": "note byte 0xf7 sets gate 0xf7",
+    "MUSICIANS/T/TMR/Nadira/Lurve.sid": "note byte 0xfb sets gate 0xfb",
+    "MUSICIANS/T/Topaz/Lost.sid": "note byte 0xfb sets gate 0xfb",
+}
+
+# Tunes whose PSID ``songs`` exceeds the decoded subtunes: each song resolves through
+# the player's own init to a subtune (True past the decoded ones, False within) or
+# raises SidParseError (None).
+_OVERCLAIMED = {
+    "GAMES/G-L/Lester.sid": (False,) * 2 + (True,) * 10,
+    "MUSICIANS/B/Bayliss_Richard/Synthia_in_the_Cyber_Crypt.sid": (False,)
+    + (True,) * 3,
+    "MUSICIANS/B/Bayliss_Richard/Trance_Sector.sid": (False,) * 3 + (True,) * 11,
+    "MUSICIANS/L/Linus/Darkness.sid": (False,) + (None,) * 5,
+}
 
 # Representatives, one per decoder capability, that must fully decompile and
 # round-trip. Each stresses a specific real-corpus fix:
@@ -107,16 +169,6 @@ def _decompile(path, subtune=0):
     return result
 
 
-def _present() -> list:
-    """``(rel, path)`` for each sampled tune resolvable locally or via mirror."""
-    out = []
-    for rel in _sample():
-        path = _resolve(rel)
-        if path is not None:
-            out.append((rel, path))
-    return out
-
-
 def test_sample_list_is_deterministic():
     sample = _sample()
     assert sample == sorted(sample), "sample must stay sorted for determinism"
@@ -124,59 +176,49 @@ def test_sample_list_is_deterministic():
     assert len(sample) > 250
 
 
-def test_hvsc_corpus_decompiles():
-    present = _present()
-    if len(present) < 100:
-        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
-
-    parsed = 0
-    excluded = 0
-    for rel, path in present:
-        try:
-            result = _decompile(path)
-        except SidParseError:
-            # Documented out-of-scope variant (see module docstring). A clean
-            # SidParseError is the contract for tunes the packed path cannot
-            # decode; any other exception propagates and fails the test.
-            excluded += 1
-            continue
-        song = result.song
-        assert song.patterns, f"{rel}: decompiled to zero patterns"
-        assert song.subtunes, f"{rel}: decompiled to zero subtunes"
-        parsed += 1
-
-    total = parsed + excluded
-    assert total == len(present)
-    assert parsed >= _MIN_PASS_RATE * total, (
-        f"only {parsed}/{total} sampled GoatTracker tunes decompiled "
-        f"(< {_MIN_PASS_RATE:.0%} floor); excluded={excluded}"
-    )
-    if len(present) == len(_sample()):
-        assert parsed >= _FULL_SAMPLE_MIN_PASS, (
-            f"packed-decoder regression: {parsed} decompiled, "
-            f"expected >= {_FULL_SAMPLE_MIN_PASS}"
-        )
-
-
-def test_hvsc_corpus_recognized_tunes_are_direct_load():
-    # Static recognition (init=False, emulator-free) finds every decodable HVSC
-    # GoatTracker tune as a direct-load image; a tune it does not recognize (no
-    # packed-player idiom) is one the decompiler cannot decode either.
-    present = _present()
-    if len(present) < 100:
-        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
+@pytest.mark.parametrize("rel", _sample())
+def test_hvsc_sample_tune(rel):
+    """A sampled tune is recognized as a direct-load image, decompiles, and
+    re-encodes from its typed song to its own packed bytes (or, for a pattern
+    spelt outside greloc's grammar, to bytes the player reads the same) and to
+    the same Song; or it raises the SidParseError it is listed with."""
+    path = _resolve(rel)
+    if path is None:
+        pytest.skip(f"{rel} unavailable (local or mirror)")
+    if rel in _NOT_DECODED:
+        with pytest.raises(SidParseError, match=re.escape(_NOT_DECODED[rel])):
+            _decompile(path)
+        return
     parser = sid.GoatTrackerSidParser()
-    decodable = []
-    for rel, path in present:
-        raw = path.read_bytes()
-        if parser.detect(raw, init=False).kind is PlayroutineKind.DIRECT:
-            continue
+    assert parser.detect(path.read_bytes(), init=False).kind is PlayroutineKind.DIRECT
+    result = _decompile(path)
+    assert result.song.patterns and result.song.subtunes
+    patterns = set(result.info.layout.patt_addrs)
+    # inline effect parameters become speed rows, which cannot be packed back
+    for addr, packed, held in [] if result.info.layout.inline else result.repack():
+        assert addr in patterns
+        assert pattern_rows(packed, 0)[0] == pattern_rows(held, 0)[0]
+    typed = TypedSong.from_song(result.song, result.info.playback.simplepulse)
+    assert typed.to_song() == result.song
+
+
+@pytest.mark.parametrize("rel,songs", _OVERCLAIMED.items())
+def test_overclaimed_songs_resolve_through_the_player(rel, songs):
+    """Each song of a PSID claiming more songs than the decoded subtunes resolves
+    through the player's own init: to a subtune it plays, or to SidParseError."""
+    path = _resolve(rel)
+    if path is None:
+        pytest.skip(f"{rel} unavailable (local or mirror)")
+    decoded = len(_decompile(path).song.subtunes)
+    outcomes = []
+    for song in range(len(songs)):
         try:
-            sid.decompile_sid(raw)
+            _decompile(path, song).player()
         except SidParseError:
+            outcomes.append(None)
             continue
-        decodable.append(rel)
-    assert not decodable, f"decodable tunes not recognized: {decodable}"
+        outcomes.append(song >= decoded)
+    assert tuple(outcomes) == songs
 
 
 @pytest.mark.parametrize("rel,expect", _REPRESENTATIVES.items())
@@ -244,69 +286,6 @@ def test_a_song_no_goattracker_player_plays():
     raw = _tune("MUSICIANS/P/Page_Jason/Lord_of_Dragonspire.sid")
     with pytest.raises(SidParseError, match="no GoatTracker song table read"):
         sid.decompile_sid(raw, subtune=1)
-
-
-def test_hvsc_corpus_round_trips_through_the_typed_model():
-    """Every sampled tune re-encodes from its typed song to its own packed bytes,
-    or for a pattern spelt outside greloc's grammar to bytes the player reads the
-    same, and to the same Song (so the same .sng, where a .sng can hold it)."""
-    present = _present()
-    if len(present) < 100:
-        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
-    checked = 0
-    for rel, path in present:
-        try:
-            result = _decompile(path)
-        except SidParseError:
-            continue
-        patterns = set(result.info.layout.patt_addrs)
-        # inline effect parameters become speed rows, which cannot be packed back
-        for addr, packed, held in [] if result.info.layout.inline else result.repack():
-            assert addr in patterns, rel
-            assert pattern_rows(packed, 0)[0] == pattern_rows(held, 0)[0], rel
-        typed = TypedSong.from_song(result.song, result.info.playback.simplepulse)
-        assert typed.to_song() == result.song, rel
-        checked += 1
-    assert checked >= _FULL_SAMPLE_MIN_PASS or len(present) < len(_sample())
-
-
-def test_hvsc_corpus_resolves_overclaimed_songs():
-    """A PSID ``songs`` count taller than the decoded subtune count.
-
-    Each song is resolved through the player's own init, so a song the player
-    remaps to a real subtune decodes and plays rather than erroring, and one
-    that selects nothing decomposes as not_decompiled (``SidParseError``) rather
-    than the ``GoatTrackerError`` that used to surface as a ``library_error``.
-    """
-    present = _present()
-    if len(present) < 100:
-        pytest.skip(f"only {len(present)} sample tunes available (local or mirror)")
-    overclaimed = 0
-    resolved_to_music = 0
-    for rel, path in present:
-        try:
-            base = _decompile(path)
-        except SidParseError:
-            continue
-        decoded = len(base.song.subtunes)
-        if base.header.songs <= decoded:
-            continue
-        overclaimed += 1
-        for s in range(base.header.songs):
-            try:
-                result = _decompile(path, s)
-                result.player()
-            except SidParseError:
-                continue  # this song selects a subtune the player has no song for
-            except GoatTrackerError as exc:
-                pytest.fail(f"{rel} song {s + 1}: {exc!r}; expected SidParseError")
-            if s >= decoded:
-                resolved_to_music += 1  # an over-claimed song the player now plays
-    assert overclaimed >= 1, "no over-claiming corpus tune to exercise song resolution"
-    assert resolved_to_music >= 1, (
-        "no over-claimed song resolved to a decodable subtune; "
-        "song selection is not following the player's own init"
-    )
 
 
 # GoatTracker V2.0-V2.28 binary-relocator players: ``(HVSC path, what it shows)``.

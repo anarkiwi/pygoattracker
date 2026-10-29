@@ -14,72 +14,45 @@ into the same tree. See [Dialects](#dialects).
 
 ## 1. Abstract syntax
 
-Notation: `A | B` is a sum, `{…}` a product, `A*` a sequence, `A?` optional,
-`u8`/`u16` unsigned, `s8` signed. `ptr(T)` is a 1-based row index into table
-`T`, where 0 means none.
+The abstract syntax is the Lark grammar
+[`src/pygoattracker/song.lark`](../src/pygoattracker/song.lark). Each
+constructor rule builds the `typed` dataclass it names. `pygoattracker.text`
+parses it (`loads`) and prints it (`dumps`), and for every `TypedSong`,
+`loads(dumps(song)) == song`. The tests cover every byte of every column, and
+the `.sng` and packed `.sid` fixtures.
 
-```
-Song        = { name, author, copyright : str32,
-                subtunes    : Subtune{1..32},
-                patterns    : Pattern{1..208},
-                instruments : Instrument{0..63},       -- instrument 0 is implicit and empty
-                wavetable   : WaveRow{0..255},
-                pulsetable  : PulseRow{0..255},
-                filtertable : FilterRow{0..255},
-                speedtable  : SpeedRow{0..255} }
-
-Subtune     = Orderlist{3} | Orderlist{6}              -- one per channel; 6 = two SIDs (Stereo)
-Orderlist   = { entries : OrderEntry{1..254}, restart : u8 }
-OrderEntry  = PlayPattern(num: 0..207)
-            | Repeat(count: 0..15)                     -- the next pattern plays count+1 times
-            | Transpose(semitones: -16..14)            -- applies to every following pattern
-
-Pattern     = Row{1..128}
-Row         = { note : NoteCol, instrument : 1..63 ?,  -- ? = keep the voice's instrument
-                command : Command ?,                   -- ? = keep the held command (packed only)
-                length : u8 }                          -- rows a rest spans (packed only, else 1)
-NoteCol     = Note(pitch: 0..92) | Rest | KeyOff | KeyOn
-
-Command     = DoNothing(_)                  -- 0XY  run the instrument vibrato
-            | PortamentoUp(speed: ptr(S))   -- 1XY  continuous
-            | PortamentoDown(speed: ptr(S)) -- 2XY  continuous
-            | TonePortamento(speed: ptr(S)) -- 3XY  continuous; 0 = tie at once
-            | Vibrato(speed: ptr(S))        -- 4XY  continuous
-            | SetAD(u8) | SetSR(u8)         -- 5XY 6XY
-            | SetWave(u8)                   -- 7XY
-            | SetWavePtr(ptr(W))            -- 8XY
-            | SetPulsePtr(ptr(P))           -- 9XY
-            | SetFilterPtr(ptr(F))          -- AXY
-            | SetFilterCtrl(resonance: u4, channels: u4)    -- BXY
-            | SetCutoff(u8)                 -- CXY
-            | SetMasterVolume(u4)           -- DXY, XY < $10
-            | TimingMark(u8)                -- DXY, XY >= $10 (no sound)
-            | FunkTempo(speed: ptr(S))      -- EXY
-            | SetTempo(tempo: u7, channel: bool)            -- FXY
-
-Instrument  = { attack_decay, sustain_release : u8,
-                wave_ptr : ptr(W), pulse_ptr : ptr(P), filter_ptr : ptr(F),
-                vibrato_speed : ptr(S), vibrato_delay : u8,
-                gate_timer : u6, hard_restart : bool, legato : bool,
-                first_wave : SetWave(u8) | GateOff | GateOn | None,
-                name : str16 }
-
--- table programs: each row is an instruction, executed one per tick (see section 3)
-WaveRow     = WaveStep{ wave : SetWave(u8) | Delay(1..15) | None,
-                        note : WaveNote(value, relative: bool) | None }
-            | WaveCommand(Command - {DoNothing, SetWavePtr, FunkTempo, SetTempo})
-            | Jump(ptr(W)) | Stop
-PulseRow    = PulseSet(width: u12) | PulseMod(time: u7, speed: s8)
-            | SimplePulseSet(u8) | SimplePulseMod(time, step)          -- SIMPLEPULSE builds
-            | Jump(ptr(P)) | Stop
-FilterRow   = FilterSet(passband: {LP,BP,HP}, resonance: u4, channels: u4)
-            | FilterMod(time: u7, speed: s8) | CutoffSet(u8)
-            | Jump(ptr(F)) | Stop
-SpeedRow    = FixedSpeed(u16)                -- slide step, or vibrato rate(hi)/depth(lo)
-            | CalculatedSpeed(rate: u7, shift: u8)   -- step = (freq(n+1) - freq(n)) >> shift
+```bash
+pygoattracker text tune.sng          # or a packed tune.sid; prints the song text
+pygoattracker fromtext tune.txt out.sng
 ```
 
-The tree has three kinds of node:
+```
+name "hand" author "me" copyright "2026"
+subtune 0
+  orderlist Transpose(-2) Repeat(1) PlayPattern(0) restart 0
+  orderlist PlayPattern(0) restart 0
+  orderlist PlayPattern(0) restart 0
+instrument 1 "lead" ad $09 sr 0 wave 1 pulse 0 filter 0 vibrato 0
+  delay 0 gate 2 nohardrestart legato first GateOn
+wavetable
+  1: WaveStep(SetWave($41), none)
+  2: Jump(1)
+pulsetable
+filtertable
+speedtable
+  1: FixedSpeed($0230)
+pattern 0
+  C#4 1 SetTempo(6, channel)       # note, instrument, command
+  --- Vibrato(1) *4                # *4: a rest of four rows
+  ...                              # no command: keep the held one (packed form)
+```
+
+Constraints the grammar does not state, because they are counts, are checked
+when the song is written as bytes. Those are the list sizes (subtunes ≤ 32,
+patterns ≤ 208, instruments ≤ 63, table rows ≤ 255, pattern rows ≤ 128) and
+the value ranges in section 2.
+
+The tree has four kinds of node:
 
 | kind | nodes | how time runs through it |
 | --- | --- | --- |

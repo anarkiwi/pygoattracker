@@ -20,6 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
+    "lark>=1.2",
     "pysidtracker>=0.38.0",
 ]
 
@@ -50,6 +51,9 @@ Issues = "https://github.com/anarkiwi/pygoattracker/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pygoattracker = ["*.lark"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

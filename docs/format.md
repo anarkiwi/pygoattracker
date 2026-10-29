@@ -218,9 +218,12 @@ The voice layout is read off the player, not assumed:
 - **overlay**: each channel's `(and, or)` on the control byte it writes (a hook
   between the player and the chip), from the bytes its voice holds for waveforms
   setting and clearing every bit, each set by a held wavetable row.
-- **calls**: the times one header play call enters the player's own `mt_play`
-  (a wrapper calling it twice is double speed); the build is then measured at
-  `mt_play` itself.
+- **wrapper** (`DecompiledSid.info.wrap`): a header play routine that is not the
+  player's own entry runs as written in the 6502 emulator, and each entry into
+  `mt_play` is one `Player` tick (a wrapper calling it twice is double speed). Where
+  the routine's SID writes all fall outside `mt_play`, it flushes a ghost: the
+  player is a ghost build whose tick lands in that ghost, flushed when the routine
+  says (`wrap.Wrapped`). The build is measured at `mt_play` itself.
 
 ### NinjaTracker 2
 

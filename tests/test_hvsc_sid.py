@@ -75,7 +75,6 @@ _NOT_DECODED = {
     "MUSICIANS/J/Josstintimberlake/Fudgepackerz.sid": "song and pattern tables do not tile one block",
     "MUSICIANS/J/Josstintimberlake/o2.sid": "song and pattern tables do not tile one block",
     "MUSICIANS/L/Laserboy/Juhon_Faijan_Kupla.sid": "song and pattern tables do not tile one block",
-    "MUSICIANS/L/Linus/SYS64738_Days.sid": "the player reads no song and pattern tables",
     "MUSICIANS/L/Linus/Yoshi-blutig_bis_medium_bitte.sid": "instrument columns are not evenly spaced",
     "MUSICIANS/M/Magnar/Star_Wars-Imperial_March_Upbeat.sid": "play call did not return",
     "MUSICIANS/M/Maktone/Crusin.sid": "instrument columns are not evenly spaced",

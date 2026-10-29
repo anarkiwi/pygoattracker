@@ -11,31 +11,5 @@
   "relpath": "MUSICIANS/M/Mr_Death/Aeppelepsi_Gubbjaevel.sid",
   "right": "format:auto",
   "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 10,
-  "id": "ba869ad646cb",
-  "key": "('first', '6502:edge:30f4c5cc470c9f8aafdaa23e', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "0bbcff7ff49252aae46977043f5cb719",
-  "reason": "$10FF BMI $1131 -> $1131 || vs: pygoattracker/player.py:279 if self._state == _INIT: -> 284: reference frame 1, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/N/Nata/Secret_of_Blue_Water.sid",
-  "right": "format:auto",
-  "song": 1
- },
- {
-  "compare": "lead",
-  "frames": 10,
-  "id": "268dd054a5bc",
-  "key": "('first', '', 'python:edge:Player._play_call:176e368e2b4e>e03420d38078')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "d6d8dc8e9a97fddbde010fba151492e8",
-  "reason": "pygoattracker/player.py:279 if self._state == _INIT: -> 284: reference frame 1, register $15 fc_lo",
-  "relpath": "MUSICIANS/G/Groepaz/I_Dont_Know_What_I_Am_Doing.sid",
-  "right": "format:auto",
-  "song": 1
  }
 ]

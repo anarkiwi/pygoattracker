@@ -833,7 +833,8 @@ class Player(MemPlayer):
             self._tick0_command(channel, chan, iptr)
             if chan.newnote:
                 chan.newnote = 0
-                if chan.newcommand != constants.CMD_TONEPORTA:
+                nohr = self.build.nohr_wave and iptr.gatetimer & 0x80
+                if chan.newcommand != constants.CMD_TONEPORTA and not nohr:
                     self._write_voice_regs(channel, chan)
                     return
             skip_tickn = self._wave_exec(channel, chan)

@@ -253,7 +253,7 @@ class Bench:
                 addr = lay.ins_start + j * lay.num_instr + num - 1
                 value = want[name]
                 if name == "gate" and lay.gate_flags:
-                    value |= self.image.mem[addr] & 0xC0
+                    value |= want.get("flags", self.image.mem[addr] & 0xC0)
                 put(addr, bytes((value,)))
         spans = self._tables()
         for name, rows in (tables or {}).items():
@@ -486,6 +486,25 @@ def _vibinit(bench):
     if not moves(None):
         return None
     return moves(SetAD(0x0F))
+
+
+def _nohrwave(bench):
+    """Whether a note's init of an instrument without hard restart runs the
+    wavetable on its own call, of the players keeping the flag in the gate column:
+    its wavetable waveform sounds a call earlier than with hard restart (None: no
+    such column, or no note shows it)."""
+    if not bench.lay.gate_flags:
+        return None
+    voice = (Row(bench.pitches(1)[0], 1), _REST)
+    lags = []
+    for flags in (0x00, 0x80):
+        grid = bench.grid([voice], {1: {"flags": flags}}, {"wave": _WAVE}, 16)
+        load = np.flatnonzero(grid[:, _AD] == _BASE["ad"])
+        wave = np.flatnonzero(grid[:, _CTRL] & 0xF0)
+        if not (load.size and wave.size):
+            return None
+        lags.append(int(wave[0] - load[0]))
+    return lags[1] < lags[0]
 
 
 def _noeffects(bench):
@@ -997,6 +1016,7 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         wavedelay=wavedelay,
         lowdelay=None if wavedelay is not False else _shown(_lowdelay, bench),
         vibinit=_shown(_vibinit, bench),
+        nohrwave=_shown(_nohrwave, bench),
         noeffects=_shown(_noeffects, bench),
         simplepulse=_simplepulse(run),
         funk=None if row is None or ghost is None else _shown(_funk, bench, row),

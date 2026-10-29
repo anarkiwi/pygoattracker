@@ -297,9 +297,9 @@ def _term(value) -> str:
 
 
 def _note(note) -> str:
-    if isinstance(note, typed.Note):
-        if note.pitch in _NOTES:
-            return C.note_name(C.FIRSTNOTE + note.pitch)
+    if isinstance(note, typed.Gate) or (
+        isinstance(note, typed.Note) and note.pitch not in _NOTES
+    ):
         return _term(note)
     return C.note_name(typed.note_byte(note))
 

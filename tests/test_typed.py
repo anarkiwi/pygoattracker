@@ -163,6 +163,6 @@ def test_note_bytes_outside_the_editor_s_range():
     # mt_note keys any byte below REST as a note and gates any byte above it.
     assert T.note_of(0x00) == T.Note(-C.FIRSTNOTE)
     assert T.note_byte(T.note_of(0x00)) == 0x00
-    assert T.note_of(0xFF) == T.KeyOn() and T.note_of(0xCE) == T.KeyOff()
-    with pytest.raises(ValueError):
-        T.note_of(0xC5)
+    assert T.note_of(C.KEYOFF) == T.KeyOff() and T.note_of(C.KEYON) == T.KeyOn()
+    assert T.note_of(0xFD) == T.Gate(0xFD) and T.note_of(0xCE) == T.Gate(0xCE)
+    assert all(T.note_byte(T.note_of(b)) == b for b in range(256))

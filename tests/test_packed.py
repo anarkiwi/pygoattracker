@@ -146,7 +146,7 @@ def test_a_pattern_reads_one_row_before_its_end_mark():
     rows, end = P.pattern_rows(bytes([0x00, 0x40, 0xFF, 0xFF, 0x00]), 0)
     assert end == 5
     assert rows == (
-        T.Row(T.KeyOn(), 0, T.DoNothing()),
+        T.Row(T.Gate(0xFF), 0, T.DoNothing()),
         T.Row(T.Rest(), None, None, 1),
     )
 

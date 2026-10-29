@@ -56,6 +56,7 @@ from pygoattracker.packed import (
     player_span,
 )
 from pygoattracker.player import Player
+from pygoattracker.wrap import Wrap, Wrapped, wrapper
 from pygoattracker.probe import Bench, ProbeMiss, boot, calls, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.variant import heuristic_entry
@@ -105,6 +106,7 @@ class PackedInfo:
     build: PlayerBuild = field(default_factory=PlayerBuild)
     playback: Build = field(default_factory=Build)
     state: PlayerState | None = None
+    wrap: Wrap | None = None
 
     @property
     def nowavedelay(self) -> bool:
@@ -135,13 +137,16 @@ class DecompiledSid:
         The build's hard-restart ADSR and its pulse/realtime skip optimizations
         replace the editor's when the code states them.
         """
-        return Player(
+        player = Player(
             self.typed,
             subtune=self.subtune,
             build=self.info.playback,
             state=self.info.state,
             freq_table=self.info.note_read,
         )
+        if self.info.wrap is None:
+            return player
+        return Wrapped(player, self.image, self.subtune, self.info.wrap)
 
     def repack(self) -> list[tuple[int, bytes, bytes]]:
         """``(address, packed, held)`` for each piece :func:`pack` writes that the memory
@@ -569,6 +574,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
         entries = {jump + 3}
         if mem[jump + 3] == 0x4C:
             entries.add(mem[jump + 4] | mem[jump + 5] << 8)
+    wrap = wrapper(image, subtune, play, entries)
     ticks = 1 if play is None else calls(image, subtune, play, entries)
     if ticks > 1:
         play = jump + 3
@@ -591,10 +597,15 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
             lay, gate_flags=any(v & 0xC0 for v in mem[col : col + lay.num_instr])
         )
     probe = bench(lay)
-    build = replace(measure(probe, t.channels), calls=ticks, idle=t.idle)
+    build = replace(measure(probe, t.channels), idle=t.idle)
+    if wrap is not None:
+        build = replace(build, wrapper=False)
+        if wrap.sink is not None:
+            build = replace(build, ghost=wrap.sink)
     build = replace(build, voices=_mirror(build.voices, chips))
     song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)
+    info.wrap = wrap
     decoded = DecompiledSid(song, info, header, subtune, typed, image, mem)
     return _finish(decoded, t.song)
 

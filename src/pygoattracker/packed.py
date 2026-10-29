@@ -116,7 +116,7 @@ class PlayerBuild:
     ``channels``: the channels the player inits; ``idle``: those its play never
     runs; ``voices``: each one's register offset from ``$D400`` (``$20`` a chip),
     None where its registers reach no chip; ``overlay``: each one's ``(and, or)``
-    on the control byte it writes; ``calls``: player calls a play call makes;
+    on the control byte it writes;
     ``wavedelay``: waveforms are shifted up $10 behind a delay test of $01-$0F (False:
     stored as they are); ``lowdelay``: a player storing waveforms as they are still
     delays $01-$07, before v2.18; ``vibinit``: a note's init loads the instrument's
@@ -150,7 +150,6 @@ class PlayerBuild:
     idle: tuple = ()
     voices: tuple | None = None
     overlay: tuple | None = None
-    calls: int = 1
 
     def variant(self) -> Variant:
         """The defines as facets: those the player shows are ``inferred`` from the
@@ -168,7 +167,6 @@ class PlayerBuild:
             "voices": tristate_entry(
                 self.voices or default_voices(self.channels), None
             ),
-            "calls": Entry(self.calls, inferred("probe")),
             "idle": Entry(self.idle, inferred("probe")),
             "overlay": tristate_entry(self.overlay, None),
             "vibinit": tristate_entry(self.vibinit, True),
@@ -268,7 +266,8 @@ def player_span(image, data):
     code and then the data, so an image holding several players keeps each one's
     code between its jump table and its data. The instance is the last
     ``mt_initchn`` below ``data`` and the last jump table before it whose
-    ``mt_play`` lies between the two; the whole image without such a jump table.
+    ``mt_play`` lies between the two (a table's first entry, where a third jump
+    follows); the whole image without such a jump table.
     """
     tempo = find_code_all(image, _TEMPO, end=data)
     if not tempo:
@@ -279,7 +278,12 @@ def player_span(image, data):
         for m in find_code_all(image, "4C ?? ?? 4C {p:w}", end=t)
         if m.addr < m.captures["p"] <= t
     ]
-    return PlayerCode(image, bases[-1], data) if bases else PlayerCode(image)
+    if not bases:
+        return PlayerCode(image)
+    base = bases[-1]
+    while base - 3 in bases:
+        base -= 3
+    return PlayerCode(image, base, data)
 
 
 # mt_init's clear of two channel-variable blocks: ``txa; ldx #n; sta base,x; dex; bpl``.

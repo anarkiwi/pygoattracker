@@ -142,6 +142,9 @@ TUNES = {
     "foot_in_the_mud": ("MUSICIANS/P/Prestune/Foot_in_the_Mud.sid", 1, 38.316),
     # instrument 1 without a wave program, the tune's own pointers planted.
     "yeti_mountain_11": ("MUSICIANS/R/Roly/Yeti_Mountain.sid", 11, 7.083),
+    # a play wrapper run as written: a ghost flush before the player, a cutoff
+    # sweep and a volume eor of its own.
+    "wrapper_sweep": ("MUSICIANS/G/Groepaz/I_Dont_Know_What_I_Am_Doing.sid", 1, 137.0),
     # GoatTracker V1.x: one tune per native V1.5x playroutine variant.
     "gt1_153_joke": ("DEMOS/G-L/Joke.sid", 1, 254),
     "gt1_152_beautiful_day": ("DEMOS/A-F/Beautiful_Day.sid", 1, 150),

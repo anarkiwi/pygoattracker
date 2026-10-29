@@ -790,12 +790,10 @@ class Player(MemPlayer):
         chan.newcommand = pattern[chan.pattptr + 2]
         chan.newcmddata = pattern[chan.pattptr + 3]
         chan.pattptr += 4
-        if pattern[chan.pattptr] == constants.ENDPATT:
+        if chan.pattptr == 4 * self._pattlen[chan.pattnum]:
             chan.pattptr = _PATT_END
-        if newnote == constants.KEYOFF:
-            chan.gate = 0xFE
-        if newnote == constants.KEYON:
-            chan.gate = 0xFF
+        if newnote > constants.REST:
+            chan.gate = newnote | 0xF0
         if newnote <= constants.LASTNOTE:
             chan.newnote = (newnote + chan.trans) & 0xFF
             if chan.newcommand != constants.CMD_TONEPORTA:

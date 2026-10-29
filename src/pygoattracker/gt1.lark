@@ -1,0 +1,76 @@
+// A GoatTracker V1.x song as typed operations: the abstract syntax of
+// pygoattracker.gt1typed.Gt1TypedSong. Each constructor rule names the dataclass
+// it builds (snake_case of the class name). Integers are hex ($1F) or decimal;
+// numbered items carry their index (subtunes, patterns and filter steps from 0,
+// instruments and wavetable rows from 1).
+
+start: header subtune+ instrument* wavetable filtertable? pattern+
+
+header: "player" STRING (packed | editor) "params" INT*
+packed: "packed"
+editor: "editor" STRING "name" STRING "author" STRING "copyright" STRING
+
+// ---- sequence: subtune -> three orderlists -> patterns -> rows ----
+subtune: "subtune" INT orderlist orderlist orderlist
+orderlist: "orderlist" _order_entry* (loop | end)
+_order_entry: play_pattern | repeat | transpose     // repeat, transpose: standard family
+                                                   // repeat: the next pattern plays n+1 times
+play_pattern: "PlayPattern" "(" INT ")"
+repeat: "Repeat" "(" INT ")"
+transpose: "Transpose" "(" INT ")"
+loop: "Loop" "(" INT ")"                           // $FF restart
+end: "End" "(" INT ")"                             // $FE: repeat the last pattern; $FF: loop to start (no restart byte)
+
+pattern: "pattern" INT row* pattern_end?           // no pattern_end: the form's end mark
+pattern_end: "end" INT*
+row: note_col INT? command? length?                // INT: instrument; none keeps the voice's
+length: "*" INT                                    // rows a packed rest spans
+?note_col: NOTE_NAME -> note_name
+         | "..." -> rest
+         | "---" -> key_off
+         | "Note" "(" INT ")" -> note
+
+// ---- commands 0-7: standard (V1.3-V1.5x) and musicroutine (11.x, V0.9x) families ----
+?command: arpeggio | portamento_up | portamento_down | freq_slide | cutoff_slide
+        | tone_portamento | vibrato | set_filter | set_filter_ctrl | set_sr | set_tempo
+arpeggio: "Arpeggio" "(" INT ")"                   // 0
+portamento_up: "PortamentoUp" "(" INT ")"          // 1 standard
+freq_slide: "FreqSlide" "(" INT ")"                // 1 musicroutine
+portamento_down: "PortamentoDown" "(" INT ")"      // 2 standard
+cutoff_slide: "CutoffSlide" "(" INT ")"            // 2 musicroutine
+tone_portamento: "TonePortamento" "(" INT ")"      // 3
+vibrato: "Vibrato" "(" INT ")"                     // 4
+set_filter: "SetFilter" "(" INT ")"                // 5 standard
+set_filter_ctrl: "SetFilterCtrl" "(" INT ")"       // 5 musicroutine
+set_sr: "SetSR" "(" INT ")"                        // 6
+set_tempo: "SetTempo" "(" INT ")"                  // 7
+
+// ---- instruments: envelope, pulse program, filter, wavetable entry point ----
+instrument: "instrument" INT STRING "ad" INT "sr" INT "pulse" INT "speed" INT "low" INT "high" INT "filter" INT "wave" INT
+
+// ---- wavetable: one row a tick; a jump is to a row of the instrument's own ----
+wavetable: "wavetable" wave_entry*
+wave_entry: INT ":" (wave_step | jump | stop)
+wave_step: "WaveStep" "(" (INT | delay | none) "," wave_note ")"
+delay: "Delay" "(" INT ")"                         // V1.5x waves $01-$07
+none: "none"                                       // wave 0: keep the waveform (V0.9x: end of table)
+wave_note: "WaveNote" "(" INT ("," RELATIVE)? ")"
+jump: "Jump" "(" INT ")"
+stop: "Stop"
+
+// ---- filtertable (standard family): four-byte steps chained by their next;
+//      V1.5x step 0 holds the funktempo pair (FilterSlide speed and next) ----
+filtertable: "filtertable" filter_entry* filter_tail?
+filter_entry: INT ":" (filter_set | filter_slide)
+filter_set: "FilterSet" "(" INT "," INT "," INT "," INT ")"
+filter_slide: "FilterSlide" "(" INT "," INT "," INT ")"
+filter_tail: "tail" INT+
+
+NOTE_NAME: /[A-G][-#][0-9]/
+INT: /-?(\$[0-9A-Fa-f]+|[0-9]+)/
+RELATIVE: "relative"
+STRING: /"(\\.|[^"\\])*"/
+COMMENT: /#[^\n]*/
+%import common.WS
+%ignore WS
+%ignore COMMENT

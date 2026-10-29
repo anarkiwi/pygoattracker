@@ -5,12 +5,15 @@ states what they mean, per GoatTracker 2.76's ``readme.txt`` and ``player.s``,
 and converts both ways without loss (``TypedSong.from_song(s).to_song() == s``).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from functools import partial
 
 from pygoattracker import constants as C
+from pygoattracker.errors import GoatTrackerError, SngValidationError
 from pygoattracker.model import Instrument as RawInstrument
 from pygoattracker.model import Orderlist, Pattern, Song, Subtune, Table
 from pygoattracker.model import Row as RawRow
+from pygoattracker.model import entry_from_byte
 
 # ---- the note column --------------------------------------------------------
 
@@ -37,31 +40,33 @@ class KeyOn:
     """Set the gate bit without a new note."""
 
 
-NoteColumn = Note | Rest | KeyOff | KeyOn
+@dataclass(frozen=True, slots=True)
+class Gate:
+    """A note byte above ``KEYON``: the packed player sets the gate to ``value | $F0``
+    (``$FD`` keeps the gate and clears sync); the editor ignores it."""
+
+    value: int
+
+
+NoteColumn = Note | Rest | KeyOff | KeyOn | Gate
 _NOTE_BYTE = {C.REST: Rest(), C.KEYOFF: KeyOff(), C.KEYON: KeyOn()}
+_BYTE_NOTE = {type(v): k for k, v in _NOTE_BYTE.items()}
 
 
 def note_of(byte: int) -> NoteColumn:
-    """The note column byte as what ``mt_note`` does with it.
-
-    Below ``REST`` it keys a note (``pitch`` negative under ``$60``); above, it
-    sets the gate to ``byte | $F0``, a key off or key on.
-    """
+    """The note column byte as what ``mt_note`` does with it: below ``REST`` it keys
+    a note (``pitch`` negative under ``$60``); above, it sets the gate to
+    ``byte | $F0``, ``$BE`` and ``$BF`` the key off and key on."""
     if byte < C.REST:
         return Note(byte - C.FIRSTNOTE)
-    if byte == C.REST:
-        return Rest()
-    gate = byte | 0xF0
-    if gate not in (C.KEYOFF | 0xF0, C.KEYON | 0xF0):
-        raise ValueError(f"note byte {byte:#04x} sets gate {gate:#04x}")
-    return KeyOn() if gate == C.KEYON | 0xF0 else KeyOff()
+    return _NOTE_BYTE.get(byte) or Gate(byte)
 
 
 def note_byte(note: NoteColumn) -> int:
     """The note column byte for ``note``."""
     if isinstance(note, Note):
         return C.FIRSTNOTE + note.pitch
-    return {type(v): k for k, v in _NOTE_BYTE.items()}[type(note)]
+    return note.value if isinstance(note, Gate) else _BYTE_NOTE[type(note)]
 
 
 # ---- commands: pattern column 0XY-FXY, and wavetable rows $F0-$FE ------------
@@ -182,7 +187,8 @@ class FunkTempo:
 
 @dataclass(frozen=True, slots=True)
 class SetTempo:
-    """FXY: ticks per row; ``channel`` sets this voice's alone. 0 and 1 recall the funk pair."""
+    """FXY: ticks per row; ``channel`` sets this voice's alone. 0 and 1 recall the
+    funk pair, that phase first; 2 plays as 3."""
 
     tempo: int
     channel: bool = False
@@ -316,7 +322,8 @@ class WaveCommand:
 
 @dataclass(frozen=True, slots=True)
 class PulseSet:
-    """Set the pulse width; the chip reads its low 12 bits."""
+    """Set the pulse width; the chip reads its low 12 bits (bits 12-14 keep the row's
+    left nibble $8-$F)."""
 
     width: int
 
@@ -370,7 +377,8 @@ class CutoffSet:
 
 @dataclass(frozen=True, slots=True)
 class FixedSpeed:
-    """A speedtable row as a 16-bit value: a slide's step; vibrato rate (high) and depth."""
+    """A speedtable row as a 16-bit value: a slide's step; vibrato rate (high) and
+    depth; funktempo's two tempos (high, low), whatever bit 15 holds."""
 
     value: int
 
@@ -441,6 +449,8 @@ def wave_bytes(row: WaveRow) -> tuple[int, int]:
         return jump
     if isinstance(row, WaveCommand):
         num, data = command_bytes(row.command)
+        if num == C.CMD_SETTEMPO:
+            raise ValueError("the wavetable cannot run FXY")
         return C.WAVECMD | num, data
     match row.wave:
         case None:
@@ -537,7 +547,8 @@ class Instrument:
 
     Pointers are 1-based table rows, 0 for none; ``vibrato_speed`` is a speedtable
     row. ``hard_restart`` and ``legato`` are the gate timer's $80 and $40 flags read
-    as what they do: a hard restart before each note, and no gate-off at all.
+    as what they do: a hard restart before each note, and no gate-off and no hard
+    restart at all (``hard_restart`` then does nothing).
     """
 
     attack_decay: int = 0
@@ -593,6 +604,33 @@ class Instrument:
 # ---- the song ---------------------------------------------------------------
 
 
+_CODEC_ERRORS = (ValueError, KeyError, TypeError, OverflowError, GoatTrackerError)
+
+
+def fits(value, encode, decode, what: str) -> None:
+    """Raise unless ``value`` has bytes that read back as it: every field fits its
+    width, in the context ``encode``/``decode`` read it in."""
+    try:
+        back = decode(bytes(encode(value)))
+    except _CODEC_ERRORS as exc:
+        raise SngValidationError(f"{what}: {value!r} has no bytes ({exc})") from exc
+    if back != value:
+        raise SngValidationError(f"{what}: {value!r} reads back as {back!r}")
+
+
+def _byte(value):
+    return (value,)
+
+
+def _unbyte(raw):
+    return raw[0]
+
+
+def _ins_bytes(ins: "Instrument") -> list:
+    raw = ins.raw()
+    return [getattr(raw, f.name) for f in fields(raw)][:-1]
+
+
 def rows_of(pattern: Pattern) -> tuple[Row, ...]:
     """An editor pattern's rows, each stating its own command."""
     return tuple(
@@ -635,6 +673,63 @@ class TypedSong:
     firstnote: int = 0
     freq: tuple[int, ...] = field(default=(), repr=False)
     speed0: SpeedRow | None = None
+
+    def check(self) -> None:
+        """Raise :class:`~pygoattracker.errors.SngValidationError` unless every value
+        fits its field in the .sng or the packed form (instrument 0, held commands
+        and long rests are packed only); song-level limits are the writer's."""
+        for rows, enc, dec, name in (
+            (self.wavetable, wave_bytes, wave_row, "wavetable"),
+            (
+                self.pulsetable,
+                pulse_bytes,
+                partial(pulse_row, simple=self.simplepulse),
+                "pulsetable",
+            ),
+            (self.filtertable, filter_bytes, filter_row, "filtertable"),
+            (self.speedtable, speed_bytes, speed_row, "speedtable"),
+        ):
+            for num, row in enumerate(rows, 1):
+                fits(row, enc, lambda raw, f=dec: f(*raw), f"{name} row {num}")
+        if self.speed0 is not None:
+            fits(self.speed0, speed_bytes, lambda raw: speed_row(*raw), "speed0")
+        for num, ins in enumerate(self.instruments, 1):
+            rebuild = lambda raw, n=ins.name: Instrument.of(RawInstrument(*raw, n))
+            fits(ins, _ins_bytes, rebuild, f"instrument {num}")
+        for s_num, sub in enumerate(self.subtunes):
+            for c_num, order in enumerate(sub.channels):
+                what = f"subtune {s_num} orderlist {c_num}"
+                for entry in order.entries:
+                    fits(
+                        entry,
+                        lambda e: (e.to_byte(),),
+                        lambda raw: entry_from_byte(raw[0]),
+                        what,
+                    )
+                fits(order.restart, _byte, _unbyte, f"{what} restart")
+        for p_num, rows in enumerate(self.patterns):
+            for r_num, row in enumerate(rows):
+                what = f"pattern {p_num} row {r_num}"
+                fits(
+                    row.note,
+                    lambda n: (note_byte(n),),
+                    lambda raw: note_of(raw[0]),
+                    what,
+                )
+                if row.instrument is not None:
+                    fits(row.instrument, _byte, _unbyte, what)
+                if row.command is not None:
+                    fits(row.command, command_bytes, lambda raw: command_of(*raw), what)
+                if row.length < 1:
+                    raise SngValidationError(f"{what}: length {row.length} below 1")
+        fits(self.firstnote, _byte, _unbyte, "firstnote")
+        for freq in self.freq:
+            fits(
+                freq,
+                lambda v: v.to_bytes(2, "little"),
+                lambda raw: int.from_bytes(raw, "little"),
+                "freq",
+            )
 
     def speed(self, ref) -> SpeedRow | None:
         """The speedtable row a command or an instrument names; row 0 is ``speed0``."""

@@ -1,0 +1,105 @@
+// A GoatTracker 2 song as typed operations: the abstract syntax of
+// pygoattracker.typed.TypedSong. Each constructor rule names the dataclass it
+// builds (snake_case of the class name). Integers are hex ($1F) or decimal;
+// numbered items carry their index (subtunes and patterns from 0, instruments
+// and table rows from 1, the table pointers' base).
+
+start: header subtune+ instrument* wavetable pulsetable filtertable speedtable pattern+
+
+header: "name" STRING "author" STRING "copyright" STRING simplepulse? tuning? speed0?
+simplepulse: "simplepulse"
+tuning: "firstnote" INT "freq" INT*
+speed0: "speed0" _speed_row
+
+// ---- sequence: subtune -> one orderlist a channel -> patterns -> rows ----
+subtune: "subtune" INT orderlist+
+orderlist: "orderlist" _order_entry* "restart" INT
+_order_entry: play_pattern | repeat | transpose
+play_pattern: "PlayPattern" "(" INT ")"
+repeat: "Repeat" "(" INT ")"
+transpose: "Transpose" "(" INT ")"
+
+pattern: "pattern" INT row+
+row: note_col INT? command? length?           // INT: instrument; none keeps the voice's
+length: "*" INT                                // rows a rest spans
+?note_col: NOTE_NAME -> note_name
+         | "..." -> rest
+         | "---" -> key_off
+         | "+++" -> key_on
+         | "Note" "(" INT ")" -> note
+
+// ---- commands: pattern column 0XY-FXY and wavetable rows $F0-$FE ----
+?command: do_nothing | portamento_up | portamento_down | tone_portamento | vibrato
+        | set_ad | set_sr | set_wave | set_wave_ptr | set_pulse_ptr | set_filter_ptr
+        | set_filter_ctrl | set_cutoff | set_master_volume | timing_mark
+        | funk_tempo | set_tempo
+do_nothing: "DoNothing" "(" INT ")"
+portamento_up: "PortamentoUp" "(" INT ")"
+portamento_down: "PortamentoDown" "(" INT ")"
+tone_portamento: "TonePortamento" "(" INT ")"
+vibrato: "Vibrato" "(" INT ")"
+set_ad: "SetAD" "(" INT ")"
+set_sr: "SetSR" "(" INT ")"
+set_wave: "SetWave" "(" INT ")"
+set_wave_ptr: "SetWavePtr" "(" INT ")"
+set_pulse_ptr: "SetPulsePtr" "(" INT ")"
+set_filter_ptr: "SetFilterPtr" "(" INT ")"
+set_filter_ctrl: "SetFilterCtrl" "(" INT "," INT ")"
+set_cutoff: "SetCutoff" "(" INT ")"
+set_master_volume: "SetMasterVolume" "(" INT ")"
+timing_mark: "TimingMark" "(" INT ")"
+funk_tempo: "FunkTempo" "(" INT ")"
+set_tempo: "SetTempo" "(" INT ("," CHANNEL)? ")"
+
+// ---- instruments: envelope, table entry points, vibrato, gate, first frame ----
+instrument: "instrument" INT STRING "ad" INT "sr" INT "wave" INT "pulse" INT "filter" INT "vibrato" INT "delay" INT "gate" INT hard_restart legato "first" _first_wave
+hard_restart: "hardrestart" -> yes
+            | "nohardrestart" -> no
+legato: "legato" -> yes
+      | -> no
+_first_wave: set_wave | gate_off | gate_on | none
+gate_off: "GateOff"
+gate_on: "GateOn"
+
+// ---- table programs: one row a tick, Jump/Stop control flow ----
+wavetable: "wavetable" wave_entry*
+wave_entry: INT ":" (wave_step | wave_command | jump | stop)
+wave_step: "WaveStep" "(" (set_wave | delay | none) "," (wave_note | none) ")"
+delay: "Delay" "(" INT ")"
+wave_note: "WaveNote" "(" INT ("," RELATIVE)? ")"
+wave_command: "WaveCommand" "(" command ")"
+
+pulsetable: "pulsetable" pulse_entry*
+pulse_entry: INT ":" (pulse_set | pulse_mod | simple_pulse_set | simple_pulse_mod | jump | stop)
+pulse_set: "PulseSet" "(" INT ")"
+pulse_mod: "PulseMod" "(" INT "," INT ")"
+simple_pulse_set: "SimplePulseSet" "(" INT ")"
+simple_pulse_mod: "SimplePulseMod" "(" INT "," INT ")"
+
+filtertable: "filtertable" filter_entry*
+filter_entry: INT ":" (filter_set | filter_mod | cutoff_set | jump | stop)
+filter_set: "FilterSet" "(" INT "," INT "," INT ")"
+filter_mod: "FilterMod" "(" INT "," INT ")"
+cutoff_set: "CutoffSet" "(" INT ")"
+
+jump: "Jump" "(" INT ")"
+stop: "Stop"
+
+// ---- speedtable: a constant pool commands and instruments index ----
+speedtable: "speedtable" speed_entry*
+speed_entry: INT ":" _speed_row
+_speed_row: fixed_speed | calculated_speed
+fixed_speed: "FixedSpeed" "(" INT ")"
+calculated_speed: "CalculatedSpeed" "(" INT "," INT ")"
+
+none: "none"
+
+NOTE_NAME: /[A-G][-#][0-9]/
+INT: /-?(\$[0-9A-Fa-f]+|[0-9]+)/
+CHANNEL: "channel"
+RELATIVE: "relative"
+STRING: /"(\\.|[^"\\])*"/
+COMMENT: /#[^\n]*/
+%import common.WS
+%ignore WS
+%ignore COMMENT

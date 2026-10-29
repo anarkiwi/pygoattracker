@@ -126,6 +126,32 @@ def _sid2sng(args) -> None:
     print(f"wrote {args.output}")
 
 
+def _totext(args) -> None:
+    from pygoattracker import sid, text
+    from pygoattracker.typed import TypedSong
+
+    data = Path(args.song).read_bytes()
+    if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
+        song = read_sng(data)
+        if isinstance(song, Gt1Song):
+            raise GoatTrackerError("GoatTracker V1.x songs have no GT2 text form")
+        typed = TypedSong.from_song(song)
+    else:
+        typed = sid.decompile_sid(data, subtune=args.subtune).typed
+    out = text.dumps(typed)
+    if args.output:
+        Path(args.output).write_text(out)
+    else:
+        print(out, end="")
+
+
+def _fromtext(args) -> None:
+    from pygoattracker import text
+    from pygoattracker.writer import write_sng
+
+    write_sng(text.loads(Path(args.text).read_text()).to_song(), args.output)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pygoattracker", description="GoatTracker 2 song tools"
@@ -168,6 +194,21 @@ def _parser() -> argparse.ArgumentParser:
     sid2sng.add_argument("output", help=".sng file to write")
     sid2sng.add_argument("--subtune", type=int, default=0)
     sid2sng.set_defaults(func=_sid2sng)
+
+    totext = commands.add_parser(
+        "text", help="print a .sng or packed .sid in the song grammar (song.lark)"
+    )
+    totext.add_argument("song", help=".sng or packed GoatTracker .sid file")
+    totext.add_argument(
+        "output", nargs="?", help="text file to write (default: stdout)"
+    )
+    totext.add_argument("--subtune", type=int, default=0)
+    totext.set_defaults(func=_totext)
+
+    fromtext = commands.add_parser("fromtext", help="write song grammar text as a .sng")
+    fromtext.add_argument("text", help="song text file")
+    fromtext.add_argument("output", help=".sng file to write")
+    fromtext.set_defaults(func=_fromtext)
     return parser
 
 

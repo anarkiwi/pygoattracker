@@ -27,6 +27,7 @@ length: "*" INT                                // rows a rest spans
          | "---" -> key_off
          | "+++" -> key_on
          | "Note" "(" INT ")" -> note
+         | "Gate" "(" INT ")" -> gate             // packed: gate = byte | $F0
 
 // ---- commands: pattern column 0XY-FXY and wavetable rows $F0-$FE ----
 ?command: do_nothing | portamento_up | portamento_down | tone_portamento | vibrato

@@ -40,31 +40,33 @@ class KeyOn:
     """Set the gate bit without a new note."""
 
 
-NoteColumn = Note | Rest | KeyOff | KeyOn
+@dataclass(frozen=True, slots=True)
+class Gate:
+    """A note byte above ``KEYON``: the packed player sets the gate to ``value | $F0``
+    (``$FD`` keeps the gate and clears sync); the editor ignores it."""
+
+    value: int
+
+
+NoteColumn = Note | Rest | KeyOff | KeyOn | Gate
 _NOTE_BYTE = {C.REST: Rest(), C.KEYOFF: KeyOff(), C.KEYON: KeyOn()}
+_BYTE_NOTE = {type(v): k for k, v in _NOTE_BYTE.items()}
 
 
 def note_of(byte: int) -> NoteColumn:
-    """The note column byte as what ``mt_note`` does with it.
-
-    Below ``REST`` it keys a note (``pitch`` negative under ``$60``); above, it
-    sets the gate to ``byte | $F0``, a key off or key on.
-    """
+    """The note column byte as what ``mt_note`` does with it: below ``REST`` it keys
+    a note (``pitch`` negative under ``$60``); above, it sets the gate to
+    ``byte | $F0``, ``$BE`` and ``$BF`` the key off and key on."""
     if byte < C.REST:
         return Note(byte - C.FIRSTNOTE)
-    if byte == C.REST:
-        return Rest()
-    gate = byte | 0xF0
-    if gate not in (C.KEYOFF | 0xF0, C.KEYON | 0xF0):
-        raise ValueError(f"note byte {byte:#04x} sets gate {gate:#04x}")
-    return KeyOn() if gate == C.KEYON | 0xF0 else KeyOff()
+    return _NOTE_BYTE.get(byte) or Gate(byte)
 
 
 def note_byte(note: NoteColumn) -> int:
     """The note column byte for ``note``."""
     if isinstance(note, Note):
         return C.FIRSTNOTE + note.pitch
-    return {type(v): k for k, v in _NOTE_BYTE.items()}[type(note)]
+    return note.value if isinstance(note, Gate) else _BYTE_NOTE[type(note)]
 
 
 # ---- commands: pattern column 0XY-FXY, and wavetable rows $F0-$FE ------------

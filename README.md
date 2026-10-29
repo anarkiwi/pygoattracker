@@ -60,7 +60,8 @@ play-routine variations (see [docs/oracle-testing.md](docs/oracle-testing.md)).
 See [docs/usage.md](docs/usage.md) for building songs, playback, register logs,
 WAV rendering, NinjaTracker 2, and the command line,
 [docs/format.md](docs/format.md) for the format specification, data model, and
-`.sid` decompilation notes, and [docs/oracle-testing.md](docs/oracle-testing.md)
+`.sid` decompilation notes, [docs/grammar.md](docs/grammar.md) for the song grammar
+(abstract syntax, byte encodings, playback semantics), and [docs/oracle-testing.md](docs/oracle-testing.md)
 for the byte-exact oracle tests.
 
 Installed, it also registers the `goattracker1` and `goattracker2` formats with

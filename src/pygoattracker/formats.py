@@ -7,10 +7,17 @@ entry-point group make ``pysidtracker info|reglog|wav`` play packed GoatTracker 
 
 from __future__ import annotations
 
+import hashlib
+import inspect
+import os
 from dataclasses import asdict
+from functools import lru_cache
+from pathlib import Path
 from typing import Iterable, Sequence
 
-from pysidtracker import MemPlayer, SidFormat
+import numpy as np
+from pysidtracker import MemPlayer, SidError, SidFormat, survey
+from pysidtracker.cadence import playroutine_cadence
 
 from pygoattracker import text
 from pygoattracker.gt1 import DecompiledGt1, Gt1SidParser
@@ -20,7 +27,7 @@ from pygoattracker.sid import DecompiledSid, GoatTrackerSidParser
 from pygoattracker.writer import build_sng
 
 _EDITOR = asdict(Build()) | {"nowavedelay": False}
-_GRID_FRAMES = 250
+DEFAULT_SECONDS = inspect.signature(survey.run).parameters["default_seconds"].default
 
 
 def _player(model) -> MemPlayer:
@@ -63,28 +70,73 @@ def _describe_gt1(model: DecompiledGt1) -> Iterable[str]:
     yield f"instruments: {len(song.instruments)}"
 
 
-def _grid(model) -> bytes:
-    """The first :data:`_GRID_FRAMES` frames the model's player renders."""
-    return bytes(
-        v & 0xFF for row in model.player().render_grid(_GRID_FRAMES) for v in row
-    )
+class _Sourced:
+    """A parser whose model keeps the tune's bytes, which whole-song probes
+    re-read every subtune of."""
+
+    def parse(self, data, subtune=0, **kwargs):
+        """The parent's model, with ``data`` as its ``source``."""
+        model = super().parse(data, subtune=subtune, **kwargs)
+        model.source = bytes(data)
+        return model
+
+
+class Gt1Parser(_Sourced, Gt1SidParser):
+    """:class:`~pygoattracker.gt1.Gt1SidParser` keeping the tune's bytes."""
+
+
+class Gt2Parser(_Sourced, GoatTrackerSidParser):
+    """:class:`~pygoattracker.sid.GoatTrackerSidParser` keeping the tune's bytes."""
+
+
+@lru_cache(maxsize=1)
+def _songlengths() -> dict:
+    """``md5 -> [seconds per song]`` of the ``$HVSC`` tree, empty without one."""
+    root = os.environ.get("HVSC")
+    if not root or not (Path(root) / "DOCUMENTS" / "Songlengths.md5").is_file():
+        return {}
+    return survey.songlengths(root)
+
+
+def song_frames(data: bytes, subtune: int) -> int:
+    """Play calls of 0-based ``subtune`` over its HVSC song length (the survey's
+    default where HVSC lists none), at the tune's own cadence."""
+    lens = _songlengths().get(hashlib.md5(data).hexdigest(), ())
+    seconds = lens[subtune] if subtune < len(lens) else DEFAULT_SECONDS
+    return int(seconds * playroutine_cadence(data, subtune=subtune).calls_per_second)
+
+
+def _grid(model, parser) -> bytes:
+    """Each subtune's whole-song register grid as the model's format renders it
+    (a subtune that fails, its error), one digest per subtune."""
+    data = model.source
+    out = []
+    for subtune in range(max(model.header.songs, 1)):
+        try:
+            song = model if subtune == model.subtune else parser.parse(data, subtune)
+            grid = song.player().render_grid(song_frames(data, subtune))
+            chunk = np.asarray(grid, np.int16).tobytes()
+        except SidError as exc:
+            chunk = f"!{type(exc).__name__}: {exc}".encode()
+        out.append(hashlib.blake2b(chunk, digest_size=16).digest())
+    return b"".join(out)
 
 
 GT2_PROBES = {
     "typed": lambda model: text.dumps(model.typed),
     "repack": lambda model: model.repack(),
     "sng": lambda model: build_sng(model.song),
-    "grid": _grid,
+    "grid": lambda model: _grid(model, GoatTrackerSidParser()),
 }
 GT1_PROBES = {
     "typed": lambda model: text.dumps(Gt1TypedSong.from_song(model.song)),
     "pack": lambda model: model.song.pack()[1],
-    "grid": _grid,
+    "grid": lambda model: _grid(model, Gt1SidParser()),
 }
 
 GOATTRACKER1 = SidFormat(
     name="goattracker1",
-    parser=Gt1SidParser(),
+    parser=Gt1Parser(),
     player=_player,
     describe=_describe_gt1,
     metadata=_metadata,
@@ -93,7 +145,7 @@ GOATTRACKER1 = SidFormat(
 
 GOATTRACKER2 = SidFormat(
     name="goattracker2",
-    parser=GoatTrackerSidParser(),
+    parser=Gt2Parser(),
     player=_player,
     describe=_describe_gt2,
     metadata=_metadata,

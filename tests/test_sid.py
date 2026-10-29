@@ -23,7 +23,12 @@ from pysidtracker import PlayroutineKind, SidError, SidImage
 from pygoattracker import constants
 from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
-from pygoattracker.packed import packed_orderlist
+from pygoattracker.packed import (
+    orderlist_bytes,
+    packed_orderlist,
+    pattern_bytes,
+    pattern_rows,
+)
 from pygoattracker.player import Player
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
@@ -313,13 +318,27 @@ def test_subtune_count_derived_when_header_wrong():
     assert len(song.patterns) == 2
 
 
-# --- orderlist decode is bounded (a wrong subtune-count guess lands here) -----
+# --- streams the 8-bit cursor wraps through -------------------------------------
 
 
-def test_decode_orderlist_without_terminator_raises():
-    mem = bytearray([0x00] * 4096)  # no 0xFF LOOPSONG marker anywhere
-    with pytest.raises(SidParseError, match="no terminator within 256 bytes"):
-        packed_orderlist(mem, 0)
+def test_orderlist_without_end_mark_wraps_to_its_start():
+    mem = bytearray(range(0x80)) * 4  # no $FF LOOPSONG within the cursor's reach
+    olist, end = packed_orderlist(mem, 0)
+    assert end == 0x100 and olist.restart == 0
+    assert orderlist_bytes(olist) == bytes(mem[:0x100])
+
+
+def test_pattern_filling_the_reach_has_no_end_mark():
+    mem = bytearray([0x60] * 0x100 + [0x60, 0x00])
+    rows, end = pattern_rows(mem, 0)
+    assert end == 0x100 and len(rows) == 0x100
+    assert pattern_bytes(rows) == bytes(mem[:0x100])
+
+
+def test_pattern_row_cut_by_the_reach_ends_before_it():
+    mem = bytearray([0x60] * 0xFF + [0x41, 0x01, 0x60, 0x00])
+    rows, end = pattern_rows(mem, 0)
+    assert end == 0xFF and len(rows) == 0xFF
 
 
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")

@@ -21,7 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "lark>=1.2",
-    "pysidtracker>=0.38.0",
+    "pysidtracker>=0.39.0",
 ]
 
 [project.optional-dependencies]

@@ -12,11 +12,12 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from pysidtracker import BaseSidParser, SidHeader, SidImage, run_init
+from pysidtracker import REACH, BaseSidParser, SidHeader, SidImage, run_init
 from pysidtracker.mos6502 import disasm_len
 
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker.errors import SidParseError, SngParseError
+from pygoattracker.gt1streams import ORDER_REACH, STREAMS
 from pygoattracker.sid import _load_image, as_psid, parse_sid_header
 from pygoattracker.variant import release_refs
 
@@ -92,9 +93,6 @@ _RTS = 0x60
 _SONG_BIAS = 3
 _JUMP = 3
 _INSTR_FIELDS = 8
-_ORDER_END = 0xFF
-_PATT_END = 0xFF
-_NOCMD = 0x60
 
 
 @dataclass(frozen=True)
@@ -483,29 +481,24 @@ def _word(mem, lo: int, hi: int) -> int:
 
 
 def _orderlist_len(mem, addr: int, endsong: bool = False) -> int:
-    """Length of the orderlist at ``addr`` through its end mark and restart byte.
-
-    ``endsong`` orderlists end at ``$FE`` (repeat) or ``$FF`` (loop to the
-    start) with no restart byte.
-    """
-    for pos in range(addr, min(addr + 0x101, 0xFFFF)):
-        if mem[pos] == _ORDER_END or (endsong and mem[pos] == _ORDER_END - 1):
-            return pos + 1 + (not endsong) - addr
-    raise SidParseError(f"GT1 orderlist at ${addr:04X} has no end mark")
+    """Length of the orderlist at ``addr`` through its end mark and restart byte
+    (``endsong``: an end mark with no restart byte)."""
+    window = bytes(mem[addr : addr + ORDER_REACH])
+    try:
+        return STREAMS.parse_prefix(window, "m11_end" if endsong else "m11_loop").size
+    except SngParseError as exc:
+        raise SidParseError(f"GT1 orderlist at ${addr:04X} has no end mark") from exc
 
 
 def pattern_len(mem, addr: int, end: int = 0x10000) -> int:
     """Length of the packed pattern at ``addr`` through its end mark, cut at ``end``."""
-    pos = addr
-    while pos < end and pos - addr < 0x100:
-        pos += 3 if mem[pos] < _NOCMD else 1
-        if pos >= end:
-            break
-        if mem[pos] == _PATT_END:
-            return pos + 1 - addr
-    if pos >= end:
-        return max(end - addr, 0)
-    raise SidParseError(f"GT1 pattern at ${addr:04X} has no end mark")
+    window = bytes(mem[addr : min(end, addr + REACH)])
+    try:
+        return STREAMS.parse_prefix(window, "pattern").size + 1
+    except SngParseError as exc:
+        if addr + REACH > end:
+            return max(end - addr, 0)
+        raise SidParseError(f"GT1 pattern at ${addr:04X} has no end mark") from exc
 
 
 def _need(cond: bool, what: str) -> None:

@@ -10,7 +10,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
-from pysidtracker import find_code_all
+from lark import Transformer, v_args
+from pysidtracker import REACH, ByteGrammar, Parsed, find_code_all
 from pysidtracker.facets import Entry, Variant, inferred
 
 from pygoattracker import constants as C
@@ -20,7 +21,8 @@ from pygoattracker.legacy import (
     MST_PORTAMENTO,
     make_speed_entry,
 )
-from pygoattracker.model import PlayPattern, Repeat, Table
+from pygoattracker.errors import SidParseError
+from pygoattracker.model import Orderlist, PlayPattern, Repeat, Table, entry_from_byte
 from pygoattracker.variant import tristate_entry
 from pygoattracker.typed import (
     FilterSet,
@@ -51,7 +53,7 @@ from pygoattracker.typed import (
     wave_row,
 )
 
-_FX, _FXONLY, _NOTE, _PACKEDREST = 0x40, 0x50, 0x60, 0xC0
+_FX, _FXONLY = 0x40, 0x50
 NONE = 0x100  # an instrument class boundary past the last instrument
 
 
@@ -316,36 +318,73 @@ def _tempo(cmd, packing):
     return replace(cmd, tempo=cmd.tempo + (-1 if packing else 1))
 
 
-def pattern_rows(mem, pos):
-    """One packed pattern at ``pos``: typed rows, and the address past its end mark.
+def _command(fx, data):
+    num = ord(fx) & 0x0F
+    return _tempo(command_of(num, ord(data[0]) if data else 0), False)
 
-    ``mt_rest`` checks for the end mark only after a row, so a pattern has at
-    least one.
-    """
-    rows = []
-    while mem[pos] or not rows:
-        ins = cmd = None
-        b = mem[pos]
-        if b < _FX:
-            ins, pos = b, pos + 1
-            b = mem[pos]
-        if b >= _PACKEDREST:
-            rows.append(Row(Rest(), ins, None, 0x100 - b))
-            pos += 1
-            continue
-        if b < _NOTE:
-            num, pos = b & 0x0F, pos + 1
-            data = 0
-            if num:
-                data, pos = mem[pos], pos + 1
-            cmd = _tempo(command_of(num, data), False)
-            if b >= _FXONLY:
-                rows.append(Row(Rest(), ins, cmd))
+
+@v_args(inline=True)
+class _Stream(Transformer):
+    """``streams.lark``'s streams as typed rows and orderlist entries."""
+
+    # pylint: disable=missing-function-docstring
+
+    def rest_run(self, byte):
+        return Rest(), None, 0x100 - ord(byte)
+
+    def note_only(self, byte):
+        return note_of(ord(byte)), None, 1
+
+    note_only_i = note_only
+
+    def fx_note(self, fx, *rest):
+        *data, note = rest
+        return note_of(ord(note)), _command(fx, data), 1
+
+    fx_note_i = fx_note
+
+    def fx_only(self, fx, *data):
+        return Rest(), _command(fx, data), 1
+
+    def first_row(self, *kids):
+        note, cmd, length = kids[-1]
+        return Row(note, ord(kids[0]) if len(kids) == 2 else None, cmd, length)
+
+    row = first_row
+
+    def pattern(self, *kids):
+        return Parsed(tuple(kids[:-1]), kids[-1].end_pos)
+
+    def orderlist(self, *tokens):
+        *body, _, restart = tokens
+        entries, k = [], 0
+        while k < len(body):
+            nxt = body[k + 1] if k + 1 < len(body) else None
+            if body[k].type == "PATTERN" and nxt is not None and nxt.type == "REPEAT":
+                entries += [entry_from_byte(ord(nxt)), entry_from_byte(ord(body[k]))]
+                k += 2
                 continue
-            b = mem[pos]
-        rows.append(Row(note_of(b), ins, cmd))
-        pos += 1
-    return tuple(rows), pos + 1
+            entries.append(entry_from_byte(ord(body[k])))
+            k += 1
+        return Parsed(Orderlist(entries, ord(restart)), restart.end_pos)
+
+
+STREAMS = ByteGrammar(
+    __package__, "streams.lark", ("pattern", "orderlist"), _Stream(), SidParseError
+)
+
+
+def pattern_rows(mem, pos):
+    """One packed pattern at ``pos``: typed rows, and the address past its end mark."""
+    rows, size = STREAMS.parse_prefix(bytes(mem[pos : pos + REACH]), "pattern")
+    return rows, pos + size
+
+
+def packed_orderlist(mem, pos):
+    """One packed orderlist at ``pos`` (a repeat trails the pattern it repeats), and
+    the address past its restart byte."""
+    olist, size = STREAMS.parse_prefix(bytes(mem[pos : pos + REACH]), "orderlist")
+    return olist, pos + size
 
 
 def pattern_bytes(rows) -> bytes:

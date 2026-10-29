@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from pygoattracker._gt1_refs import PLAYERS
+from pygoattracker import gt1streams as streams
 from pygoattracker.errors import SngParseError
 from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
@@ -33,8 +34,8 @@ from pygoattracker.typed import (
     fits,
 )
 
-_KEYOFF, _REST, _NOCMD, _PACKEDREST, _END = 0x5E, 0x5F, 0x60, 0xC0, 0xFF
-_REPEAT, _TRANSDOWN, _TRANSUP, _OLD_END = 0xD0, 0xE0, 0xF0, 0xFE
+_KEYOFF, _REST, _NOCMD, _END = 0x5E, 0x5F, 0x60, 0xFF
+_REPEAT, _TRANSDOWN, _TRANSUP = 0xD0, 0xE0, 0xF0
 
 # ---- commands: the low three bits of a row's command byte -------------------
 
@@ -207,15 +208,9 @@ def entry_byte(entry, zero: int = _TRANSUP) -> int:
 
 
 def _orderlist(blob: bytes, standard: bool, no_restart: bool, editor: bool, zero):
-    if no_restart or (editor and blob[-1] == _OLD_END):
-        body, end = blob[:-1], End(blob[-1])
-    else:
-        if len(blob) < 2 or blob[-2] != _END:
-            raise SngParseError(f"orderlist {bytes(blob).hex()} has no $FF end mark")
-        body, end = blob[:-2], Loop(blob[-1])
-    stops = () if editor else (_END, _OLD_END) if no_restart else (_END,)
-    if any(b in stops for b in body):
-        raise SngParseError(f"packed orderlist {bytes(blob).hex()} ends before its end")
+    rule = streams.order_rule(standard, editor, no_restart)
+    body, (kind, value) = streams.STREAMS.parse_exact(blob, rule)
+    end = Loop(value) if kind == "loop" else End(value)
     return Orderlist(tuple(entry_of(b, standard, zero) for b in body), end)
 
 
@@ -349,33 +344,21 @@ def _row_bytes(row: Row) -> bytes:
     )
 
 
-def editor_pattern(blob: bytes, cmds) -> Pattern:
-    """An editor pattern: three-byte rows and the ``$FF`` end row."""
-    rows = tuple(_row(*blob[k : k + 3], cmds) for k in range(0, len(blob) - 3, 3))
-    return Pattern(rows, bytes(blob[-3:]))
+def _typed_row(raw, cmds) -> Row:
+    kind, *values = raw
+    if kind == "cmd":
+        return _row(*values, cmds)
+    if kind == "note":
+        return Row(_note(values[0]))
+    return Row(Rest(), None, None, values[0])
 
 
-def packed_pattern(blob: bytes, cmds) -> Pattern:
-    """A packed pattern: three-byte rows, note-only rows that keep the command,
-    and rest runs; ``$FF`` after a row ends it."""
-    rows, pos = [], 0
-    while pos < len(blob) and not (rows and blob[pos] == _END):
-        byte = blob[pos]
-        if byte < _NOCMD:
-            if pos + 3 > len(blob):
-                break
-            rows.append(_row(*blob[pos : pos + 3], cmds))
-            pos += 3
-            continue
-        if byte == _END:
-            raise SngParseError("packed pattern opens with its end mark")
-        rows.append(
-            Row(_note(byte - _NOCMD))
-            if byte < _PACKEDREST
-            else Row(Rest(), None, None, 0x100 - byte)
-        )
-        pos += 1
-    return Pattern(tuple(rows), bytes(blob[pos:]))
+def pattern_of(blob: bytes, cmds, editor: bool) -> Pattern:
+    """An editor pattern (three-byte rows, the ``$FF`` end row) or a packed one
+    (note-only rows that keep the command and rest runs too; ``$FF`` after a row
+    ends it, else the end of the data cuts it)."""
+    rows, end = streams.pattern_rows(blob, editor)
+    return Pattern(tuple(_typed_row(r, cmds) for r in rows), end)
 
 
 def editor_pattern_bytes(pattern: Pattern) -> bytes:
@@ -423,7 +406,7 @@ class _Reading(NamedTuple):
 
     def pattern(self, blob: bytes) -> "Pattern":
         """The pattern ``blob`` holds."""
-        return (editor_pattern if self.editor else packed_pattern)(blob, self.cmds)
+        return pattern_of(blob, self.cmds, self.editor)
 
 
 _IMAGE = ("address", "author", "state", "data", "initialized", "segments")

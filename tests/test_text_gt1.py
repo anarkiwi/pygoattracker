@@ -64,7 +64,7 @@ def _byte_space_song(player: str, layout: str | None) -> Gt1Song:
     editor = layout is not None
     rows3 = bytes(
         b
-        for note, fx in itertools.product(range(0x100 if editor else 0x60), ALL)
+        for note, fx in itertools.product(range(0xFF if editor else 0x60), ALL)
         for b in (note, fx, (note * 7 + fx) & 0xFF)
     )
     if editor:
@@ -271,11 +271,11 @@ _EDITOR = 'editor "1.4b-V1.53" name "" author "" copyright ""'
         ({"row": "... *$41"}, "reads back as"),
         ({"form": _EDITOR, "row": "... Arpeggio(0) *2"}, "reads back as"),
         ({"form": _EDITOR, "row": "C-4"}, "needs a command"),
-        ({"order": "Transpose(15) Loop(0)"}, "ends before its end"),
-        ({"order": "PlayPattern(0) End($FE)"}, "no \\$FF end mark"),
+        ({"order": "Transpose(15) Loop(0)"}, "std_loop ends after 2 of its 3 bytes"),
+        ({"order": "PlayPattern(0) End($FE)"}, "std_loop has no terminator"),
         (
             {"player": "1.1", "form": "packed", "order": "PlayPattern($FE) End($FF)"},
-            "ends before",
+            "m11_end ends after 1 of its 2 bytes",
         ),
     ],
 )
@@ -287,9 +287,9 @@ def test_a_value_that_does_not_fit_its_field_is_refused(fill, match):
 
 
 def test_bytes_the_typed_form_cannot_state():
-    with pytest.raises(SngParseError, match="opens with its end mark"):
+    with pytest.raises(SngParseError, match=r"unexpected byte \$ff at offset 0"):
         G.Gt1TypedSong.from_song(make_song(patterns=[b"\xff\xff"]))
-    with pytest.raises(SngParseError, match="no \\$FF end mark"):
+    with pytest.raises(SngParseError, match="std_loop has no terminator"):
         G.Gt1TypedSong.from_song(make_song(orderlists=[[b"\x00\x01"] * 3]))
     held = G.Pattern((Row(Rest(), 3),))
     with pytest.raises(SngParseError, match="needs a command"):

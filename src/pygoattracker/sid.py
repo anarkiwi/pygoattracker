@@ -52,6 +52,7 @@ from pygoattracker.packed import (
     columns,
     decode,
     pack,
+    packed_orderlist,
     pattern_rows,
     player_span,
 )
@@ -60,21 +61,7 @@ from pygoattracker.wrap import Wrap, Wrapped, wrapper
 from pygoattracker.probe import Bench, ProbeMiss, boot, calls, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.variant import heuristic_entry
-from pygoattracker.model import (
-    Orderlist,
-    PlayPattern,
-    Repeat,
-    Song,
-    Subtune,
-    Transpose,
-)
-
-# Packed orderlist grammar (shares .SNG encoding except repeats trail
-# their pattern instead of prefixing it).
-_REPEAT = 0xD0
-_TRANSDOWN = 0xE0
-_TRANSUP = 0xF0
-_LOOPSONG = 0xFF
+from pygoattracker.model import Song, Subtune
 
 # The packed player's pattern fetch, ``lda patttbllo,y; sta zp; lda patttblhi,y;
 # sta zp; ldy chn,x; lda (zp),y; cmp #FX`` (the binary relocator's
@@ -270,46 +257,6 @@ def _recognize(image: SidImage):
     if anchor is not None:
         return anchor
     return _find_freq_hi_anchor(image)
-
-
-def decode_packed_orderlist(mem, addr):
-    """Decode a packed orderlist at ``addr`` into an :class:`Orderlist`.
-
-    Packed orderlists use the .SNG entry encoding except that a repeat
-    (``0xD0``-``0xDF``) trails the pattern it repeats instead of prefixing
-    it. Ends at ``0xFF`` followed by a restart-position byte.
-
-    An orderlist holds at most ``MAX_SONGLEN`` positions, each contributing a
-    pattern plus an optional trailing repeat/leading transpose; walking more
-    entries than that means the pointer was not a real orderlist (a wrong
-    subtune-count guess in :func:`decompile_sid` lands here), so bail with
-    ``ValueError`` instead of scanning unbounded garbage to the next ``0xFF``.
-    """
-    entries = []
-    pos = addr
-    limit = 3 * constants.MAX_SONGLEN
-    while mem[pos] != _LOOPSONG:
-        if len(entries) > limit:
-            raise ValueError("orderlist has no terminator (not an orderlist)")
-        byte = mem[pos]
-        if byte < _REPEAT:
-            nxt = mem[pos + 1]
-            if _REPEAT <= nxt < _TRANSDOWN:
-                entries.append(Repeat(nxt - _REPEAT))
-                entries.append(PlayPattern(byte))
-                pos += 2
-            else:
-                entries.append(PlayPattern(byte))
-                pos += 1
-        elif byte < _TRANSDOWN:
-            # Bare repeat with no preceding pattern: keep for fidelity.
-            entries.append(Repeat(byte - _REPEAT))
-            pos += 1
-        else:
-            entries.append(Transpose(byte - _TRANSUP))
-            pos += 1
-    restart = mem[pos + 1]
-    return Orderlist(entries=entries, restart=restart), pos + 2
 
 
 def _detect_nowavedelay(wave_left):
@@ -544,7 +491,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     patt_addrs = pointers(t.patt_lo, t.patt_hi, t.patterns)
     orderlists, orders = [], []
     for addr in order_addrs:
-        olist, nxt = decode_packed_orderlist(mem, addr)
+        olist, nxt = packed_orderlist(mem, addr)
         orderlists.append(olist)
         orders.append(nxt - addr)
     # a player sequencing fewer channels than greloc lays leaves the rest's pointers

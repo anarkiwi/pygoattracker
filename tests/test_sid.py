@@ -23,6 +23,7 @@ from pysidtracker import PlayroutineKind, SidError, SidImage
 from pygoattracker import constants
 from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
+from pygoattracker.packed import packed_orderlist
 from pygoattracker.player import Player
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
@@ -165,7 +166,7 @@ def test_load_image_lays_the_tune_over_power_on_ram(packed):
 def test_decode_orderlist_repeat_and_transpose():
     # transpose +3, pattern 5 repeated 3 extra times, endmark + restart 1.
     mem = bytearray([0xF3, 0x05, 0xD3, 0xFF, 0x01])
-    olist, end = sid.decode_packed_orderlist(mem, 0)
+    olist, end = packed_orderlist(mem, 0)
     assert end == 5
     assert olist.restart == 1
     kinds = [type(e).__name__ for e in olist.entries]
@@ -317,8 +318,8 @@ def test_subtune_count_derived_when_header_wrong():
 
 def test_decode_orderlist_without_terminator_raises():
     mem = bytearray([0x00] * 4096)  # no 0xFF LOOPSONG marker anywhere
-    with pytest.raises(ValueError, match="terminator"):
-        sid.decode_packed_orderlist(mem, 0)
+    with pytest.raises(SidParseError, match="no terminator within 256 bytes"):
+        packed_orderlist(mem, 0)
 
 
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")

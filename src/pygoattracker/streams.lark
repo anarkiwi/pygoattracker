@@ -4,8 +4,10 @@
 
 // A row: an instrument byte, then a command, a note or a rest run. $00 after a
 // row ends the pattern; mt_rest checks for it only after a row, so a first row's
-// leading $00 is an instrument.
-pattern: first_row row* END _TAIL?
+// leading $00 is an instrument. Rows filling the cursor's reach end it too: the
+// cursor wraps to 0, which mt_rest stores as the end (greloc writes no end mark
+// after a 256-byte pattern).
+pattern: first_row row* (END _TAIL?)?
 first_row: INSTR0 instr_row | plain_row
 row: INSTR instr_row | plain_row
 ?plain_row: rest_run | note_only | fx_note | fx_only
@@ -31,8 +33,9 @@ FX_I: /[\x01-\x0f\x11-\x1f\x21-\x2f\x31-\x3f\x41-\x4f]/
 FXONLY0: /\x50/
 FXONLY: /[\x51-\x5f]/
 
-// An orderlist: patterns, transposes and repeats to $FF, then the restart entry.
-orderlist: (PATTERN | REPEAT | TRANSPOSE)* LOOPSONG BYTE _TAIL?
+// An orderlist: patterns, transposes and repeats to $FF, then the restart entry;
+// with no $FF in the cursor's reach the cursor wraps to the orderlist's start.
+orderlist: (PATTERN | REPEAT | TRANSPOSE)* (LOOPSONG BYTE _TAIL?)?
 
 PATTERN: /[\x00-\xcf]/
 REPEAT: /[\xd0-\xdf]/

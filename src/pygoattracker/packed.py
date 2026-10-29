@@ -54,6 +54,7 @@ from pygoattracker.typed import (
 )
 
 _FX, _FXONLY = 0x40, 0x50
+_ROW_MAX = 4  # instrument, command, its data and the note
 NONE = 0x100  # an instrument class boundary past the last instrument
 
 
@@ -353,10 +354,14 @@ class _Stream(Transformer):
     row = first_row
 
     def pattern(self, *kids):
+        if isinstance(kids[-1], Row):
+            return Parsed(kids, None)
         return Parsed(tuple(kids[:-1]), kids[-1].end_pos)
 
     def orderlist(self, *tokens):
-        *body, _, restart = tokens
+        body, restart = tokens, None
+        if len(tokens) > 1 and tokens[-2].type == "LOOPSONG":
+            *body, _, restart = tokens
         entries, k = [], 0
         while k < len(body):
             nxt = body[k + 1] if k + 1 < len(body) else None
@@ -366,6 +371,8 @@ class _Stream(Transformer):
                 continue
             entries.append(entry_from_byte(ord(body[k])))
             k += 1
+        if restart is None:
+            return Parsed(Orderlist(entries, 0), None)
         return Parsed(Orderlist(entries, ord(restart)), restart.end_pos)
 
 
@@ -382,17 +389,31 @@ def stream_trees(mem, lay) -> list:
     return [(name, rule, bytes(mem[a : a + REACH])) for name, rule, a in out]
 
 
+def _reach(mem, pos, rule, cut=0):
+    window = bytes(mem[pos : pos + REACH - cut])
+    model, size = STREAMS.parse_prefix(window, rule)
+    return model, pos + (len(window) if size is None else size)
+
+
 def pattern_rows(mem, pos):
-    """One packed pattern at ``pos``: typed rows, and the address past its end mark."""
-    rows, size = STREAMS.parse_prefix(bytes(mem[pos : pos + REACH]), "pattern")
-    return rows, pos + size
+    """One packed pattern at ``pos``: typed rows, and the address past its end mark
+    (or the cursor's reach).
+
+    A last row the cursor's reach cuts short wraps the cursor into the pattern's
+    own start, which no pattern of rows states: the rows end before it.
+    """
+    for cut in range(_ROW_MAX - 1):
+        try:
+            return _reach(mem, pos, "pattern", cut)
+        except SidParseError:
+            pass
+    return _reach(mem, pos, "pattern", _ROW_MAX - 1)
 
 
 def packed_orderlist(mem, pos):
     """One packed orderlist at ``pos`` (a repeat trails the pattern it repeats), and
-    the address past its restart byte."""
-    olist, size = STREAMS.parse_prefix(bytes(mem[pos : pos + REACH]), "orderlist")
-    return olist, pos + size
+    the address past its restart byte (or the cursor's reach)."""
+    return _reach(mem, pos, "orderlist")
 
 
 def pattern_bytes(rows) -> bytes:
@@ -413,7 +434,7 @@ def pattern_bytes(rows) -> bytes:
             if only:
                 continue
         out.append(note_byte(r.note))
-    return bytes(out + b"\0")
+    return bytes(out) if len(out) >= REACH else bytes(out + b"\0")
 
 
 # How a player reads a wavetable's left bytes: ``WAVE_NEW`` delays $01-$0F and
@@ -602,6 +623,8 @@ def orderlist_bytes(orderlist) -> bytes:
         else:
             out.append(e.to_byte())
             k += 1
+    if len(out) >= REACH:
+        return bytes(out)
     return bytes(out + bytes([C.LOOPSONG, orderlist.restart]))
 
 

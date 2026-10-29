@@ -14,9 +14,9 @@ speed0: "speed0" _speed_row
 // ---- sequence: subtune -> one orderlist a channel -> patterns -> rows ----
 subtune: "subtune" INT orderlist+
 orderlist: "orderlist" _order_entry* "restart" INT
-_order_entry: play_pattern | repeat | transpose
+_order_entry: play_pattern | repeat | transpose  // the player wants Transpose? Repeat? PlayPattern
 play_pattern: "PlayPattern" "(" INT ")"
-repeat: "Repeat" "(" INT ")"
+repeat: "Repeat" "(" INT ")"                    // the next pattern plays n+1 times (editor: R(n+1)&$F)
 transpose: "Transpose" "(" INT ")"
 
 pattern: "pattern" INT row+
@@ -67,7 +67,10 @@ wave_entry: INT ":" (wave_step | wave_command | jump | stop)
 wave_step: "WaveStep" "(" (set_wave | delay | none) "," (wave_note | none) ")"
 delay: "Delay" "(" INT ")"
 wave_note: "WaveNote" "(" INT ("," RELATIVE)? ")"
-wave_command: "WaveCommand" "(" command ")"
+wave_command: "WaveCommand" "(" _wave_cmd ")"   // $F0-$FE: commands 0-E
+_wave_cmd: do_nothing | portamento_up | portamento_down | tone_portamento | vibrato
+         | set_ad | set_sr | set_wave | set_wave_ptr | set_pulse_ptr | set_filter_ptr
+         | set_filter_ctrl | set_cutoff | set_master_volume | timing_mark | funk_tempo
 
 pulsetable: "pulsetable" pulse_entry*
 pulse_entry: INT ":" (pulse_set | pulse_mod | simple_pulse_set | simple_pulse_mod | jump | stop)
@@ -89,7 +92,7 @@ stop: "Stop"
 speedtable: "speedtable" speed_entry*
 speed_entry: INT ":" _speed_row
 _speed_row: fixed_speed | calculated_speed
-fixed_speed: "FixedSpeed" "(" INT ")"
+fixed_speed: "FixedSpeed" "(" INT ")"           // funktempo reads it as two tempos
 calculated_speed: "CalculatedSpeed" "(" INT "," INT ")"
 
 none: "none"

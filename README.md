@@ -72,7 +72,7 @@ the `pysidtracker` CLI (`pysidtracker info|reglog|wav tune.sid`); see
 
 ```bash
 pip install -e ".[dev]"
-./run_tests.sh        # black + pylint + pytest with coverage gate
+./run_tests.sh        # black + pylint + pytest (oracle included) with coverage gate
 ```
 
 ## License

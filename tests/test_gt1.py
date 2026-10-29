@@ -13,7 +13,7 @@ from pysidtracker.oracle import EmuPlayer
 from pysidtracker.testing import resolve_tune
 
 from pygoattracker import SidParseError
-from pygoattracker.errors import GoatTrackerError
+from pygoattracker.errors import GoatTrackerError, SngValidationError
 from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
     Gt1Instrument,
@@ -621,3 +621,8 @@ def test_goattrk093_example_sid(member):
     _assert_decompiles(
         _archive_member("goattrk093.zip", member, GOATTRK093_SIDS[member])
     )
+
+
+def test_a_packed_tune_reaching_the_io_area_is_refused():
+    with pytest.raises(SngValidationError, match="I/O area"):
+        make_song(address=0xCF00).to_sid()

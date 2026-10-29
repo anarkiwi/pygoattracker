@@ -13,10 +13,11 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from pysidtracker import REACH, BaseSidParser, SidHeader, SidImage, run_init
+from pysidtracker.image import load_prefix, require_ram
 from pysidtracker.mos6502 import disasm_len
 
 from pygoattracker._gt1_refs import PLAYERS
-from pygoattracker.errors import SidParseError, SngParseError
+from pygoattracker.errors import SidParseError, SngParseError, SngValidationError
 from pygoattracker.gt1streams import ORDER_REACH, STREAMS
 from pygoattracker.sid import _load_image, as_psid, parse_sid_header
 from pygoattracker.variant import release_refs
@@ -453,6 +454,7 @@ class Gt1Song:
         if self.ref.stub_init:
             stub = self.ref.init_stub(address)
             address, data = address - len(stub), stub + data
+        require_ram(address, len(data), "packed tune", SngValidationError)
         head = bytearray(0x7C)
         head[0:8] = b"PSID\x00\x02\x00\x7c"
         head[0x0A:0x0C] = address.to_bytes(2, "big")
@@ -461,7 +463,7 @@ class Gt1Song:
         head[0x10:0x12] = (1).to_bytes(2, "big")
         for offset, text in ((0x16, name), (0x36, author), (0x56, released)):
             head[offset : offset + 32] = text.encode("latin-1")[:32].ljust(32, b"\0")
-        return bytes(head) + address.to_bytes(2, "little") + data
+        return bytes(head) + load_prefix(address) + data
 
 
 def _offsets(start: int, blocks) -> list:

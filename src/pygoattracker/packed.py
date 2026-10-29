@@ -121,6 +121,8 @@ class PlayerBuild:
     stored as they are); ``lowdelay``: a player storing waveforms as they are still
     delays $01-$07, before v2.18; ``vibinit``: a note's init loads the instrument's
     vibrato parameter (False: only an effect 0 on its row does);
+    ``nohrwave``: a note's init of an instrument without hard restart runs the
+    wavetable on its own call (a player keeping the flag in the gate column);
     ``noeffects``: instrument vibrato reads the current instrument live (greloc
     NOEFFECTS), not the parameter latched at note init.
     """
@@ -139,6 +141,7 @@ class PlayerBuild:
     wavedelay: bool | None = None
     lowdelay: bool | None = None
     vibinit: bool | None = None
+    nohrwave: bool | None = None
     simplepulse: bool | None = None
     noeffects: bool | None = None
     funk: tuple | None = None
@@ -169,6 +172,7 @@ class PlayerBuild:
             "idle": Entry(self.idle, inferred("probe")),
             "overlay": tristate_entry(self.overlay, None),
             "vibinit": tristate_entry(self.vibinit, True),
+            "nohr_wave": tristate_entry(self.nohrwave, False),
         }
         return Variant(entries)
 
@@ -199,7 +203,9 @@ class Build:
     ``overlay``: each channel's ``(and, or)`` on its control byte (None: as written);
     ``vibstop``: a vibrato delay of zero stops the instrument vibrato (the binary
     relocator's players, which count the delay as stored down to one);
-    ``vibinit``: a note's init loads the instrument's vibrato parameter.
+    ``vibinit``: a note's init loads the instrument's vibrato parameter;
+    ``nohr_wave``: a note's init of an instrument without hard restart runs the
+    wavetable on its own tick.
     """
 
     adparam: int = C.DEFAULT_ADPARAM
@@ -217,6 +223,7 @@ class Build:
     overlay: tuple | None = None
     vibstop: bool = False
     vibinit: bool = True
+    nohr_wave: bool = False
 
 
 @dataclass(frozen=True)

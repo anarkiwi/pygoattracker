@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from pysidtracker import render_player_wav, run_cli, seconds_to_frames
+from pysidtracker.cli import add_grammar_command
 
 from pygoattracker import audio, constants, convert, ninja, reglog
 from pygoattracker.errors import GoatTrackerError
@@ -169,6 +170,37 @@ def _fromtext(args) -> None:
     Path(args.output).write_bytes(data)
 
 
+def _grammar(args) -> None:
+    from pysidtracker.bytegrammar import render
+
+    from pygoattracker import gt1, gt1streams, packed, sid
+
+    data = Path(args.song).read_bytes()
+    if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
+        song = read_sng(data)
+        if not isinstance(song, Gt1Song):
+            raise GoatTrackerError(
+                "a GoatTracker 2 .sng holds counted sections, not streams"
+            )
+        grammar, streams = gt1streams.STREAMS, gt1streams.stream_trees(song)
+    else:
+        try:
+            dec = sid.decompile_sid(data, subtune=args.subtune)
+        except GoatTrackerError:
+            song = gt1.decompile_gt1(data, args.subtune)
+            grammar, streams = gt1streams.STREAMS, gt1streams.stream_trees(song)
+        else:
+            mem = dec.image.mem if dec.memory is None else dec.memory
+            grammar, streams = packed.STREAMS, packed.stream_trees(mem, dec.info.layout)
+    for name, rule, raw in streams:
+        print(f"{name}:")
+        try:
+            lines = list(render(grammar.tree(raw, rule)))
+        except GoatTrackerError as exc:
+            lines = [f"! {exc}"]
+        print("\n".join("  " + line for line in lines))
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pygoattracker", description="GoatTracker 2 song tools"
@@ -228,6 +260,10 @@ def _parser() -> argparse.ArgumentParser:
     fromtext.add_argument("text", help="song text file")
     fromtext.add_argument("output", help=".sng or .sid file to write")
     fromtext.set_defaults(func=_fromtext)
+
+    add_grammar_command(
+        commands, _grammar, song_help="packed GoatTracker .sid or V1.x GTS! song"
+    )
     return parser
 
 

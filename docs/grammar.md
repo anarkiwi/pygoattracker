@@ -119,17 +119,14 @@ lossless):
 ### 2.2 Packed player data (greloc)
 
 This encoding writes the same tree more compactly. Columns are split across
-memory, and the packed player reads them through pointer tables (`packed.py`).
-
-```
-pattern      = prow+ $00
-prow         = instr? ( $C0-$FF                          -- Rest, length = $100 - b
-                      | $40-$4F data? note                -- command b&$0F (data unless 0), then note
-                      | $50-$5F data?                     -- command only; the note is Rest
-                      | note )                            -- $60-$BF; command = held
-instr        = $01-$3F
-orderlist    = (pattern# Repeat? | Transpose)* $FF restart   -- Repeat follows its pattern
-```
+memory, and the packed player reads them through pointer tables. Its streams are
+the byte grammar [`src/pygoattracker/streams.lark`](../src/pygoattracker/streams.lark),
+parsed by `pysidtracker.ByteGrammar` (one latin-1 character per byte) into
+`typed` rows and orderlist entries (`packed.pattern_rows`, `packed_orderlist`).
+A pattern reads as `player.s`'s `mt_getnewnote` walks it: `$00` ends it only
+after a row, and after an instrument byte any byte below `$60` is a command and
+any from `$60` a note. `pygoattracker grammar tune.sid` prints every stream's
+parse tree.
 
 Two extra transforms apply: a packed tempo `t >= 3` is stored as `t − 1`, and
 the instrument and table columns depend on the build (NOWAVEDELAY,
@@ -212,7 +209,9 @@ and no wavetable sets it to AD (the editor's convention).
 ## GoatTracker V1.x
 
 The abstract syntax is
-[`src/pygoattracker/gt1.lark`](../src/pygoattracker/gt1.lark), the tree
+[`src/pygoattracker/gt1.lark`](../src/pygoattracker/gt1.lark); the byte streams
+(packed and editor patterns, each family's orderlists) are the byte grammar
+[`src/pygoattracker/gt1streams.lark`](../src/pygoattracker/gt1streams.lark). The tree is
 `gt1typed.Gt1TypedSong`. `text.loads` reads either grammar, picking `gt1.lark`
 when the text opens with `player`. For every `Gt1Song`,
 `Gt1TypedSong.from_song(s).to_song(s) == s`, and the text round-trips. The

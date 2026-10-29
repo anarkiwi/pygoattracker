@@ -86,6 +86,24 @@ def order_rule(standard: bool, editor: bool, no_restart: bool) -> str:
     return ("std" if standard else "m11") + end
 
 
+def stream_trees(song) -> list:
+    """``(name, rule, bytes)`` of every orderlist and pattern of a
+    :class:`~pygoattracker.gt1.Gt1Song`."""
+    from pygoattracker.gt1typed import (
+        _Reading,
+    )  # pylint: disable=import-outside-toplevel
+
+    read = _Reading.of(song.player, None if song.sng is None else song.sng.layout)
+    order = order_rule(read.standard, read.editor, read.no_restart)
+    out = [
+        (f"subtune {s} orderlist {c}", order, bytes(blob))
+        for s, chans in enumerate(song.orderlists)
+        for c, blob in enumerate(chans)
+    ]
+    patt = "editor_pattern" if read.editor else "pattern"
+    return out + [(f"pattern {k}", patt, bytes(b)) for k, b in enumerate(song.patterns)]
+
+
 def pattern_rows(blob: bytes, editor: bool) -> tuple:
     """``(rows, end)``: a pattern's raw rows and the bytes from its end mark on (a
     cut pattern's partial row, or nothing)."""

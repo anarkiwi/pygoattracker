@@ -311,3 +311,16 @@ def test_cli_text_and_back_for_v1x(tmp_path, capsys):
     txt.write_text(printed)
     assert cli.main(["fromtext", str(txt), str(out)]) == 0
     assert decompile_gt1(out.read_bytes()).patterns == make_song11("11.3").patterns
+
+
+def test_cli_grammar_lists_every_stream_s_parse_tree(tmp_path, capsys):
+    sid = tmp_path / "c.sid"
+    sid.write_bytes(make_song11("11.3").to_sid())
+    assert cli.main(["grammar", str(sid)]) == 0
+    out = capsys.readouterr().out
+    assert "subtune 0 orderlist 0:\n  m11_loop PATTERN_ANY=$00" in out
+    assert "pattern 0:\n  pattern\n    first_row" in out
+    sng = tmp_path / "a.sng"
+    sng.write_bytes(goattrk_song(sorted(GOATTRK_SONGS)[0]))
+    assert cli.main(["grammar", str(sng)]) == 0
+    assert "editor_pattern" in capsys.readouterr().out

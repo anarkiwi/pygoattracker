@@ -36,6 +36,7 @@ from pysidtracker import (
     trace_init,
 )
 from pysidtracker import parse_sid_header as _parse_sid_header
+from pysidtracker.image import load_prefix
 from pysidtracker.poweron import power_on_ram
 
 from pygoattracker import constants
@@ -181,7 +182,7 @@ def as_psid(raw: bytes, load_address: int | None = None) -> bytes:
     struct.pack_into(
         ">HHHHHHH", header, 4, 2, 0x7C, 0, load_address, load_address + 3, 1, 1
     )
-    return bytes(header) + load_address.to_bytes(2, "little") + raw
+    return bytes(header) + load_prefix(load_address) + raw
 
 
 def _bin_default(src, load_address):

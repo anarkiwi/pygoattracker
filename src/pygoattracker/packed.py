@@ -374,6 +374,14 @@ STREAMS = ByteGrammar(
 )
 
 
+def stream_trees(mem, lay) -> list:
+    """``(name, rule, bytes)`` of every packed stream ``lay`` points at in ``mem``,
+    each read as far as an 8-bit cursor reaches."""
+    out = [(f"orderlist {k}", "orderlist", a) for k, a in enumerate(lay.order_addrs)]
+    out += [(f"pattern {k}", "pattern", a) for k, a in enumerate(lay.patt_addrs)]
+    return [(name, rule, bytes(mem[a : a + REACH])) for name, rule, a in out]
+
+
 def pattern_rows(mem, pos):
     """One packed pattern at ``pos``: typed rows, and the address past its end mark."""
     rows, size = STREAMS.parse_prefix(bytes(mem[pos : pos + REACH]), "pattern")

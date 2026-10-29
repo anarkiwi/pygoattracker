@@ -181,6 +181,7 @@ pygoattracker nt2 tune.sng tune.nt2 --lenient
 pygoattracker sid2sng tune.sid tune.sng   # decompile a packed GoatTracker .sid
 pygoattracker text tune.sng tune.txt     # the song in its grammar, GT2 or V1.x (docs/grammar.md)
 pygoattracker fromtext tune.txt tune.sng # and back
+pygoattracker grammar tune.sid           # every packed stream's byte-grammar parse tree
 ```
 
 ## pysidtracker command line

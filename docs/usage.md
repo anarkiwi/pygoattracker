@@ -179,8 +179,10 @@ pygoattracker reglog tune.sng tune.reglog --seconds 30
 pygoattracker wav tune.sng tune.wav --seconds 30 --model 6581
 pygoattracker nt2 tune.sng tune.nt2 --lenient
 pygoattracker sid2sng tune.sid tune.sng   # decompile a packed GoatTracker .sid
+pygoattracker sng2sid tune.sid tune.sng out.sid  # a .sng or song text into tune.sid's player
 pygoattracker text tune.sng tune.txt     # the song in its grammar, GT2 or V1.x (docs/grammar.md)
 pygoattracker fromtext tune.txt tune.sng # and back
+pygoattracker grammar tune.sid           # pysidtracker grammar, plus V1.x GTS! songs
 ```
 
 ## pysidtracker command line
@@ -194,6 +196,8 @@ V1.x packed `.sid`). The format is picked by recognizing the tune.
 pysidtracker info tune.sid                     # metadata, format, subtunes/patterns/instruments
 pysidtracker reglog tune.sid tune.reglog --seconds 30
 pysidtracker wav tune.sid tune.wav --seconds 30
+pysidtracker grammar tune.sid                  # every packed stream's byte-grammar parse tree
+pysidtracker equiv tune.sid out.sid            # exit 0 if both play the same (GT2; docs/grammar.md)
 python -m pysidtracker.whydiff tune.sid --format auto   # first divergence vs the 6502 player
 python -m pysidtracker.survey run HVSC TUNES --work DIR --format goattracker2
 ```

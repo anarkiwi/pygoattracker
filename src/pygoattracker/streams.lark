@@ -1,0 +1,45 @@
+// GoatTracker 2 packed song data as player.s reads it: a pattern as
+// mt_getnewnote walks it, an orderlist as greloc lays it out (a repeat trails
+// the pattern it repeats). One latin-1 character per byte.
+
+// A row: an instrument byte, then a command, a note or a rest run. $00 after a
+// row ends the pattern; mt_rest checks for it only after a row, so a first row's
+// leading $00 is an instrument. Rows filling the cursor's reach end it too: the
+// cursor wraps to 0, which mt_rest stores as the end (greloc writes no end mark
+// after a 256-byte pattern).
+pattern: first_row row* (END _TAIL?)?
+first_row: INSTR0 instr_row | plain_row
+row: INSTR instr_row | plain_row
+?plain_row: rest_run | note_only | fx_note | fx_only
+?instr_row: note_only_i | fx_note_i | fx_only
+
+rest_run: PACKEDREST                    // the rows a rest spans: $100 - byte
+note_only: NOTE
+note_only_i: NOTE_I                     // after an instrument any byte from $60 is a note
+fx_note: FX0 BYTE | FX BYTE BYTE        // command (data unless 0), then its note
+fx_note_i: FX0_I BYTE | FX_I BYTE BYTE  // after an instrument any byte below $60 is a command
+fx_only: FXONLY0 | FXONLY BYTE          // command (data unless 0) on a rest row
+
+INSTR0: /[\x00-\x3f]/
+INSTR: /[\x01-\x3f]/
+END: /\x00/
+NOTE: /[\x60-\xbf]/
+NOTE_I: /[\x60-\xff]/
+PACKEDREST: /[\xc0-\xff]/
+FX0: /\x40/
+FX: /[\x41-\x4f]/
+FX0_I: /[\x00\x10\x20\x30\x40]/
+FX_I: /[\x01-\x0f\x11-\x1f\x21-\x2f\x31-\x3f\x41-\x4f]/
+FXONLY0: /\x50/
+FXONLY: /[\x51-\x5f]/
+
+// An orderlist: patterns, transposes and repeats to $FF, then the restart entry;
+// with no $FF in the cursor's reach the cursor wraps to the orderlist's start.
+orderlist: (PATTERN | REPEAT | TRANSPOSE)* (LOOPSONG BYTE _TAIL?)?
+
+PATTERN: /[\x00-\xcf]/
+REPEAT: /[\xd0-\xdf]/
+TRANSPOSE: /[\xe0-\xfe]/
+LOOPSONG: /\xff/
+
+%import bytes (BYTE, _TAIL)

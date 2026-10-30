@@ -23,7 +23,14 @@ from pysidtracker import PlayroutineKind, SidError, SidImage
 from pygoattracker import constants
 from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
+from pygoattracker.packed import (
+    orderlist_bytes,
+    packed_orderlist,
+    pattern_bytes,
+    pattern_rows,
+)
 from pygoattracker.player import Player
+from tests.conftest import pass_frames
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
 
@@ -165,7 +172,7 @@ def test_load_image_lays_the_tune_over_power_on_ram(packed):
 def test_decode_orderlist_repeat_and_transpose():
     # transpose +3, pattern 5 repeated 3 extra times, endmark + restart 1.
     mem = bytearray([0xF3, 0x05, 0xD3, 0xFF, 0x01])
-    olist, end = sid.decode_packed_orderlist(mem, 0)
+    olist, end = packed_orderlist(mem, 0)
     assert end == 5
     assert olist.restart == 1
     kinds = [type(e).__name__ for e in olist.entries]
@@ -242,9 +249,10 @@ def test_parser_parse_returns_decompiled_sid(packed):
     decoded = sid.GoatTrackerSidParser().parse(packed)
     assert isinstance(decoded, sid.DecompiledSid)
     assert len(decoded.song.patterns) == 2
-    assert decoded.player().render_grid(8) == sid.decompile_sid(
+    frames = pass_frames(decoded.player())
+    assert decoded.player().render_grid(frames) == sid.decompile_sid(
         packed
-    ).player().render_grid(8)
+    ).player().render_grid(frames)
 
 
 def test_parser_recognizes_packed_player(packed):
@@ -312,13 +320,27 @@ def test_subtune_count_derived_when_header_wrong():
     assert len(song.patterns) == 2
 
 
-# --- orderlist decode is bounded (a wrong subtune-count guess lands here) -----
+# --- streams the 8-bit cursor wraps through -------------------------------------
 
 
-def test_decode_orderlist_without_terminator_raises():
-    mem = bytearray([0x00] * 4096)  # no 0xFF LOOPSONG marker anywhere
-    with pytest.raises(ValueError, match="terminator"):
-        sid.decode_packed_orderlist(mem, 0)
+def test_orderlist_without_end_mark_wraps_to_its_start():
+    mem = bytearray(range(0x80)) * 4  # no $FF LOOPSONG within the cursor's reach
+    olist, end = packed_orderlist(mem, 0)
+    assert end == 0x100 and olist.restart == 0
+    assert orderlist_bytes(olist) == bytes(mem[:0x100])
+
+
+def test_pattern_filling_the_reach_has_no_end_mark():
+    mem = bytearray([0x60] * 0x100 + [0x60, 0x00])
+    rows, end = pattern_rows(mem, 0)
+    assert end == 0x100 and len(rows) == 0x100
+    assert pattern_bytes(rows) == bytes(mem[:0x100])
+
+
+def test_pattern_row_cut_by_the_reach_ends_before_it():
+    mem = bytearray([0x60] * 0xFF + [0x41, 0x01, 0x60, 0x00])
+    rows, end = pattern_rows(mem, 0)
+    assert end == 0xFF and len(rows) == 0xFF
 
 
 REAL_SID = os.environ.get("PYGOATTRACKER_SID")
@@ -335,13 +357,15 @@ def test_survey_render(packed):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import oracle_hvsc  # pylint: disable=import-outside-toplevel
 
-    grid, info = oracle_hvsc.render(packed, 1, 60)
     d = sid.decompile_sid(packed)
+    frames = pass_frames(d.player())
+    grid, info = oracle_hvsc.render(packed, 1, frames)
     want = Player(
         d.typed, freq_table=d.info.note_read, simplepulse=d.info.playback.simplepulse
-    ).render_grid(60)
-    assert grid.shape == (60, 25) and (grid == np.asarray(want)).all()
-    assert (np.asarray(oracle_hvsc.player(packed, 1).render_grid(60)) == grid).all()
+    ).render_grid(frames)
+    assert grid.shape == (frames, 25) and (grid == np.asarray(want)).all()
+    oracle = oracle_hvsc.player(packed, 1).render_grid(frames)
+    assert (np.asarray(oracle) == grid).all()
     assert json.loads(json.dumps(info))["simplepulse"] == d.info.playback.simplepulse
     assert {"adparam", "firstnohr", "pulseopt", "realtime", "state"} <= set(info)
     with pytest.raises(pysidtracker.SidParseError):
@@ -378,7 +402,8 @@ def test_player_uses_the_build_s_hard_restart_adsr():
     _redefine(d, adparam=0xFF, srparam=0x01)
     player = d.player()
     assert player.build.adparam == 0xFF01
-    assert player.render_grid(60) != stock.render_grid(60)
+    frames = pass_frames(d.player())
+    assert player.render_grid(frames) != stock.render_grid(frames)
 
 
 def test_player_uses_the_build_s_pulse_and_realtime_optimizations():
@@ -444,5 +469,5 @@ def test_the_anchor_is_that_of_the_player_the_init_ran(monkeypatch):
             start=0x1800 if data < 0x2000 else None
         ),
     )
-    assert sid._played_anchor(None, anchors[1], {0x1800}) == anchors[0]
-    assert sid._played_anchor(None, anchors[1], {0x1000}) == anchors[1]
+    assert sid._played_anchor(None, anchors[1], {0x1800}.__contains__) == anchors[0]
+    assert sid._played_anchor(None, anchors[1], {0x1000}.__contains__) == anchors[1]

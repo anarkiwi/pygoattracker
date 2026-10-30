@@ -13,7 +13,7 @@ from pysidtracker.oracle import EmuPlayer
 from pysidtracker.testing import resolve_tune
 
 from pygoattracker import SidParseError
-from pygoattracker.errors import GoatTrackerError
+from pygoattracker.errors import GoatTrackerError, SngValidationError
 from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
     Gt1Instrument,
@@ -28,12 +28,12 @@ from pygoattracker.gt1player import Gt1Player
 from pygoattracker.sid import _load_image, parse_sid_header
 from pygoattracker._gt1_refs import PLAYERS
 from tests._fixture_cache import _archive_member
+from tests.conftest import pass_frames
 
 REPO = Path(__file__).resolve().parent.parent
 V15_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "1.5"]
 M11_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "11"]
 V14_PLAYERS = [name for name, entry in PLAYERS.items() if entry["family"] == "1.4"]
-FRAMES = 700
 
 
 def _n(note, instr=0, cmd=0, param=0):
@@ -131,7 +131,14 @@ def make_song(player="1.53", address=0x1000, **fields) -> Gt1Song:
         "patterns": list(PATTERNS),
     }
     values.update(fields)
-    return Gt1Song(player=player, address=address, **values)
+    song = Gt1Song(player=player, address=address, **values)
+    funk = song.ref.labels.get("mt_funktempo")
+    if funk is not None and "data" not in fields:
+        data = bytearray(song.data or song.ref.code[song.ref.code_end :])
+        funk -= song.ref.code_end
+        data[funk : funk + 2] = FILTERTABLE[2:4]
+        song.data = bytes(data)
+    return song
 
 
 INSTRUMENTS_11 = INSTRUMENTS + [
@@ -236,7 +243,7 @@ class DriverEmu(EmuPlayer):
         super()._frame()
 
 
-def emulated(song: Gt1Song, subtune: int, frames: int = FRAMES):
+def emulated(song: Gt1Song, subtune: int, frames: int):
     """The register grid of the packed 6502 playroutine itself, as the packer saved it."""
     raw = song.to_sid()
     header = parse_sid_header(raw)
@@ -250,12 +257,20 @@ def emulated(song: Gt1Song, subtune: int, frames: int = FRAMES):
     return emu.render_grid(frames)
 
 
+def assert_plays_as_6502(song: Gt1Song, subtune: int = 0, played=None):
+    """``played``'s (default ``song``'s) native player renders the packed 6502
+    playroutine's grid over one whole pass of the song (:func:`pass_frames`)."""
+    played = played or song
+    frames = pass_frames(Gt1Player(played, subtune))
+    grid = Gt1Player(played, subtune).render_grid(frames)
+    assert grid == emulated(song, subtune, frames)
+    return grid
+
+
 @pytest.mark.parametrize("player", V15_PLAYERS)
 @pytest.mark.parametrize("subtune", [0, 1])
 def test_native_player_matches_6502(player, subtune):
-    song = make_song(player)
-    grid = Gt1Player(song, subtune).render_grid(FRAMES)
-    assert grid == emulated(song, subtune)
+    assert_plays_as_6502(make_song(player), subtune)
 
 
 INSTRUMENTS_14 = [
@@ -334,8 +349,7 @@ def make_song14(player="1.4b", **fields) -> Gt1Song:
 @pytest.mark.parametrize("player", V14_PLAYERS)
 @pytest.mark.parametrize("subtune", [0, 1])
 def test_v14_matches_6502(player, subtune):
-    song = make_song14(player)
-    assert Gt1Player(song, subtune).render_grid(FRAMES) == emulated(song, subtune)
+    assert_plays_as_6502(make_song14(player), subtune)
 
 
 @pytest.mark.parametrize("player", V14_PLAYERS)
@@ -355,14 +369,12 @@ def test_v14_round_trip(player):
 def test_musicroutine11_matches_6502(player, subtune):
     song = make_song11(player)
     assert song.segments[-1] == "patterns" and "filtertable" not in song.segments
-    grid = Gt1Player(song, subtune).render_grid(FRAMES)
-    assert grid == emulated(song, subtune)
+    assert_plays_as_6502(song, subtune)
 
 
 @pytest.mark.parametrize("player", ["11.2", "11.4"])
 def test_musicroutine11_sound_effect(player):
-    song = with_sfx(make_song11(player))
-    assert Gt1Player(song).render_grid(300) == emulated(song, 0, 300)
+    assert_plays_as_6502(with_sfx(make_song11(player)))
 
 
 @pytest.mark.parametrize("player", M11_PLAYERS)
@@ -387,13 +399,12 @@ def test_orderlists_before_patterntable():
     decoded = decompile_gt1(song.to_sid())
     assert decoded.segments == segments
     assert decoded.pack() == song.pack()
-    assert Gt1Player(decoded).render_grid(200) == emulated(song, 0, 200)
+    assert_plays_as_6502(song, played=decoded)
 
 
-@pytest.mark.parametrize("params", [(4, 2, 0x0F, 0x00), (6, 4, 0x00, 0x00)])
+@pytest.mark.parametrize("params", [(4, 2, 0x0F, 0x00), (6, 3, 0x00, 0x00)])
 def test_multispeed_gate_timer_params(params):
-    song = make_song("1.53", address=0x2000, params=params)
-    assert Gt1Player(song).render_grid(300) == emulated(song, 0, 300)
+    assert_plays_as_6502(make_song("1.53", address=0x2000, params=params))
 
 
 @pytest.mark.parametrize("player", V15_PLAYERS)
@@ -428,13 +439,15 @@ def test_musicroutine11_song_start_resets_channel_state(player):
         data[pos : pos + 15 : 7] = bytes((value,)) * 3
     song.data = bytes(data)
     for subtune in (0, 1):
-        assert Gt1Player(song, subtune).render_grid(200) == emulated(song, subtune, 200)
+        assert_plays_as_6502(song, subtune)
 
 
 def test_stub_init_play_entry_carry():
     song = make_song11("0.96")
     assert song.ref.stub_init and song.ref.song_bias == 3
-    assert Gt1Player(song, 0x7F).render_grid(50) == emulated(song, 0x7F, 50)
+    # Song $AB (subtune $AA + 1) enters play with carry set: the start position
+    # (song * 3 + carry) wraps to songtable entry 2, a whole song of valid orderlists.
+    assert_plays_as_6502(song, 0xAA)
 
 
 def test_reference_relocation_walk():
@@ -460,9 +473,8 @@ def test_state_and_zeropage_survive_round_trip():
 def test_volume_state_applies():
     song = make_song("1.53")
     song.state = {song.ref.labels["mt_volume"] + 1: 0xF3}
-    grid = Gt1Player(song).render_grid(4)
-    assert grid == emulated(song, 0, 4)
-    assert grid[-1][0x18] & 0x0F <= 3
+    grid = assert_plays_as_6502(song)
+    assert grid[0][0x18] & 0x0F <= 3
 
 
 def test_multispeed_init_speedcode():
@@ -492,7 +504,7 @@ def test_init_stub_runs_in_emulator():
     raw[0x7E:] = stub + data
     decoded = decompile_gt1(bytes(raw), subtune=1)
     assert decoded.initialized
-    assert Gt1Player(decoded, 1).render_grid(200) == emulated(song, 1, 200)
+    assert_plays_as_6502(song, 1, played=decoded)
 
 
 def test_play_address_must_be_the_jump_table():
@@ -549,7 +561,7 @@ def test_effect_index_outside_jump_table():
 def test_orderlist_without_pattern_raises():
     song = make_song(orderlists=[[bytes((0xF0, 0xFF, 0x00))] * 3])
     with pytest.raises(GoatTrackerError, match="never reaches"):
-        Gt1Player(song).render_grid(4)
+        pass_frames(Gt1Player(song))
 
 
 def test_generated_references_are_current():
@@ -621,3 +633,8 @@ def test_goattrk093_example_sid(member):
     _assert_decompiles(
         _archive_member("goattrk093.zip", member, GOATTRK093_SIDS[member])
     )
+
+
+def test_a_packed_tune_reaching_the_io_area_is_refused():
+    with pytest.raises(SngValidationError, match="I/O area"):
+        make_song(address=0xCF00).to_sid()

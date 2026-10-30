@@ -10,7 +10,10 @@ import re
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
-from pysidtracker import find_code_all
+from lark import Transformer, v_args
+from pysidtracker import REACH, ByteGrammar, Parsed, find_code_all
+from pysidtracker.codescan import play_entries
+from pysidtracker.mos6502 import OP_JMP, OP_JSR, RETURN_OPS, disasm_len
 from pysidtracker.facets import Entry, Variant, inferred
 
 from pygoattracker import constants as C
@@ -20,7 +23,8 @@ from pygoattracker.legacy import (
     MST_PORTAMENTO,
     make_speed_entry,
 )
-from pygoattracker.model import PlayPattern, Repeat, Table
+from pygoattracker.errors import SidParseError
+from pygoattracker.model import Orderlist, PlayPattern, Repeat, Table, entry_from_byte
 from pygoattracker.variant import tristate_entry
 from pygoattracker.typed import (
     FilterSet,
@@ -51,7 +55,8 @@ from pygoattracker.typed import (
     wave_row,
 )
 
-_FX, _FXONLY, _NOTE, _PACKEDREST = 0x40, 0x50, 0x60, 0xC0
+_FX, _FXONLY = 0x40, 0x50
+_ROW_MAX = 4  # instrument, command, its data and the note
 NONE = 0x100  # an instrument class boundary past the last instrument
 
 
@@ -110,7 +115,6 @@ class PlayerBuild:
     ``ghost``: the full-buffering ghost registers (None: the player writes the chip);
     ``alt``: altplayer.s, whose flush ascends. Below ``firstnohr`` hard restart, below
     ``firstlegato`` gate-off, then legato. None: a define the player does not show.
-    ``wrapper``: a play wrapper outside the player flushes its zero-page ghost;
     ``pulsestep``: the pulse change a +1 modulation speed makes;
     ``funk``: the funk tempo table a ghost build's first play call starts from;
     ``channels``: the channels the player inits; ``idle``: those its play never
@@ -145,7 +149,6 @@ class PlayerBuild:
     simplepulse: bool | None = None
     noeffects: bool | None = None
     funk: tuple | None = None
-    wrapper: bool = False
     channels: int | None = None
     idle: tuple = ()
     voices: tuple | None = None
@@ -163,7 +166,6 @@ class PlayerBuild:
             "optimize_realtime": tristate_entry(self.realtime, True),
             "pulse_step": tristate_entry(self.pulsestep or None, 1),
             "default_tempo": tristate_entry(self.deftempo, None),
-            "wrapper_flush": Entry(self.wrapper, inferred("probe")),
             "voices": tristate_entry(
                 self.voices or default_voices(self.channels), None
             ),
@@ -193,7 +195,6 @@ class Build:
     tick (greloc NOEFFECTS) instead of the one latched at note init;
     ``default_tempo``: greloc DEFAULTTEMPO, every channel's starting countdown (None:
     the editor's instrument-63 rule over tempo 5);
-    ``wrapper_flush``: a play wrapper flushes an all-zero ghost, muting frame one;
     ``init_regs``: ``(reg, value)`` SID writes of the tune's init routine;
     ``voices``: each channel's register offset from ``$D400`` (``$20`` a chip, None:
     silent; None: channel ``c`` on chip ``c // 3``, voice ``c % 3``);
@@ -213,7 +214,6 @@ class Build:
     simplepulse: bool = False
     live_vibrato: bool = False
     default_tempo: int | None = None
-    wrapper_flush: bool = False
     init_regs: tuple = ()
     voices: tuple | None = None
     calls: int = 1
@@ -257,6 +257,8 @@ class PlayerCode(NamedTuple):
 
 
 _TEMPO = "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D"
+_JUMPS = "4C {init:w} 4C {play:w}"
+_TABLE = 6  # jmp mt_init, jmp mt_play
 
 
 def player_span(image, data):
@@ -265,25 +267,43 @@ def player_span(image, data):
     greloc emits the jump table (``jmp mt_init``, ``jmp mt_play``), the player
     code and then the data, so an image holding several players keeps each one's
     code between its jump table and its data. The instance is the last
-    ``mt_initchn`` below ``data`` and the last jump table before it whose
-    ``mt_play`` lies between the two (a table's first entry, where a third jump
-    follows); the whole image without such a jump table.
+    ``mt_initchn`` below ``data`` and the last run of jumps before it whose first
+    or second target lies between the two (a wrapper may divert the other, init
+    or play, out of the player); the whole image without such a jump table.
     """
     tempo = find_code_all(image, _TEMPO, end=data)
     if not tempo:
         return PlayerCode(image)
     t = tempo[-1].addr
-    bases = [
+    tables = {
         m.addr
-        for m in find_code_all(image, "4C ?? ?? 4C {p:w}", end=t)
-        if m.addr < m.captures["p"] <= t
-    ]
-    if not bases:
+        for m in find_code_all(image, _JUMPS, end=t)
+        if any(m.addr < m.captures[k] <= t for k in ("init", "play"))
+    }
+    if not tables:
         return PlayerCode(image)
-    base = bases[-1]
-    while base - 3 in bases:
+    base = max(tables)
+    while base - 3 in tables:
         base -= 3
     return PlayerCode(image, base, data)
+
+
+def play_entry(image, code: PlayerCode) -> frozenset:
+    """The entries of ``code``'s ``mt_play``: the jump table's play entries
+    (:func:`~pysidtracker.codescan.play_entries`), or, where its play jump leads
+    out of the player's code into a wrapper, the first call that wrapper makes
+    back into it."""
+    entries = play_entries(image, code.start)
+    out = [e for e in entries if not code.start <= e < code.end]
+    if not out:
+        return entries
+    mem, pc = image.mem, out[0]
+    while pc < len(mem) - 2 and mem[pc] not in (OP_JSR, OP_JMP, *RETURN_OPS):
+        pc += disasm_len(mem[pc])
+    target = mem[pc + 1] | mem[pc + 2] << 8
+    if mem[pc] in (OP_JSR, OP_JMP) and code.start + _TABLE <= target < code.end:
+        return frozenset({target})
+    return entries
 
 
 # mt_init's clear of two channel-variable blocks: ``txa; ldx #n; sta base,x; dex; bpl``.
@@ -316,36 +336,102 @@ def _tempo(cmd, packing):
     return replace(cmd, tempo=cmd.tempo + (-1 if packing else 1))
 
 
-def pattern_rows(mem, pos):
-    """One packed pattern at ``pos``: typed rows, and the address past its end mark.
+def _command(fx, data):
+    num = ord(fx) & 0x0F
+    return _tempo(command_of(num, ord(data[0]) if data else 0), False)
 
-    ``mt_rest`` checks for the end mark only after a row, so a pattern has at
-    least one.
-    """
-    rows = []
-    while mem[pos] or not rows:
-        ins = cmd = None
-        b = mem[pos]
-        if b < _FX:
-            ins, pos = b, pos + 1
-            b = mem[pos]
-        if b >= _PACKEDREST:
-            rows.append(Row(Rest(), ins, None, 0x100 - b))
-            pos += 1
-            continue
-        if b < _NOTE:
-            num, pos = b & 0x0F, pos + 1
-            data = 0
-            if num:
-                data, pos = mem[pos], pos + 1
-            cmd = _tempo(command_of(num, data), False)
-            if b >= _FXONLY:
-                rows.append(Row(Rest(), ins, cmd))
+
+@v_args(inline=True)
+class _Stream(Transformer):
+    """``streams.lark``'s streams as typed rows and orderlist entries."""
+
+    # pylint: disable=missing-function-docstring
+
+    def rest_run(self, byte):
+        return Rest(), None, 0x100 - ord(byte)
+
+    def note_only(self, byte):
+        return note_of(ord(byte)), None, 1
+
+    note_only_i = note_only
+
+    def fx_note(self, fx, *rest):
+        *data, note = rest
+        return note_of(ord(note)), _command(fx, data), 1
+
+    fx_note_i = fx_note
+
+    def fx_only(self, fx, *data):
+        return Rest(), _command(fx, data), 1
+
+    def first_row(self, *kids):
+        note, cmd, length = kids[-1]
+        return Row(note, ord(kids[0]) if len(kids) == 2 else None, cmd, length)
+
+    row = first_row
+
+    def pattern(self, *kids):
+        if isinstance(kids[-1], Row):
+            return Parsed(kids, None)
+        return Parsed(tuple(kids[:-1]), kids[-1].end_pos)
+
+    def orderlist(self, *tokens):
+        body, restart = tokens, None
+        if len(tokens) > 1 and tokens[-2].type == "LOOPSONG":
+            *body, _, restart = tokens
+        entries, k = [], 0
+        while k < len(body):
+            nxt = body[k + 1] if k + 1 < len(body) else None
+            if body[k].type == "PATTERN" and nxt is not None and nxt.type == "REPEAT":
+                entries += [entry_from_byte(ord(nxt)), entry_from_byte(ord(body[k]))]
+                k += 2
                 continue
-            b = mem[pos]
-        rows.append(Row(note_of(b), ins, cmd))
-        pos += 1
-    return tuple(rows), pos + 1
+            entries.append(entry_from_byte(ord(body[k])))
+            k += 1
+        if restart is None:
+            return Parsed(Orderlist(entries, 0), None)
+        return Parsed(Orderlist(entries, ord(restart)), restart.end_pos)
+
+
+STREAMS = ByteGrammar(
+    __package__, "streams.lark", ("pattern", "orderlist"), _Stream(), SidParseError
+)
+
+
+def stream_trees(mem, lay) -> list:
+    """``(name, rule, bytes)`` of every packed stream ``lay`` points at in ``mem``,
+    each its stored bytes (:func:`packed_orderlist`, :func:`pattern_rows`)."""
+    out = [(f"orderlist {k}", "orderlist", a) for k, a in enumerate(lay.order_addrs)]
+    out += [(f"pattern {k}", "pattern", a) for k, a in enumerate(lay.patt_addrs)]
+    read = {"orderlist": packed_orderlist, "pattern": pattern_rows}
+    return [(n, rule, bytes(mem[a : read[rule](mem, a)[1]])) for n, rule, a in out]
+
+
+def _reach(mem, pos, rule, cut=0):
+    window = bytes(mem[pos : pos + REACH - cut])
+    model, size = STREAMS.parse_prefix(window, rule)
+    return model, pos + (len(window) if size is None else size)
+
+
+def pattern_rows(mem, pos):
+    """One packed pattern at ``pos``: typed rows, and the address past its end mark
+    (or the cursor's reach).
+
+    A last row the cursor's reach cuts short wraps the cursor into the pattern's
+    own start, which no pattern of rows states: the rows end before it.
+    """
+    for cut in range(_ROW_MAX - 1):
+        try:
+            return _reach(mem, pos, "pattern", cut)
+        except SidParseError:
+            pass
+    return _reach(mem, pos, "pattern", _ROW_MAX - 1)
+
+
+def packed_orderlist(mem, pos):
+    """One packed orderlist at ``pos`` (a repeat trails the pattern it repeats), and
+    the address past its restart byte (or the cursor's reach)."""
+    return _reach(mem, pos, "orderlist")
 
 
 def pattern_bytes(rows) -> bytes:
@@ -366,7 +452,7 @@ def pattern_bytes(rows) -> bytes:
             if only:
                 continue
         out.append(note_byte(r.note))
-    return bytes(out + b"\0")
+    return bytes(out) if len(out) >= REACH else bytes(out + b"\0")
 
 
 # How a player reads a wavetable's left bytes: ``WAVE_NEW`` delays $01-$0F and
@@ -385,7 +471,7 @@ def _wave_editor(left, right, wave):
         return (C.WAVESILENT | left if silent else left), right ^ 0x80
     if wave:
         return (
-            C.WAVESILENT | left if 0 < left <= C.WAVELASTDELAY else left
+            C.WAVESILENT | left if C.WAVEDELAY <= left <= C.WAVELASTDELAY else left
         ), right ^ 0x80
     if left <= C.WAVELASTDELAY:
         return left, right ^ 0x80
@@ -555,6 +641,8 @@ def orderlist_bytes(orderlist) -> bytes:
         else:
             out.append(e.to_byte())
             k += 1
+    if len(out) >= REACH:
+        return bytes(out)
     return bytes(out + bytes([C.LOOPSONG, orderlist.restart]))
 
 

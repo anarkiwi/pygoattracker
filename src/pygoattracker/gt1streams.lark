@@ -1,0 +1,52 @@
+// GoatTracker V1.x song data streams as the playroutines and editors read them.
+// One latin-1 character per byte; gt1typed maps the tokens to operations per
+// playroutine family and release.
+
+// A packed pattern: a command row (note, instrument and command byte, data), a
+// note-only row that keeps the command, or a rest run; $FF after a row ends it.
+pattern: first_row row* END _TAIL?
+// A last pattern the end of the loaded data cuts short.
+pattern_cut: (first_row row*)? part?
+first_row: command_row | note_row | rest_run
+row: command_row | note_row | rest_run
+part: COMMAND BYTE?
+
+command_row: COMMAND BYTE BYTE
+note_row: NOTE_ONLY                     // the note is byte - $60
+rest_run: PACKEDREST                    // $100 - byte rows
+
+COMMAND: /[\x00-\x5f]/
+NOTE_ONLY: /[\x60-\xbf]/
+PACKEDREST: /[\xc0-\xfe]/
+END: /\xff/
+
+// An editor (GTS!) pattern: three-byte rows to the $FF end row.
+editor_pattern: editor_row* EDITOR_END BYTE BYTE
+editor_row: EDITOR_NOTE BYTE BYTE
+
+EDITOR_NOTE: /[\x00-\xfe]/
+EDITOR_END: /\xff/
+
+// Orderlists. The standard family (V1.3-V1.5x) reads $D0-$DF as a repeat and
+// $E0-$FE as a transpose; the musicroutine family (11.x, V0.9x) every byte as a
+// pattern. Ends: $FF and a restart entry (packed), or also the editor's old $FE
+// end mark (V1.25-V1.53 editor songs), or an end mark with no restart byte
+// (players before V1.15, V0.9x editor songs).
+std_loop: (PATTERN | REPEAT | TRANSPOSE)* LOOPSONG BYTE _TAIL?
+std_loop_old: (PATTERN | REPEAT | TRANSPOSE_LOW | OLDEND)* (LOOPSONG BYTE | OLDEND)
+std_end: (PATTERN | REPEAT | TRANSPOSE_LOW)* ENDMARK _TAIL?
+m11_loop: PATTERN_ANY* LOOPSONG BYTE _TAIL?
+m11_loop_old: (PATTERN_LOW | OLDEND)* (LOOPSONG BYTE | OLDEND)
+m11_end: PATTERN_LOW* ENDMARK _TAIL?
+
+PATTERN: /[\x00-\xcf]/
+REPEAT: /[\xd0-\xdf]/
+TRANSPOSE: /[\xe0-\xfe]/
+TRANSPOSE_LOW: /[\xe0-\xfd]/
+PATTERN_ANY: /[\x00-\xfe]/
+PATTERN_LOW: /[\x00-\xfd]/
+OLDEND: /\xfe/
+LOOPSONG: /\xff/
+ENDMARK: /[\xfe\xff]/
+
+%import bytes (BYTE, _TAIL)

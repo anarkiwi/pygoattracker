@@ -1,15 +1,20 @@
 """The goattracker1/goattracker2 ``pysidtracker`` format registrations."""
 
+from pathlib import Path
+
 import pytest
 from pysidtracker import discover_formats, maincli, recognize_format
 
+from pygoattracker import gt1streams, packed
+from pygoattracker.formats import GOATTRACKER1, GOATTRACKER2, gt1_streams, gt2_streams
 from pygoattracker.gt1 import DecompiledGt1, decompile_gt1
 from pygoattracker.gt1player import Gt1Player
 from pygoattracker.sid import DecompiledSid, decompile_sid
+from tests.conftest import pass_frames
 from tests.test_gt1 import make_song
 from tests.test_sid import LOAD, _minimal_packed, _psid
 
-FRAMES = 64
+DATA = Path(__file__).parent / "data"
 
 
 @pytest.fixture(name="formats")
@@ -42,8 +47,9 @@ def test_gt2_model_and_player(formats, gt2_raw):
     fmt = formats["goattracker2"]
     model = fmt.parser.parse(gt2_raw, subtune=0)
     assert isinstance(model, DecompiledSid)
-    grid = fmt.player(model).render_grid(FRAMES)
-    assert grid == decompile_sid(gt2_raw, subtune=0).player().render_grid(FRAMES)
+    frames = pass_frames(fmt.player(model))
+    grid = fmt.player(model).render_grid(frames)
+    assert grid == decompile_sid(gt2_raw, subtune=0).player().render_grid(frames)
 
 
 @pytest.mark.parametrize("subtune", [0, 1])
@@ -52,16 +58,18 @@ def test_gt1_model_and_player(formats, gt1_raw, subtune):
     model = fmt.parser.parse(gt1_raw, subtune=subtune)
     assert isinstance(model, DecompiledGt1)
     assert model.subtune == subtune
-    grid = fmt.player(model).render_grid(FRAMES)
+    frames = pass_frames(fmt.player(model))
+    grid = fmt.player(model).render_grid(frames)
     want = Gt1Player(decompile_gt1(gt1_raw, subtune), subtune=subtune)
-    assert grid == want.render_grid(FRAMES)
+    assert grid == want.render_grid(frames)
 
 
 def test_gt1_subtunes_render_differently(formats, gt1_raw):
     fmt = formats["goattracker1"]
+    models = [fmt.parser.parse(gt1_raw, subtune=k) for k in (0, 1)]
     grids = [
-        fmt.player(fmt.parser.parse(gt1_raw, subtune=k)).render_grid(FRAMES)
-        for k in (0, 1)
+        fmt.player(model).render_grid(pass_frames(fmt.player(model)))
+        for model in models
     ]
     assert grids[0] != grids[1]
 
@@ -112,3 +120,38 @@ def test_cli_info(tmp_path, capsys, gt2_raw):
     out = capsys.readouterr().out
     assert "format:   goattracker2" in out
     assert "patterns: 2" in out
+
+
+def _grammar(path, capsys) -> str:
+    assert maincli.main(["grammar", str(path)]) == 0
+    return capsys.readouterr().out
+
+
+def test_pysidtracker_grammar_lists_both_formats(tmp_path, capsys, gt1_raw):
+    out = _grammar(DATA / "gt2_minimal.sid", capsys)
+    assert out.startswith("orderlist 0:\n  orderlist PATTERN=$00 LOOPSONG=$ff")
+    gt1 = tmp_path / "gt1.sid"
+    gt1.write_bytes(gt1_raw)
+    assert "subtune 0 orderlist 0:" in _grammar(gt1, capsys)
+
+
+@pytest.mark.parametrize("name", ["gt2_full", "gt2_minimal"])
+def test_gt2_streams_are_the_stored_streams(name):
+    model = GOATTRACKER2.load((DATA / f"{name}.sid").read_bytes())
+    streams = gt2_streams(model)
+    assert len(streams) == len(model.info.layout.order_addrs) + len(
+        model.typed.patterns
+    )
+    for _, stream, rule in streams:
+        packed.STREAMS.parse_exact(stream.to_bytes(), rule)
+    assert [s.to_bytes()[-1] for n, s, _ in streams if n.startswith("pattern")] == [
+        0
+    ] * len(model.typed.patterns)
+
+
+def test_gt1_streams_pick_the_rule_of_a_cut_pattern(gt1_raw):
+    model = GOATTRACKER1.load(gt1_raw)
+    for _, stream, rule in gt1_streams(model):
+        gt1streams.STREAMS.parse_prefix(stream.to_bytes(), rule)
+    assert gt1streams.pattern_rule(b"\x60", False) == "pattern_cut"
+    assert gt1streams.pattern_rule(b"", True) == "editor_pattern"

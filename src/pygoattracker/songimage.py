@@ -124,8 +124,9 @@ class SongImage:
     """A packed song loading at :data:`BASE`: ``init`` takes the subtune, ``play``
     runs a frame's calls of ``entry`` (``mt_play``) until ``direct`` frames have
     played, then ``entry`` is the play; ``layout`` binds the spec, ``marks`` is
-    ``{address: channel}`` of each orderlist's loop mark and ``ghost`` the
-    first chip's ghost registers of a full-ghosting build."""
+    ``{address: channel}`` of each orderlist's loop mark, ``ghost`` the first
+    chip's ghost registers of a full-ghosting build and ``found`` the defines and
+    labels the layout was bound from."""
 
     data: bytes
     init: int
@@ -135,6 +136,7 @@ class SongImage:
     marks: dict
     direct: int | None = None
     ghost: int | None = None
+    found: Match | None = None
 
 
 class _Memory:
@@ -479,4 +481,6 @@ def song_image(
     )
     direct = 2 if build.calls == 1 and play != entry else None
     ghost = sym["ghostfreqlo"] if ghost else None
-    return SongImage(bytes(mem.data), init, play, entry, lay, marks, direct, ghost)
+    return SongImage(
+        bytes(mem.data), init, play, entry, lay, marks, direct, ghost, found
+    )

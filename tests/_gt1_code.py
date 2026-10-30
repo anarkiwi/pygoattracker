@@ -168,11 +168,16 @@ def assemble(src: str) -> tuple[bytes, dict]:
     return code, labels
 
 
+def source_of(name: str) -> str:
+    """The dasm source of archive build ``name``."""
+    return _source(*ARCHIVE[name])
+
+
 @lru_cache(maxsize=None)
 def code_of(name: str) -> bytes:
     """The assembled code of playroutine ``name``."""
     if name in ARCHIVE:
-        code, _ = assemble(_source(*ARCHIVE[name]))
+        code, _ = assemble(source_of(name))
         return code
     image = SidImage.from_bytes(resolve_tune(TUNES[name]).read_bytes())
     found = find_player(image.mem)

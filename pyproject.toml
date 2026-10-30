@@ -21,11 +21,12 @@ classifiers = [
 ]
 dependencies = [
     "lark>=1.2",
-    "pysidtracker>=0.42.0",
+    "pysidtracker>=0.46.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "pysidtracker[survey]>=0.46.0",
     "black>=24",
     "pylint>=3",
     "numpy>=1.23",

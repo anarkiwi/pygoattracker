@@ -1,0 +1,64 @@
+// GoatTracker 2 wavetable step (1-based pointer, left/right byte columns):
+// delay rows, waveform rows, silent rows, command rows (which skip the note
+// column) and $FF jumps; the note
+// column is relative (< $80), absolute (> $80) or unchanged ($80).
+spec gt2_wavetable;
+layout { wptr, wavetime, wave, note, freq_lo_w, freq_hi_w, wl, wr, freq_lo, freq_hi: addr; }
+const LASTDELAY = 0x0F;
+const SILENT = 0xE0;
+const LASTSILENT = 0xEF;
+const LASTCMD = 0xFE;
+const JUMP = 0xFF;
+cell wl: u8[256] @ L.wl - 1 ro;
+cell wr: u8[256] @ L.wr - 1 ro;
+cell freq_lo: u8[128] @ L.freq_lo ro;
+cell freq_hi: u8[128] @ L.freq_hi ro;
+
+machine chan[x in 0..3] {
+  cell wptr: u8 @ L.wptr + x;
+  cell wavetime: u8 @ L.wavetime + x;
+  cell wave: u8 @ L.wave + x;
+  cell note: u8 @ L.note + x;
+  cell freq: u16 @ (L.freq_lo_w + x, L.freq_hi_w + x);
+  signal skip: bool = false;
+  step {
+    if wptr == 0 {
+      return;
+    }
+    let w = wl[wptr];
+    let n = wr[wptr];
+    if w <= LASTDELAY {
+      if wavetime != w {
+        wavetime += 1;
+        return;
+      }
+    } elif w < SILENT {
+      wave := w;
+    } elif w <= LASTSILENT {
+      wave := w & 0x0F;
+    }
+    wavetime := 0;
+    wptr += 1;
+    if wl[wptr] == JUMP {
+      wptr := wr[wptr];
+    }
+    if w > LASTSILENT && w <= LASTCMD {
+      skip := true;
+      return;
+    }
+    if n != 0x80 {
+      if n < 0x80 {
+        n += note;
+      }
+      n &= 0x7F;
+      freq := word(freq_lo[n], freq_hi[n]);
+      skip := true;
+    }
+  }
+}
+
+schedule {
+  for c in 0..3 {
+    chan[c];
+  }
+}

@@ -1,0 +1,59 @@
+// GoatTracker 2 look-ahead row fetch on the gate-timer frame: gate off and,
+// unless the instrument is legato or has hard restart disabled, the hard-restart
+// ADSR goes straight to the SID before the note's tick 0.
+spec gt2_hardrestart;
+layout { tick, gatetimer, pattptr, pattern, instr, gate, newnote, trans, sid,
+         instr_gt, hr_ad, hr_sr: addr; }
+const REST = 0xBD;
+const LASTNOTE = 0xBC;
+const TONEPORTA = 3;
+cell instr_gt: u8[64] @ L.instr_gt ro;
+cell hr_ad: u8 @ L.hr_ad operand;
+cell hr_sr: u8 @ L.hr_sr operand;
+cell sid: u8[32] @ L.sid out;
+
+machine chan[x in 0..3] {
+  cell tick: u8 @ L.tick + x;
+  cell gatetimer: u8 @ L.gatetimer + x;
+  cell pattptr: u8 @ L.pattptr + x;
+  cell pattern: u16 @ (L.pattern + x, L.pattern + 3 + x);
+  cell instr: u8 @ L.instr + x;
+  cell gate: u8 @ L.gate + x;
+  cell newnote: u8 @ L.newnote + x;
+  cell trans: u8 @ L.trans + x;
+  step {
+    if tick == gatetimer {
+      fetch();
+    }
+  }
+  proc fetch() {
+    stream row = pattern @ pattptr;
+    let note = next row;
+    let ins = next row;
+    let cmd = next row;
+    row.pos += 1;
+    pattptr := row.pos;
+    if ins != 0 {
+      instr := ins;
+    }
+    if note > REST {
+      gate := note | 0xF0;
+    }
+    if note <= LASTNOTE {
+      newnote := note + trans;
+      if cmd != TONEPORTA && instr_gt[instr & 0x3F] & 0x40 == 0 {
+        gate := 0xFE;
+        if instr_gt[instr & 0x3F] & 0x80 == 0 {
+          sid[u16(x) * 7 + 5] := hr_ad;
+          sid[u16(x) * 7 + 6] := hr_sr;
+        }
+      }
+    }
+  }
+}
+
+schedule {
+  for c in 0..3 {
+    chan[c];
+  }
+}

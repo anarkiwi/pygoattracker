@@ -107,6 +107,7 @@ GOATTRACKER1 = SidFormat(
     probes=GT1_PROBES,
     grammar=gt1streams.STREAMS,
     streams=gt1_streams,
+    player_modules=("pygoattracker.gt1", "pygoattracker.gt1player"),
 )
 
 GOATTRACKER2 = SidFormat(
@@ -119,4 +120,9 @@ GOATTRACKER2 = SidFormat(
     grammar=packed.STREAMS,
     streams=gt2_streams,
     canonical=canonical,
+    player_modules=(
+        "pygoattracker.sid",
+        "pygoattracker.player",
+        "pygoattracker.packed",
+    ),
 )

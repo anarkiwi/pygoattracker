@@ -1,9 +1,10 @@
 """The goattracker1/goattracker2 ``pysidtracker`` format registrations."""
 
+import dataclasses
 from pathlib import Path
 
 import pytest
-from pysidtracker import discover_formats, maincli, recognize_format
+from pysidtracker import discover_formats, maincli, recognize_format, rendercache
 
 from pygoattracker import gt1streams, packed
 from pygoattracker.formats import GOATTRACKER1, GOATTRACKER2, gt1_streams, gt2_streams
@@ -155,3 +156,10 @@ def test_gt1_streams_pick_the_rule_of_a_cut_pattern(gt1_raw):
         gt1streams.STREAMS.parse_prefix(stream.to_bytes(), rule)
     assert gt1streams.pattern_rule(b"\x60", False) == "pattern_cut"
     assert gt1streams.pattern_rule(b"", True) == "editor_pattern"
+
+
+@pytest.mark.parametrize("fmt", [GOATTRACKER1, GOATTRACKER2])
+def test_render_cache_tracks_the_player_code(fmt):
+    """The render cache key covers the playroutine modules, not only formats.py."""
+    bare = dataclasses.replace(fmt, player_modules=())
+    assert rendercache.player_version(fmt) != rendercache.player_version(bare)

@@ -6,10 +6,14 @@ keeps its stored value, in the unit of the song's form (editor or packed, see
 """
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import NamedTuple
 
+from pysidtracker.bytegrammar import fits
+
 from pygoattracker._gt1_refs import PLAYERS
-from pygoattracker.errors import SngParseError
+from pygoattracker import gt1streams as streams
+from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
     ORDERLIST_LOOP_AFTER,
@@ -30,11 +34,12 @@ from pygoattracker.typed import (
     Row,
     Stop,
     WaveNote,
-    fits,
 )
 
-_KEYOFF, _REST, _NOCMD, _PACKEDREST, _END = 0x5E, 0x5F, 0x60, 0xC0, 0xFF
-_REPEAT, _TRANSDOWN, _TRANSUP, _OLD_END = 0xD0, 0xE0, 0xF0, 0xFE
+_fits = partial(fits, error=SngValidationError)
+
+_KEYOFF, _REST, _NOCMD, _END = 0x5E, 0x5F, 0x60, 0xFF
+_REPEAT, _TRANSDOWN, _TRANSUP = 0xD0, 0xE0, 0xF0
 
 # ---- commands: the low three bits of a row's command byte -------------------
 
@@ -207,15 +212,9 @@ def entry_byte(entry, zero: int = _TRANSUP) -> int:
 
 
 def _orderlist(blob: bytes, standard: bool, no_restart: bool, editor: bool, zero):
-    if no_restart or (editor and blob[-1] == _OLD_END):
-        body, end = blob[:-1], End(blob[-1])
-    else:
-        if len(blob) < 2 or blob[-2] != _END:
-            raise SngParseError(f"orderlist {bytes(blob).hex()} has no $FF end mark")
-        body, end = blob[:-2], Loop(blob[-1])
-    stops = () if editor else (_END, _OLD_END) if no_restart else (_END,)
-    if any(b in stops for b in body):
-        raise SngParseError(f"packed orderlist {bytes(blob).hex()} ends before its end")
+    rule = streams.order_rule(standard, editor, no_restart)
+    body, (kind, value) = streams.STREAMS.parse_exact(blob, rule)
+    end = Loop(value) if kind == "loop" else End(value)
     return Orderlist(tuple(entry_of(b, standard, zero) for b in body), end)
 
 
@@ -349,33 +348,21 @@ def _row_bytes(row: Row) -> bytes:
     )
 
 
-def editor_pattern(blob: bytes, cmds) -> Pattern:
-    """An editor pattern: three-byte rows and the ``$FF`` end row."""
-    rows = tuple(_row(*blob[k : k + 3], cmds) for k in range(0, len(blob) - 3, 3))
-    return Pattern(rows, bytes(blob[-3:]))
+def _typed_row(raw, cmds) -> Row:
+    kind, *values = raw
+    if kind == "cmd":
+        return _row(*values, cmds)
+    if kind == "note":
+        return Row(_note(values[0]))
+    return Row(Rest(), None, None, values[0])
 
 
-def packed_pattern(blob: bytes, cmds) -> Pattern:
-    """A packed pattern: three-byte rows, note-only rows that keep the command,
-    and rest runs; ``$FF`` after a row ends it."""
-    rows, pos = [], 0
-    while pos < len(blob) and not (rows and blob[pos] == _END):
-        byte = blob[pos]
-        if byte < _NOCMD:
-            if pos + 3 > len(blob):
-                break
-            rows.append(_row(*blob[pos : pos + 3], cmds))
-            pos += 3
-            continue
-        if byte == _END:
-            raise SngParseError("packed pattern opens with its end mark")
-        rows.append(
-            Row(_note(byte - _NOCMD))
-            if byte < _PACKEDREST
-            else Row(Rest(), None, None, 0x100 - byte)
-        )
-        pos += 1
-    return Pattern(tuple(rows), bytes(blob[pos:]))
+def pattern_of(blob: bytes, cmds, editor: bool) -> Pattern:
+    """An editor pattern (three-byte rows, the ``$FF`` end row) or a packed one
+    (note-only rows that keep the command and rest runs too; ``$FF`` after a row
+    ends it, else the end of the data cuts it)."""
+    rows, end = streams.pattern_rows(blob, editor)
+    return Pattern(tuple(_typed_row(r, cmds) for r in rows), end)
 
 
 def editor_pattern_bytes(pattern: Pattern) -> bytes:
@@ -423,7 +410,7 @@ class _Reading(NamedTuple):
 
     def pattern(self, blob: bytes) -> "Pattern":
         """The pattern ``blob`` holds."""
-        return (editor_pattern if self.editor else packed_pattern)(blob, self.cmds)
+        return pattern_of(blob, self.cmds, self.editor)
 
 
 _IMAGE = ("address", "author", "state", "data", "initialized", "segments")
@@ -487,21 +474,21 @@ class Gt1TypedSong:
         read = _Reading.of(self.player, self.layout)
         latin1 = (lambda s: s.encode("latin-1"), lambda raw: raw.decode("latin-1"))
         for text in (self.name, self.author, self.copyright):
-            fits(text, *latin1, "header")
-        fits(tuple(self.params), lambda p: p, tuple, "params")
+            _fits(text, *latin1, "header")
+        _fits(tuple(self.params), lambda p: p, tuple, "params")
         for num, ins in enumerate(self.instruments, 1):
             what = f"instrument {num}"
-            fits(ins, _ins_fields, lambda raw, n=ins.name: Instrument(*raw, n), what)
-            fits(ins.name, *latin1, what)
+            _fits(ins, _ins_fields, lambda raw, n=ins.name: Instrument(*raw, n), what)
+            _fits(ins.name, *latin1, what)
         for num, row in enumerate(self.wavetable, 1):
-            fits(
+            _fits(
                 row,
                 wave_pair,
                 lambda raw: wave_row(*raw, read.delays),
                 f"wavetable row {num}",
             )
         for num, step in enumerate(self.filtertable):
-            fits(
+            _fits(
                 step,
                 filter_bytes,
                 lambda raw: filter_step(*raw),
@@ -510,7 +497,7 @@ class Gt1TypedSong:
         for s_num, chans in enumerate(self.subtunes):
             for c_num, order in enumerate(chans):
                 encode = lambda o: _orderlist_bytes(o, read.zero)
-                fits(
+                _fits(
                     order, encode, read.orderlist, f"subtune {s_num} orderlist {c_num}"
                 )
         encode = editor_pattern_bytes if read.editor else packed_pattern_bytes
@@ -519,8 +506,8 @@ class Gt1TypedSong:
         first = lambda raw: next(iter(read.pattern(raw).rows), None)
         for p_num, pattern in enumerate(self.patterns):
             for r_num, row in enumerate(pattern.rows):
-                fits(row, alone, first, f"pattern {p_num} row {r_num}")
-            fits(pattern, encode, read.pattern, f"pattern {p_num}")
+                _fits(row, alone, first, f"pattern {p_num} row {r_num}")
+            _fits(pattern, encode, read.pattern, f"pattern {p_num}")
 
     def to_song(self, image: Gt1Song | None = None) -> Gt1Song:
         """The :class:`Gt1Song`, its player image from ``image`` (None: the

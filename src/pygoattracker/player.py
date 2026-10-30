@@ -1,8 +1,10 @@
 """GoatTracker 2 playroutine in Python.
 
 :class:`Player` is a :class:`pysidtracker.MemPlayer`: it inherits the
-flat memory image, the post-init snapshot, the diffing :meth:`play_frame` and the
-:meth:`render_grid`/:meth:`iter_frames` drivers, and implements only the two
+flat memory image, the post-init snapshot, the diffing
+:meth:`~pysidtracker.MemPlayer.play_frame` and the
+:meth:`~pysidtracker.MemPlayer.render_grid`/:meth:`~pysidtracker.MemPlayer.iter_frames`
+drivers, and implements only the two
 tracker-specific hooks -- :meth:`_init` (build the playroutine state and run the
 editor's reset) and :meth:`_frame` (advance one play call, writing this frame's
 SID registers into ``$D400``). Everything else here is a private transcription of
@@ -212,7 +214,6 @@ class Player(MemPlayer):
             for name, values in state.channels:
                 for chan, value in zip(self._channels, values):
                     setattr(chan, name, value)
-        self._wrapper_first = self.build.wrapper_flush
         self._effects = {
             constants.CMD_PORTAUP: self._porta_up,
             constants.CMD_PORTADOWN: self._porta_down,
@@ -228,9 +229,7 @@ class Player(MemPlayer):
         """Advance one play call, writing what it outputs to the SID memory.
 
         A play call runs :attr:`~pygoattracker.packed.Build.calls` player ticks. A
-        full-ghosting build outputs the ghost the previous tick left, then updates
-        it; a play-wrapper flush build starts from its all-zero ghost, so its first
-        frame carries a muted $D418.
+        full-ghosting build outputs the ghost the previous tick left, then updates it.
         """
         out = self.regs
         for _ in range(self.build.calls):
@@ -238,15 +237,20 @@ class Player(MemPlayer):
                 out = list(self._ghost)
                 self.regs = self._ghost
             self._play_call()
-        if self._wrapper_first:
-            out = list(out)
-            out[constants.MODE_VOL_REG] &= 0xF0
-            self._wrapper_first = False
         for chip, bank in ((0, out), *self._banks.items()):
             base = self.SID_BASE + chip * _CHIP
             self._mem[base : base + constants.SID_REGISTERS] = bytes(
                 v & 0xFF for v in bank
             )
+
+    def tick(self, sink: int | None = None) -> dict:
+        """One play call as ``{address: registers}`` blocks: the registers to
+        ``sink`` (a ghost a play wrapper flushes), else each chip's at its SID."""
+        self._frame()
+        if sink is not None:
+            return {sink: self.regs}
+        bases = (self.SID_BASE + chip * _CHIP for chip in (0, *self._banks))
+        return {b: self._mem[b : b + constants.SID_REGISTERS] for b in bases}
 
     def _bank(self, chip: int) -> list:
         """The register file of ``chip`` (``$20`` apart from ``$D400``)."""

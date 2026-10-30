@@ -205,6 +205,17 @@ def test_cli_text_and_back(tmp_path, capsys):
     assert read_sng(out) == rich_song()
 
 
+def test_cli_grammar_lists_packed_streams_and_refuses_a_sng(tmp_path, capsys):
+    assert cli.main(["grammar", str(DATA / "gt2_minimal.sid")]) == 0
+    out = capsys.readouterr().out
+    assert "orderlist 0:\n  orderlist PATTERN=$00 LOOPSONG=$ff BYTE=$00" in out
+    assert "      note_only_i NOTE_I=$90" in out
+    sng = tmp_path / "rich.sng"
+    sng.write_bytes(build_sng(rich_song()))
+    assert cli.main(["grammar", str(sng)]) == 1
+    assert "counted sections" in capsys.readouterr().err
+
+
 def test_cli_text_rejects_a_gt1_song(tmp_path, capsys):
     path = tmp_path / "old.sng"
     path.write_bytes(b"GTS!" + bytes(2000))

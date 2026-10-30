@@ -4,7 +4,8 @@
 (`scripts/oracle_hvsc.py`, i.e. `DecompiledSid.player()`) and asserts its per-frame
 SID register grid matches [`sidtrace`](https://github.com/anarkiwi/sidtrace) — a
 patched `sidplayfp` run in Docker — frame for frame, byte for byte, over the
-subtune's whole HVSC `Songlengths.md5` duration (pinned per tune in the test). The
+subtune's whole HVSC `Songlengths.md5` duration (`pysidtracker.testing.song_length`,
+read from `$HVSC` or the cached `.tunecache/DOCUMENTS/Songlengths.md5`). The
 oracle trace, framing and comparison are `pysidtracker.survey`'s, so a test
 passes exactly when the whole-HVSC survey calls that subtune `exact`.
 
@@ -72,7 +73,7 @@ pysid-tune-fetch --tests tests --tests tests/data/hvsc_goattracker_sample.txt --
 ## Whole-HVSC survey
 
 [`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
-(`pip install "pysidtracker[survey]>=0.36.0"`) compares every GoatTracker tune
+(`pip install "pysidtracker[survey]>=0.42.0"`) compares every GoatTracker tune
 in an HVSC tree against the oracle over each subtune's full HVSC song length.
 `scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
 `render` (`DecompiledSid.player()`), which the oracle tests above share; its `info` is the decoded

@@ -5,50 +5,29 @@ and :class:`~pygoattracker.gt1typed.Gt1TypedSong`, so each grammar states
 everything its song files and packed player data hold.
 """
 
-import dataclasses
 import json
 import re
-from functools import cache
-from importlib.resources import files
+from functools import partial
 
-from lark import Lark, Token, Transformer
-from lark.exceptions import LarkError, VisitError
+from pysidtracker.textgrammar import (
+    ModelTransformer,
+    TextGrammar,
+    classes as rule_classes,
+    hexint,
+    seq,
+    term,
+)
 
 from pygoattracker import constants as C
 from pygoattracker import gt1typed, model, typed
 from pygoattracker.errors import SngParseError
-
-
-def _classes(module, *extra) -> dict:
-    """Each dataclass of ``module`` (and ``extra``) by its grammar rule name."""
-    own = (
-        v
-        for v in vars(module).values()
-        if dataclasses.is_dataclass(v) and v.__module__ == module.__name__
-    )
-    return {
-        re.sub(r"(?<=[a-z])(?=[A-Z])", "_", cls.__name__).lower(): cls
-        for cls in (*own, *extra)
-    }
-
 
 _ORDER = (model.PlayPattern, model.Repeat, model.Transpose)
 _NOTES = range(C.LASTNOTE - C.FIRSTNOTE + 1)
 _GT1 = re.compile(r"(\s|#[^\n]*)*player\b")
 
 
-@cache
-def parser(grammar: str = "song.lark") -> Lark:
-    """The LALR parser of a grammar shipped with the package."""
-    return Lark(files("pygoattracker").joinpath(grammar).read_text(), parser="lalr")
-
-
-def _seq(items, base: int, what: str) -> tuple:
-    """The values of ``(index, value)`` items, checking they count up from ``base``."""
-    for want, (got, _) in enumerate(items, base):
-        if got != want:
-            raise SngParseError(f"{what} {got} where {want} is due")
-    return tuple(value for _, value in items)
+_seq = partial(seq, error=SngParseError)
 
 
 def _parts(children) -> dict:
@@ -59,32 +38,10 @@ def _parts(children) -> dict:
     return out
 
 
-class _Build(Transformer):
-    """Each constructor rule to its dataclass; terminals and rows as both grammars share them."""
+class _Build(ModelTransformer):
+    """Rows and table entries as both grammars share them."""
 
-    # pylint: disable=missing-function-docstring,invalid-name
-    classes: dict = {}
-
-    def __default__(self, data, children, _meta):
-        cls = self.classes[data]
-        given = {c.type.lower() for c in children if isinstance(c, Token)}
-        flags = {
-            f.name: f.name in given
-            for f in dataclasses.fields(cls)
-            if f.type in (bool, "bool")
-        }
-        return cls(*(c for c in children if not isinstance(c, Token)), **flags)
-
-    def INT(self, tok):
-        neg, digits = tok.startswith("-"), tok.lstrip("-")
-        value = int(digits[1:], 16) if digits.startswith("$") else int(digits)
-        return -value if neg else value
-
-    def STRING(self, tok):
-        return json.loads(tok)
-
-    def none(self, _):
-        return None
+    # pylint: disable=missing-function-docstring
 
     def note_name(self, children):
         return typed.Note(C.note_value(children[0]) - C.FIRSTNOTE)
@@ -113,7 +70,7 @@ class _Gt2Build(_Build):
     """``song.lark`` to a :class:`~pygoattracker.typed.TypedSong`."""
 
     # pylint: disable=missing-function-docstring
-    classes = _classes(typed, *_ORDER)
+    classes = rule_classes(typed, *_ORDER)
 
     def yes(self, _):
         return True
@@ -182,7 +139,7 @@ class _Gt1Build(_Build):
     """``gt1.lark`` to a :class:`~pygoattracker.gt1typed.Gt1TypedSong`."""
 
     # pylint: disable=missing-function-docstring
-    classes = _classes(
+    classes = rule_classes(
         gt1typed,
         *_ORDER,
         typed.Note,
@@ -251,6 +208,17 @@ class _Gt1Build(_Build):
         )
 
 
+_GRAMMARS = {
+    name: TextGrammar("pygoattracker", name, build, SngParseError)
+    for name, build in (("song.lark", _Gt2Build), ("gt1.lark", _Gt1Build))
+}
+
+
+def parser(grammar: str = "song.lark"):
+    """The LALR parser of a grammar shipped with the package."""
+    return _GRAMMARS[grammar].parser
+
+
 def loads(text: str):
     """Parse song text: a :class:`~pygoattracker.gt1typed.Gt1TypedSong` when it
     opens with ``player``, else a :class:`~pygoattracker.typed.TypedSong`.
@@ -258,72 +226,43 @@ def loads(text: str):
     :raises SngParseError: if the text is not in the grammar.
     :raises SngValidationError: if a value does not fit its field.
     """
-    gt1 = _GT1.match(text) is not None
-    lalr = parser("gt1.lark" if gt1 else "song.lark")
-    try:
-        song = (_Gt1Build if gt1 else _Gt2Build)().transform(lalr.parse(text))
-    except VisitError as exc:
-        raise SngParseError(str(exc.orig_exc)) from exc.orig_exc
-    except LarkError as exc:
-        raise SngParseError(str(exc)) from exc
+    song = _GRAMMARS["gt1.lark" if _GT1.match(text) else "song.lark"].loads(text)
     song.check()
     return song
 
 
-def _int(value: int) -> str:
-    return f"-${-value:02X}" if value < 0 else f"${value:02X}"
-
-
 def _ints(values) -> str:
-    return " ".join(_int(v) for v in values)
-
-
-def _term(value) -> str:
-    """A constructor term: ``Name``, or ``Name(arg, ...)`` with true flags by name."""
-    if value is None:
-        return "none"
-    if isinstance(value, int):
-        return _int(value)
-    args = []
-    for f in dataclasses.fields(value):
-        arg = getattr(value, f.name)
-        if isinstance(arg, bool):
-            if arg:
-                args.append(f.name)
-        else:
-            args.append(_term(arg))
-    name = type(value).__name__
-    return f"{name}({', '.join(args)})" if args else name
+    return " ".join(hexint(v) for v in values)
 
 
 def _note(note) -> str:
     if isinstance(note, typed.Gate) or (
         isinstance(note, typed.Note) and note.pitch not in _NOTES
     ):
-        return _term(note)
+        return term(note)
     return C.note_name(typed.note_byte(note))
 
 
 def _row(row: typed.Row) -> str:
     parts = [_note(row.note)]
     if row.instrument is not None:
-        parts.append(_int(row.instrument))
+        parts.append(hexint(row.instrument))
     if row.command is not None:
-        parts.append(_term(row.command))
+        parts.append(term(row.command))
     if row.length != 1:
-        parts.append(f"*{_int(row.length)}")
+        parts.append(f"*{hexint(row.length)}")
     return " ".join(parts)
 
 
 def _instrument(num: int, ins: typed.Instrument) -> str:
     return (
-        f"instrument {_int(num)} {json.dumps(ins.name)} ad {_int(ins.attack_decay)}"
-        f" sr {_int(ins.sustain_release)} wave {_int(ins.wave_ptr)}"
-        f" pulse {_int(ins.pulse_ptr)} filter {_int(ins.filter_ptr)}"
-        f" vibrato {_int(ins.vibrato_speed)} delay {_int(ins.vibrato_delay)}"
-        f" gate {_int(ins.gate_timer)}"
+        f"instrument {hexint(num)} {json.dumps(ins.name)} ad {hexint(ins.attack_decay)}"
+        f" sr {hexint(ins.sustain_release)} wave {hexint(ins.wave_ptr)}"
+        f" pulse {hexint(ins.pulse_ptr)} filter {hexint(ins.filter_ptr)}"
+        f" vibrato {hexint(ins.vibrato_speed)} delay {hexint(ins.vibrato_delay)}"
+        f" gate {hexint(ins.gate_timer)}"
         f" {'hardrestart' if ins.hard_restart else 'nohardrestart'}"
-        f"{' legato' if ins.legato else ''} first {_term(ins.first_wave)}"
+        f"{' legato' if ins.legato else ''} first {term(ins.first_wave)}"
     )
 
 
@@ -337,16 +276,16 @@ def _dumps_gt2(song: typed.TypedSong) -> list:
         out.append("simplepulse")
     if song.freq or song.firstnote:
         out.append(
-            f"firstnote {_int(song.firstnote)} freq "
+            f"firstnote {hexint(song.firstnote)} freq "
             + " ".join(f"${f:04X}" for f in song.freq)
         )
     if song.speed0 is not None:
-        out.append(f"speed0 {_term(song.speed0)}")
+        out.append(f"speed0 {term(song.speed0)}")
     for num, sub in enumerate(song.subtunes):
-        out.append(f"\nsubtune {_int(num)}")
+        out.append(f"\nsubtune {hexint(num)}")
         out += [
-            f"  orderlist {' '.join(_term(e) for e in o.entries)}"
-            f" restart {_int(o.restart)}"
+            f"  orderlist {' '.join(term(e) for e in o.entries)}"
+            f" restart {hexint(o.restart)}"
             for o in sub.channels
         ]
     out.append("")
@@ -354,10 +293,10 @@ def _dumps_gt2(song: typed.TypedSong) -> list:
     for name in ("wavetable", "pulsetable", "filtertable", "speedtable"):
         out.append(f"\n{name}")
         out += [
-            f"  {_int(n)}: {_term(r)}" for n, r in enumerate(getattr(song, name), 1)
+            f"  {hexint(n)}: {term(r)}" for n, r in enumerate(getattr(song, name), 1)
         ]
     for num, rows in enumerate(song.patterns):
-        out.append(f"\npattern {_int(num)}")
+        out.append(f"\npattern {hexint(num)}")
         out += [f"  {_row(r)}" for r in rows]
     return out
 
@@ -375,29 +314,29 @@ def _dumps_gt1(song: gt1typed.Gt1TypedSong) -> list:
         out.append("packed")
     out.append(f"params {_ints(song.params)}".rstrip())
     for num, chans in enumerate(song.subtunes):
-        out.append(f"\nsubtune {_int(num)}")
+        out.append(f"\nsubtune {hexint(num)}")
         out += [
-            "  orderlist " + " ".join(_term(e) for e in (*o.entries, o.end))
+            "  orderlist " + " ".join(term(e) for e in (*o.entries, o.end))
             for o in chans
         ]
     out.append("")
     out += [
-        f"instrument {_int(n)} {json.dumps(i.name)} ad {_int(i.attack_decay)}"
-        f" sr {_int(i.sustain_release)} pulse {_int(i.pulse)}"
-        f" speed {_int(i.pulse_speed)} low {_int(i.pulse_low)}"
-        f" high {_int(i.pulse_high)} filter {_int(i.filter)} wave {_int(i.wave_ptr)}"
+        f"instrument {hexint(n)} {json.dumps(i.name)} ad {hexint(i.attack_decay)}"
+        f" sr {hexint(i.sustain_release)} pulse {hexint(i.pulse)}"
+        f" speed {hexint(i.pulse_speed)} low {hexint(i.pulse_low)}"
+        f" high {hexint(i.pulse_high)} filter {hexint(i.filter)} wave {hexint(i.wave_ptr)}"
         for n, i in enumerate(song.instruments, 1)
     ]
     out.append("\nwavetable")
-    out += [f"  {_int(n)}: {_term(r)}" for n, r in enumerate(song.wavetable, 1)]
+    out += [f"  {hexint(n)}: {term(r)}" for n, r in enumerate(song.wavetable, 1)]
     if song.filtertable or song.filtertail:
         out.append("\nfiltertable")
-        out += [f"  {_int(n)}: {_term(s)}" for n, s in enumerate(song.filtertable)]
+        out += [f"  {hexint(n)}: {term(s)}" for n, s in enumerate(song.filtertable)]
         if song.filtertail:
             out.append(f"  tail {_ints(song.filtertail)}")
     default = b"\xff\x00\x00" if song.editor else b"\xff"
     for num, pattern in enumerate(song.patterns):
-        out.append(f"\npattern {_int(num)}")
+        out.append(f"\npattern {hexint(num)}")
         out += [f"  {_row(r)}" for r in pattern.rows]
         if pattern.end != default:
             out.append(f"  end {_ints(pattern.end)}".rstrip())

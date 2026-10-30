@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from pysidtracker import render_player_wav, run_cli, seconds_to_frames
+from pysidtracker.cli import add_grammar_command
 
 from pygoattracker import audio, constants, convert, ninja, reglog
 from pygoattracker.errors import GoatTrackerError
@@ -126,6 +127,22 @@ def _sid2sng(args) -> None:
     print(f"wrote {args.output}")
 
 
+def _sng2sid(args) -> None:
+    from pygoattracker import text
+    from pygoattracker.gt1typed import Gt1TypedSong
+    from pygoattracker.rebuild import song_into_sid
+
+    data = Path(args.song).read_bytes()
+    if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
+        song = read_sng(data)
+    else:
+        song = text.loads(data.decode())
+    if isinstance(song, (Gt1Song, Gt1TypedSong)):
+        raise GoatTrackerError("a GoatTracker V1.x song has no GoatTracker 2 player")
+    Path(args.output).write_bytes(song_into_sid(Path(args.sid).read_bytes(), song))
+    print(f"wrote {args.output}")
+
+
 def _typed(data: bytes, subtune: int):
     """The typed song of a .sng, or of a packed GoatTracker 2 or V1.x .sid."""
     from pygoattracker import gt1, sid
@@ -167,6 +184,27 @@ def _fromtext(args) -> None:
     else:
         data = song.to_song().to_sid()
     Path(args.output).write_bytes(data)
+
+
+def _grammar(args) -> None:
+    from types import SimpleNamespace
+
+    from pygoattracker.formats import GOATTRACKER1, GOATTRACKER2
+
+    data = Path(args.song).read_bytes()
+    if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
+        song = read_sng(data)
+        if not isinstance(song, Gt1Song):
+            raise GoatTrackerError(
+                "a GoatTracker 2 .sng holds counted sections, not streams"
+            )
+        fmt, model = GOATTRACKER1, SimpleNamespace(song=song)
+    else:
+        try:
+            fmt, model = GOATTRACKER2, GOATTRACKER2.load(data, args.subtune)
+        except GoatTrackerError:
+            fmt, model = GOATTRACKER1, GOATTRACKER1.load(data, args.subtune)
+    print("\n".join(fmt.listing(model)))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -212,6 +250,14 @@ def _parser() -> argparse.ArgumentParser:
     sid2sng.add_argument("--subtune", type=int, default=0)
     sid2sng.set_defaults(func=_sid2sng)
 
+    sng2sid = commands.add_parser(
+        "sng2sid", help="write a .sng or song text into a packed .sid's player"
+    )
+    sng2sid.add_argument("sid", help="packed GoatTracker 2 .sid file")
+    sng2sid.add_argument("song", help=".sng or song text file")
+    sng2sid.add_argument("output", help=".sid file to write")
+    sng2sid.set_defaults(func=_sng2sid)
+
     totext = commands.add_parser(
         "text", help="print a .sng or packed .sid in its song grammar"
     )
@@ -228,6 +274,10 @@ def _parser() -> argparse.ArgumentParser:
     fromtext.add_argument("text", help="song text file")
     fromtext.add_argument("output", help=".sng or .sid file to write")
     fromtext.set_defaults(func=_fromtext)
+
+    add_grammar_command(
+        commands, _grammar, song_help="packed GoatTracker .sid or V1.x GTS! song"
+    )
     return parser
 
 

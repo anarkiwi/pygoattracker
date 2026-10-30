@@ -28,7 +28,7 @@ from pygoattracker.packed import Build, PlayerState
 from pygoattracker.player import Player, iter_frames
 from pygoattracker.typed import TypedSong
 
-from tests.conftest import add_test_instrument, basic_song, note
+from tests.conftest import add_test_instrument, basic_song, note, pass_frames
 
 C4_FREQ = constants.FREQ_TABLE[48]
 
@@ -38,6 +38,11 @@ def started(song, **kwargs) -> Player:
     player = Player(song, **kwargs)
     player.play_frame()
     return player
+
+
+def whole(song, **kwargs) -> int:
+    """Play calls of one whole pass of ``song`` (:func:`pass_frames`)."""
+    return pass_frames(Player(song, **kwargs))
 
 
 def play(player: Player, frames: int):
@@ -694,7 +699,10 @@ def test_until_loop(song):
 
 
 def test_max_frames(song):
-    assert len(list(iter_frames(song, max_frames=10))) == 10
+    once = list(iter_frames(song, until_loop=True))
+    assert list(iter_frames(song, max_frames=len(once))) == once
+    twice = list(iter_frames(song, max_frames=2 * len(once)))
+    assert len(twice) == 2 * len(once) and twice[: len(once)] == once
 
 
 def test_zero_length_orderlist_stops():
@@ -704,7 +712,7 @@ def test_zero_length_orderlist_stops():
     assert len(player.play_frame()) == constants.SID_REGISTERS
     assert player.play_frame() == []
     assert not player.playing
-    assert len(list(iter_frames(song, max_frames=10))) == 1
+    assert len(list(iter_frames(song))) == 1
 
 
 def test_gatetimer_too_high_stops(song):
@@ -829,8 +837,9 @@ def ghost_state(registers=None, volume=0x0F, **kwargs):
 
 
 def test_ghost_build_outputs_each_call_one_call_late(song):
-    plain = Player(song).render_grid(40)
-    ghost = Player(song, state=ghost_state()).render_grid(41)
+    frames = whole(song)
+    plain = Player(song).render_grid(frames)
+    ghost = Player(song, state=ghost_state()).render_grid(frames + 1)
     assert ghost[0] == plain[0]
     assert ghost[1:] == plain
 
@@ -869,8 +878,9 @@ def test_ghost_voice_bytes_are_the_channel_variables(song):
 
 
 def test_chip_state_seeds_the_variables_without_a_ghost(song):
-    plain = Player(song).render_grid(40)
-    assert Player(song, state=ghost_state(ghost=False)).render_grid(40) == plain
+    frames = whole(song)
+    plain = Player(song).render_grid(frames)
+    assert Player(song, state=ghost_state(ghost=False)).render_grid(frames) == plain
     regs = [0] * constants.SID_REGISTERS
     regs[0:2] = [0xE8, 0x03]
     player = Player(song, state=ghost_state(regs, ghost=False))
@@ -896,11 +906,10 @@ def test_chip_state_song_init_call_outputs_its_register_loads(song):
     plain = Player(song, state=ghost_state(regs, ghost=False))
     assert {*init} <= {*play(loads, 1)[0]}
     assert {*init}.isdisjoint(play(plain, 1)[0])
-    grid = Player(song, state=ghost_state(regs, ghost=False, init=init)).render_grid(40)
-    assert (
-        grid[1:]
-        == Player(song, state=ghost_state(regs, ghost=False)).render_grid(40)[1:]
-    )
+    frames = whole(song)
+    grid = Player(song, state=ghost_state(regs, ghost=False, init=init))
+    plain = Player(song, state=ghost_state(regs, ghost=False))
+    assert grid.render_grid(frames)[1:] == plain.render_grid(frames)[1:]
 
 
 def test_state_seeds_the_calculated_speed_notes_init_keeps():
@@ -961,13 +970,14 @@ def test_default_tempo_is_the_build_s():
         {"adparam": 0xF0F0, "default_tempo": 3},
         {"optimize_pulse": False, "optimize_realtime": False, "pulse_step": 2},
         {"simplepulse": True, "live_vibrato": True},
-        {"wrapper_flush": True, "init_regs": ((0x0E, 0xFF),)},
+        {"init_regs": ((0x0E, 0xFF),)},
     ],
 )
 def test_a_build_plays_as_its_keyword_options(song, options):
     built = Player(song, build=Build(**options))
     assert built.build == Build(**options)
-    assert built.render_grid(60) == Player(song, **options).render_grid(60)
+    frames = whole(song, **options)
+    assert built.render_grid(frames) == Player(song, **options).render_grid(frames)
 
 
 def test_keyword_options_override_the_build(song):
@@ -997,22 +1007,24 @@ def test_a_wave_pointer_wrapping_past_the_last_entry_reads_a_cleared_step(song):
 
 
 def test_voices_route_each_channel_s_registers(song):
-    plain = Player(song).render_grid(20)
-    routed = Player(song, voices=(14, None, 0)).render_grid(20)
+    frames = whole(song)
+    plain = Player(song).render_grid(frames)
+    routed = Player(song, voices=(14, None, 0)).render_grid(frames)
     for want, got in zip(plain, routed):
         assert got[14:21] == want[0:7] and got[0:7] == want[14:21]
         assert got[7:14] == [0] * 7
 
 
 def test_idle_channels_never_play(song):
-    grid = Player(song, idle=(1,)).render_grid(20)
+    grid = Player(song, idle=(1,)).render_grid(whole(song))
     assert all(row[7:14] == [0] * 7 for row in grid)
     assert any(row[0:7] != [0] * 7 for row in grid)
 
 
 def test_calls_run_that_many_ticks_a_frame(song):
-    one = Player(song).render_grid(41)
-    assert Player(song, calls=2).render_grid(20) == one[1::2]
+    frames = whole(song, calls=2)
+    one = Player(song).render_grid(2 * frames + 1)
+    assert Player(song, calls=2).render_grid(frames) == one[1::2]
 
 
 def test_six_channels_play_two_chips_with_a_filter_each():
@@ -1023,15 +1035,16 @@ def test_six_channels_play_two_chips_with_a_filter_each():
     song.subtunes[0].channels = [Orderlist() for _ in range(5)]
     song.subtunes[0].channels.append(Orderlist(entries=[PlayPattern(1)]))
     player = Player(song)
-    player.render_grid(20)
+    player.render_grid(whole(song))
     first, second = (bytes(player._mem[a : a + 21]) for a in (0xD400, 0xD420))
     assert first[:14] == second[:14] and len(player.loops) == 6
     assert player._mem[0xD416] == 0 and player._mem[0xD436] == 0x77
 
 
 def test_overlay_masks_each_channel_s_control_byte(song):
-    plain = Player(song).render_grid(20)
-    masked = Player(song, overlay=((0, 0), None, (0x0F, 0x10))).render_grid(20)
+    frames = whole(song)
+    plain = Player(song).render_grid(frames)
+    masked = Player(song, overlay=((0, 0), None, (0x0F, 0x10))).render_grid(frames)
     for want, got in zip(plain, masked):
         assert got[4] == 0 and got[11] == want[11]
         assert got[18] == want[18] & 0x0F | 0x10

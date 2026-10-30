@@ -6,11 +6,14 @@ keeps its stored value, in the unit of the song's form (editor or packed, see
 """
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import NamedTuple
+
+from pysidtracker.bytegrammar import fits
 
 from pygoattracker._gt1_refs import PLAYERS
 from pygoattracker import gt1streams as streams
-from pygoattracker.errors import SngParseError
+from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
     ORDERLIST_LOOP_AFTER,
@@ -31,8 +34,9 @@ from pygoattracker.typed import (
     Row,
     Stop,
     WaveNote,
-    fits,
 )
+
+_fits = partial(fits, error=SngValidationError)
 
 _KEYOFF, _REST, _NOCMD, _END = 0x5E, 0x5F, 0x60, 0xFF
 _REPEAT, _TRANSDOWN, _TRANSUP = 0xD0, 0xE0, 0xF0
@@ -470,21 +474,21 @@ class Gt1TypedSong:
         read = _Reading.of(self.player, self.layout)
         latin1 = (lambda s: s.encode("latin-1"), lambda raw: raw.decode("latin-1"))
         for text in (self.name, self.author, self.copyright):
-            fits(text, *latin1, "header")
-        fits(tuple(self.params), lambda p: p, tuple, "params")
+            _fits(text, *latin1, "header")
+        _fits(tuple(self.params), lambda p: p, tuple, "params")
         for num, ins in enumerate(self.instruments, 1):
             what = f"instrument {num}"
-            fits(ins, _ins_fields, lambda raw, n=ins.name: Instrument(*raw, n), what)
-            fits(ins.name, *latin1, what)
+            _fits(ins, _ins_fields, lambda raw, n=ins.name: Instrument(*raw, n), what)
+            _fits(ins.name, *latin1, what)
         for num, row in enumerate(self.wavetable, 1):
-            fits(
+            _fits(
                 row,
                 wave_pair,
                 lambda raw: wave_row(*raw, read.delays),
                 f"wavetable row {num}",
             )
         for num, step in enumerate(self.filtertable):
-            fits(
+            _fits(
                 step,
                 filter_bytes,
                 lambda raw: filter_step(*raw),
@@ -493,7 +497,7 @@ class Gt1TypedSong:
         for s_num, chans in enumerate(self.subtunes):
             for c_num, order in enumerate(chans):
                 encode = lambda o: _orderlist_bytes(o, read.zero)
-                fits(
+                _fits(
                     order, encode, read.orderlist, f"subtune {s_num} orderlist {c_num}"
                 )
         encode = editor_pattern_bytes if read.editor else packed_pattern_bytes
@@ -502,8 +506,8 @@ class Gt1TypedSong:
         first = lambda raw: next(iter(read.pattern(raw).rows), None)
         for p_num, pattern in enumerate(self.patterns):
             for r_num, row in enumerate(pattern.rows):
-                fits(row, alone, first, f"pattern {p_num} row {r_num}")
-            fits(pattern, encode, read.pattern, f"pattern {p_num}")
+                _fits(row, alone, first, f"pattern {p_num} row {r_num}")
+            _fits(pattern, encode, read.pattern, f"pattern {p_num}")
 
     def to_song(self, image: Gt1Song | None = None) -> Gt1Song:
         """The :class:`Gt1Song`, its player image from ``image`` (None: the

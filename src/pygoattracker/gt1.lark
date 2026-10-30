@@ -67,10 +67,7 @@ filter_slide: "FilterSlide" "(" INT "," INT "," INT ")"
 filter_tail: "tail" INT+
 
 NOTE_NAME: /[A-G][-#][0-9]/
-INT: /-?(\$[0-9A-Fa-f]+|[0-9]+)/
 RELATIVE: "relative"
-STRING: /"(\\.|[^"\\])*"/
-COMMENT: /#[^\n]*/
-%import common.WS
+%import text (INT, STRING, COMMENT, WS)
 %ignore WS
 %ignore COMMENT

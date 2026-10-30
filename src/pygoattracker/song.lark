@@ -99,11 +99,8 @@ calculated_speed: "CalculatedSpeed" "(" INT "," INT ")"
 none: "none"
 
 NOTE_NAME: /[A-G][-#][0-9]/
-INT: /-?(\$[0-9A-Fa-f]+|[0-9]+)/
 CHANNEL: "channel"
 RELATIVE: "relative"
-STRING: /"(\\.|[^"\\])*"/
-COMMENT: /#[^\n]*/
-%import common.WS
+%import text (INT, STRING, COMMENT, WS)
 %ignore WS
 %ignore COMMENT

@@ -460,9 +460,9 @@ def test_the_anchor_is_that_of_the_player_the_init_ran(monkeypatch):
     monkeypatch.setattr(
         sid,
         "player_span",
-        lambda image, data, reached=None: types.SimpleNamespace(
+        lambda image, data: types.SimpleNamespace(
             start=0x1800 if data < 0x2000 else None
         ),
     )
-    assert sid._played_anchor(None, anchors[1], {0x1800}) == anchors[0]
-    assert sid._played_anchor(None, anchors[1], {0x1000}) == anchors[1]
+    assert sid._played_anchor(None, anchors[1], {0x1800}.__contains__) == anchors[0]
+    assert sid._played_anchor(None, anchors[1], {0x1000}.__contains__) == anchors[1]

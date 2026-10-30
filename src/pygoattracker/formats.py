@@ -2,7 +2,8 @@
 
 ``goattracker1`` (:class:`~pygoattracker.gt1.Gt1SidParser`) and ``goattracker2``
 (:class:`~pygoattracker.sid.GoatTrackerSidParser`) on the ``pysidtracker.formats``
-entry-point group make ``pysidtracker info|reglog|wav`` play packed GoatTracker tunes.
+entry-point group make ``pysidtracker info|reglog|wav|grammar`` (and, for GT2,
+``equiv``) work on packed GoatTracker tunes.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ import numpy as np
 from pysidtracker import MemPlayer, SidError, SidFormat, survey
 from pysidtracker.cadence import playroutine_cadence
 
-from pygoattracker import text
+from pygoattracker import gt1streams, packed, text
+from pygoattracker.canonical import canonical
 from pygoattracker.gt1 import DecompiledGt1, Gt1SidParser
 from pygoattracker.gt1typed import Gt1TypedSong
 from pygoattracker.packed import Build
@@ -122,6 +124,30 @@ def _grid(model, parser) -> bytes:
     return b"".join(out)
 
 
+class Stored(bytes):
+    """A stream's stored bytes, as a byte-grammar listing's model."""
+
+    def to_bytes(self) -> bytes:
+        """The bytes themselves."""
+        return bytes(self)
+
+
+def _stored(streams) -> list:
+    """``(name, model, rule)`` of ``(name, rule, bytes)`` streams."""
+    return [(name, Stored(raw), rule) for name, rule, raw in streams]
+
+
+def gt2_streams(model: DecompiledSid) -> list:
+    """The packed orderlists and patterns the layout points at, as stored."""
+    mem = model.image.mem if model.memory is None else model.memory
+    return _stored(packed.stream_trees(mem, model.info.layout))
+
+
+def gt1_streams(model) -> list:
+    """The orderlists and patterns of ``model.song``, a V1.x song."""
+    return _stored(gt1streams.stream_trees(model.song))
+
+
 GT2_PROBES = {
     "typed": lambda model: text.dumps(model.typed),
     "repack": lambda model: model.repack(),
@@ -141,6 +167,8 @@ GOATTRACKER1 = SidFormat(
     describe=_describe_gt1,
     metadata=_metadata,
     probes=GT1_PROBES,
+    grammar=gt1streams.STREAMS,
+    streams=gt1_streams,
 )
 
 GOATTRACKER2 = SidFormat(
@@ -150,4 +178,7 @@ GOATTRACKER2 = SidFormat(
     describe=_describe_gt2,
     metadata=_metadata,
     probes=GT2_PROBES,
+    grammar=packed.STREAMS,
+    streams=gt2_streams,
+    canonical=canonical,
 )

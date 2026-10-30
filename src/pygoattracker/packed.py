@@ -399,10 +399,11 @@ STREAMS = ByteGrammar(
 
 def stream_trees(mem, lay) -> list:
     """``(name, rule, bytes)`` of every packed stream ``lay`` points at in ``mem``,
-    each read as far as an 8-bit cursor reaches."""
+    each its stored bytes (:func:`packed_orderlist`, :func:`pattern_rows`)."""
     out = [(f"orderlist {k}", "orderlist", a) for k, a in enumerate(lay.order_addrs)]
     out += [(f"pattern {k}", "pattern", a) for k, a in enumerate(lay.patt_addrs)]
-    return [(name, rule, bytes(mem[a : a + REACH])) for name, rule, a in out]
+    read = {"orderlist": packed_orderlist, "pattern": pattern_rows}
+    return [(n, rule, bytes(mem[a : read[rule](mem, a)[1]])) for n, rule, a in out]
 
 
 def _reach(mem, pos, rule, cut=0):

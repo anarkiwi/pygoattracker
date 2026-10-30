@@ -131,7 +131,9 @@ pattern (greloc writes no end mark after a 256-byte pattern), an orderlist with
 no `$FF` in reach wraps to its start (restart 0, written back without an end),
 and a last row the reach cuts short wraps the cursor into the pattern's own
 start, which rows cannot state, so the rows end before it.
-`pygoattracker grammar tune.sid` prints every stream's parse tree.
+`pysidtracker grammar tune.sid` (or `pygoattracker grammar`, which also reads
+V1.x `GTS!` songs) prints every stream's parse tree: `SidFormat.listing` of the
+`streams` hook, each orderlist and pattern as stored.
 
 Two extra transforms apply: a packed tempo `t >= 3` is stored as `t − 1`, and
 the instrument and table columns depend on the build (NOWAVEDELAY,
@@ -200,6 +202,48 @@ and no wavetable sets it to AD (the editor's convention).
 | `FilterSet` | set passband/resonance/routing; a following `CutoffSet` executes in the same tick |
 | `Jump(r)` / `Stop` | continue at r / halt this program; a pointer that *starts* on a jump stops the song |
 | `WaveCommand` | runs a pattern command for one tick (commands 0, 8 and E stop the song) |
+
+### Canonical text
+
+`canonical.canonical(model)` (the `goattracker2` `canonical` hook behind
+`pysidtracker equiv A B` and the `canonical` snapshot probe) prints what one
+subtune plays in this grammar, so two tunes have the same text exactly when the
+player runs the same programs on them:
+
+- **reachable only**: the model's subtune (the one the player starts), the
+  patterns its orderlists play, instrument 1 (every channel's initial instrument)
+  and the instruments the rows name, the table rows those instruments' pointers and
+  the `Set*Ptr` / wavetable commands start, followed as the executor walks on.
+- **read as played**: patterns as editor rows (each row states its command;
+  command 0's data dropped), instrument vibrato speed only with a delay, names
+  dropped, the tuning the player reads per note as `freq` (zero for entries no
+  pattern note under a transpose, wavetable note on one, or the note after
+  either can read: past the packed table they read neighbouring song data).
+- **tables as automata**: a node is a row as the executor runs it (a row reached
+  through a jump runs as its bytes read, a `FilterSet` takes a `CutoffSet` right
+  after it), its successor the next row or that row's `Jump` target, none after a
+  `Stop`; a pointer set onto a jump row is its own node (it stops the song). Rows
+  with the same label sequence are merged by `pysidtracker.automaton.minimise`
+  (wavetable labels name pulse and filter classes, speedtable rows by value).
+- **renumbered by first use**: patterns by first play, instruments by first use
+  (equal ones share a number), table rows by `number_chains` from the rows
+  instruments then patterns start (pulse and filter then wavetable commands),
+  laid out with a `Jump`/`Stop` row wherever a successor does not follow;
+  speedtable rows by first use, equal ones shared.
+
+The playback build (with the starting tempo the player derives from instrument
+63), initial state and play wrapper precede it as `#` lines. Equal text means
+equal play; different text can still play alike where two spellings do the same
+(`Repeat(1) P` and `P P` in an orderlist, a wrapper at another address). V1.x has
+no hook:
+its wavetable jumps are relative to each instrument's own table, its pulse is an
+instrument program and its filter a step chain, so its executors need their own
+node and successor definitions.
+
+`pygoattracker sng2sid tune.sid tune.sng out.sid` writes a song back into a packed
+tune's player (`rebuild.song_into_sid`), as its greloc packed it, so
+`pysidtracker equiv tune.sid out.sid` checks a `.sng` round trip;
+[`scripts/equiv_hvsc.py`](../scripts/equiv_hvsc.py) runs it over a tune list.
 
 ## Dialects
 

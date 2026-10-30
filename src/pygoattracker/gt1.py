@@ -737,12 +737,15 @@ def decompile_gt1(
 
 @dataclass
 class DecompiledGt1:
-    """A decompiled GoatTracker V1.x ``.sid``: the song, its PSID header and subtune."""
+    """A decompiled GoatTracker V1.x ``.sid``: the song, its PSID header and subtune.
+    ``wrapped`` is set where ``sid`` carries the loader's own header, for a bare
+    ``.prg``/``.bin``."""
 
     song: Gt1Song
     header: SidHeader
     subtune: int = 0
     sid: bytes | None = None
+    wrapped: bool = False
 
     def player(self) -> Gt1Player:
         """A :class:`~pygoattracker.gt1player.Gt1Player` of this subtune on its tune."""
@@ -765,7 +768,8 @@ class Gt1SidParser(BaseSidParser):
         load_address = kwargs.get("load_address")
         song = decompile_gt1(data, subtune, load_address)
         sid = as_psid(data, load_address)
-        return DecompiledGt1(song, parse_sid_header(sid), subtune, sid)
+        wrapped = bytes(data[:4]) not in (b"PSID", b"RSID")
+        return DecompiledGt1(song, parse_sid_header(sid), subtune, sid, wrapped)
 
     def recognize(self, image: SidImage):
         return find_player(image.mem)

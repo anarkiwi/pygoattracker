@@ -98,7 +98,6 @@ TABLEJUMP = 0xFF
 
 # SID register map (offsets within the chip's 25 registers).
 SID_REGISTERS = SID_REG_COUNT
-VOICES = 3
 VOICE_REG_SIZE = 7
 FREQ_LO_REG = 0x00
 FREQ_HI_REG = 0x01

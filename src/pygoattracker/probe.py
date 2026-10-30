@@ -37,7 +37,6 @@ _VOICE_AD = [_AD + v * C.VOICE_REG_SIZE for v in range(C.MAX_CHN)]
 _VOICE_CTRL = [_CTRL + v * C.VOICE_REG_SIZE for v in range(C.MAX_CHN)]
 _CUTOFF, _MODEVOL = 0x16, 0x18
 _FILTCTRL = 0xF1
-_RESFILT = 0x17
 # A note's envelope and first frame; the hard restart's ADSR shows against them.
 _BASE = dict(ad=0x5A, sr=0xC3, wave=1, pulse=0, filt=0, vib=0, vibdelay=0)
 _BASE.update(gate=1, first=0x09)

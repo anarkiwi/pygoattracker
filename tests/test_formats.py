@@ -10,10 +10,10 @@ from pygoattracker.formats import GOATTRACKER1, GOATTRACKER2, gt1_streams, gt2_s
 from pygoattracker.gt1 import DecompiledGt1, decompile_gt1
 from pygoattracker.gt1player import Gt1Player
 from pygoattracker.sid import DecompiledSid, decompile_sid
+from tests.conftest import pass_frames
 from tests.test_gt1 import make_song
 from tests.test_sid import LOAD, _minimal_packed, _psid
 
-FRAMES = 64
 DATA = Path(__file__).parent / "data"
 
 
@@ -47,8 +47,9 @@ def test_gt2_model_and_player(formats, gt2_raw):
     fmt = formats["goattracker2"]
     model = fmt.parser.parse(gt2_raw, subtune=0)
     assert isinstance(model, DecompiledSid)
-    grid = fmt.player(model).render_grid(FRAMES)
-    assert grid == decompile_sid(gt2_raw, subtune=0).player().render_grid(FRAMES)
+    frames = pass_frames(fmt.player(model))
+    grid = fmt.player(model).render_grid(frames)
+    assert grid == decompile_sid(gt2_raw, subtune=0).player().render_grid(frames)
 
 
 @pytest.mark.parametrize("subtune", [0, 1])
@@ -57,16 +58,18 @@ def test_gt1_model_and_player(formats, gt1_raw, subtune):
     model = fmt.parser.parse(gt1_raw, subtune=subtune)
     assert isinstance(model, DecompiledGt1)
     assert model.subtune == subtune
-    grid = fmt.player(model).render_grid(FRAMES)
+    frames = pass_frames(fmt.player(model))
+    grid = fmt.player(model).render_grid(frames)
     want = Gt1Player(decompile_gt1(gt1_raw, subtune), subtune=subtune)
-    assert grid == want.render_grid(FRAMES)
+    assert grid == want.render_grid(frames)
 
 
 def test_gt1_subtunes_render_differently(formats, gt1_raw):
     fmt = formats["goattracker1"]
+    models = [fmt.parser.parse(gt1_raw, subtune=k) for k in (0, 1)]
     grids = [
-        fmt.player(fmt.parser.parse(gt1_raw, subtune=k)).render_grid(FRAMES)
-        for k in (0, 1)
+        fmt.player(model).render_grid(pass_frames(fmt.player(model)))
+        for model in models
     ]
     assert grids[0] != grids[1]
 

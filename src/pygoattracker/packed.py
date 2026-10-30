@@ -470,7 +470,7 @@ def _wave_editor(left, right, wave):
         return (C.WAVESILENT | left if silent else left), right ^ 0x80
     if wave:
         return (
-            C.WAVESILENT | left if 0 < left <= C.WAVELASTDELAY else left
+            C.WAVESILENT | left if C.WAVEDELAY <= left <= C.WAVELASTDELAY else left
         ), right ^ 0x80
     if left <= C.WAVELASTDELAY:
         return left, right ^ 0x80

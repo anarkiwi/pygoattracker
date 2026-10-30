@@ -52,6 +52,8 @@ class Gt1Player(MemPlayer):
     """Play a decompiled :class:`~pygoattracker.gt1.Gt1Song` one play call per frame.
 
     Instantiating ``Gt1Player`` picks the transcription of the song's playroutine.
+    :attr:`loops` counts, per channel offset the sequencer has read, the times its
+    orderlist looped or ended.
     """
 
     MASK_PW_HI = True
@@ -75,6 +77,7 @@ class Gt1Player(MemPlayer):
         self._songhi = tables["songtblhi"]
         self._pattlo = tables["patttbllo"]
         self._patthi = tables["patttblhi"]
+        self.loops: dict = {}
         self._setup(tables)
         super().__init__(image, address, subtune)
 
@@ -99,6 +102,9 @@ class Gt1Player(MemPlayer):
 
     def _sid(self, reg: int, value: int) -> None:
         self._mem[_SID + reg] = value & 0xFF
+
+    def _looped(self, x: int) -> None:
+        self.loops[x] += 1
 
     def _init(self, subtune: int) -> None:
         if not self._song.initialized:
@@ -422,6 +428,7 @@ class _Player15(Gt1Player):
         self._loadregs(x)
 
     def _sequencer(self, x: int) -> None:
+        self.loops.setdefault(x, 0)
         song = self._v(SONGNUM, x)
         base = self._rd(self._songlo + song) | self._rd(self._songhi + song) << 8
         if self._v(REPEAT, x):
@@ -438,6 +445,7 @@ class _Player15(Gt1Player):
                 elif self._loop_after:
                     self._set(TRANS, x, acc - 0xEF)
                 elif acc == _LOOPSONG:
+                    self._looped(x)
                     pos = self._rd(base + pos)
                 else:
                     self._set(TRANS, x, acc - 0xF0)
@@ -445,6 +453,7 @@ class _Player15(Gt1Player):
                 raise GoatTrackerError("GT1 orderlist never reaches a pattern")
             self._set(PATTNUM, x, acc)
             if self._loop_after and self._rd(base + pos) == _LOOPSONG:
+                self._looped(x)
                 pos = self._rd(base + ((pos + 1) & 0xFF))
             self._set(SONGPTR, x, pos)
         self._set(PATTPTR, x, self._v(PATTPTR, x) + 1)
@@ -634,6 +643,9 @@ class _Player11(Gt1Player):
         base = self._g(M_SONGLO, x) | self._g(M_SONGHI, x) << 8
         pos = self._g(M_SONGPTR, x)
         acc = self._rd(base + pos)
+        self.loops.setdefault(x, 0)
+        if acc == _LOOPSONG or self._endsong and acc == _ENDSONG:
+            self._looped(x)
         if self._sfx:
             if acc == _LOOPSONG:
                 self._s(M_SONGPTR, x, self._rd(base + ((pos + 1) & 0xFF)))
@@ -1058,6 +1070,7 @@ class _Player14(Gt1Player):
         song = self._g(F_SONGNUM, x)
         base = self._rd(self._songlo + song) | self._rd(self._songhi + song) << 8
         pos = self._g(F_SONGPTR, x)
+        self.loops.setdefault(x, 0)
         for _ in range(_SEQ_GUARD):
             acc = self._rd(base + pos)
             pos = (pos + 1) & 0xFF
@@ -1068,6 +1081,7 @@ class _Player14(Gt1Player):
             elif acc < _LOOPSONG:
                 self._s(F_TRANS, x, acc - 0xF0)
             else:
+                self._looped(x)
                 pos = self._rd(base + pos)
         else:
             raise GoatTrackerError("GT1 orderlist never reaches a pattern")

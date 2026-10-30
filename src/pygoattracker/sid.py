@@ -85,7 +85,8 @@ class PackedInfo:
     ``firstnote + n``; ``note_read`` is what the packed player reads for each
     note index 0-127, the tuning and the bytes around it, which is what a
     :class:`~pygoattracker.player.Player` takes as its ``freq_table``;
-    ``playback`` is what ``build`` and the song data resolve to.
+    ``playback`` is what ``build`` and the song data resolve to; ``code`` the
+    ``[start, end)`` of the player's own code.
     """
 
     firstnote: int = 0
@@ -98,6 +99,7 @@ class PackedInfo:
     playback: Build = field(default_factory=Build)
     state: PlayerState | None = None
     wrap: Wrap | None = None
+    code: tuple | None = None
 
     @property
     def nowavedelay(self) -> bool:
@@ -569,6 +571,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)
     info.wrap = wrap
+    info.code = probe.span
     decoded = DecompiledSid(song, info, header, subtune, typed, image, mem)
     return _finish(decoded, t.song)
 

@@ -13,6 +13,18 @@ The `Player` is a `pysidtracker.MemPlayer`, so `render_grid(nframes)` is exactly
 the grid the oracle compares: one frame per play-routine interrupt, starting
 with the call that only initialises the song, so the grids align exactly.
 
+## Spec proofs
+
+`tests/test_gt2_inplace.py` (also `oracle`) binds `specs/goattracker.play` in place to
+the playroutine source matched in a real tune's code (`tests/_gt2match.py`, its
+match trees built at test time from the pinned GoatTracker 2 release archives,
+never committed) and asserts, after every call of the whole song, that the RAM
+outside the stack page and I/O and the SID registers equal the tune's own 6502 run.
+It also proves the channel row reader (`chan[0].getnewnote`) equal to Hammurabi's
+`mt_getnewnote` for all initial memory with `pysidtracker.playspec.tv.validate`.
+`scripts/spec_memcheck.py $HVSC tunes.csv --player V2 --jobs N` runs the same
+check (GoatTracker 2 through `tests/_gt2inplace.py`) over a survey's subtunes.
+
 ## Variations covered
 
 Each tune is a distinct GoatTracker play-routine / packed-decode variation, all

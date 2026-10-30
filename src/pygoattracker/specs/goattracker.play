@@ -1,0 +1,987 @@
+// GoatTracker 2 packed playroutine (player.s / altplayer.s, V2.34-V2.76, mono and
+// stereo). One play call: the full-ghosting build first outputs last call's ghost
+// registers; a pending song start resets the variables and starts each channel,
+// else each chip's filter step runs, then each channel's tick. Every L.* is a
+// label, define or table of the matched source (pygoattracker.gt2spec); channel
+// variables sit 7 bytes apart, immediates the player rewrites are operand cells.
+spec goattracker;
+
+layout {
+  songptr, trans, repeat, pattptr, packedrest, newfx, newparam, fx, param,
+  newnote, waveptr, wave, pulseptr, pulsetime, songnum, pattnum, tempo, counter,
+  note, instr, gate, vibtime, vibdelay, wavetime, freqlo, freqhi, pulselo,
+  pulsehi, adv, srv, gatetimer, lastnote: addr;
+  initsongnum, filtstep, filttime, filtcutoff, filtctrl, filttype, filtstep2,
+  filttime2, filtcutoff2, filtctrl2, filttype2, masterfader, tick0jump1,
+  tick0jump2, effectjump, effectnum, speedcmp, cscount, csresty, wavetick0jump,
+  author: addr;
+  ins_ad, ins_sr, ins_wave, ins_pulse, ins_filt, ins_vibparam, ins_vibdelay,
+  ins_gate, ins_first, wavetbl, notetbl, pulsetimetbl, pulsespdtbl, filttimetbl,
+  filtspdtbl, speedleft, speedright, songlo, songhi, pattlo, patthi, freqlo_t,
+  freqhi_t, tick0tbl, effecttbl, funktbl, temp, sid, ghost, regs, regs2, voice,
+  voice2, adout, adout2, srout, srout2, ctrlout, ctrlout2: addr;
+  nchan, nfilt, resetlen, ntempo, deftempo, adparam, srparam, firstnohr,
+  firstlegato, firstwave, gateparam: byte;
+  t0_0, t0_12, t0_34, t0_5, t0_6, t0_7, t0_8, t0_9, t0_a, t0_b, t0_c, t0_d, t0_e,
+  t0_f, e_0, e_4, e_3, e_12: byte;
+  h0_0, h0_12, h0_34, h0_5, h0_6, h0_7, h0_8, h0_9, h0_a, h0_b, h0_c, h0_d, h0_e,
+  h0_f, he_4, he_3, he_12: flag;
+  noeffects, noinstrvib, novib, notoneporta, noportamento, nocalcspeed,
+  nonormalspeed, nozerospeed, nowavedelay, nowavecmd, nopulse, nopulsemod,
+  nofilter, nofiltermod, nofunktempo, nochanneltempo, noglobaltempo, notrans,
+  norepeat, nogate, fixedparams, nofirstwavecmd, noauthorinfo, buffered, ghosted,
+  fullghost, simplepulse, pulseopt, realtimeopt, directwave, songs, hrinstr,
+  nohrinstr, legato, effectnumop, alt, stereo, pulse2x, livegate, zeroskip,
+  initloadregs, vibzero, vibstop, novibinit: flag;
+  exec: list;
+}
+
+const FX = 0x40;
+const FXONLY = 0x50;
+const NOTE = 0x60;
+const REST = 0xBD;
+const PACKEDREST = 0xC0;
+const TONEPORTA = 3;
+const REPEAT = 0xD0;
+const TRANSDOWN = 0xE0;
+const TRANS = 0xF0;
+const LOOP = 0xFF;
+const END = 0;
+const TICK0FX = 1;
+const WAVE = 2;
+const WAVECMD = 3;
+const WAVEDONE = 4;
+const SPEED = 5;
+const NOTEFREQ = 6;
+const DONE = 7;
+const FETCH = 8;
+const LOAD = 9;
+const WAVEONLY = 10;
+
+// Song data, 1-based by instrument or table pointer; a cell named <t>1 reads
+// mt_<t>-1,y, <t>0 mt_<t>,y and <t>2 mt_<t>-2,y.
+cell i_ad: u8[256] @ L.ins_ad ro;
+cell i_sr: u8[256] @ L.ins_sr ro;
+cell i_wave: u8[256] @ L.ins_wave ro;
+cell i_pulse: u8[256] @ L.ins_pulse ro;
+cell i_filt: u8[256] @ L.ins_filt ro;
+cell i_vibparam: u8[256] @ L.ins_vibparam ro;
+cell i_vibdelay: u8[256] @ L.ins_vibdelay ro;
+cell i_gate: u8[256] @ L.ins_gate ro;
+cell i_first: u8[256] @ L.ins_first ro;
+cell wave1: u8[256] @ L.wavetbl ro;
+cell wave0: u8[256] @ L.wavetbl + 1 ro;
+cell wave2: u8[256] @ L.wavetbl - 1 ro;
+cell note1: u8[256] @ L.notetbl ro;
+cell note2: u8[256] @ L.notetbl - 1 ro;
+cell ptime1: u8[256] @ L.pulsetimetbl ro;
+cell ptime0: u8[256] @ L.pulsetimetbl + 1 ro;
+cell pspd1: u8[256] @ L.pulsespdtbl ro;
+cell ftime1: u8[256] @ L.filttimetbl ro;
+cell ftime0: u8[256] @ L.filttimetbl + 1 ro;
+cell fspd1: u8[256] @ L.filtspdtbl ro;
+cell sleft: u8[256] @ L.speedleft ro;
+cell sright: u8[256] @ L.speedright ro;
+cell song: ptr[256] @ (L.songlo, L.songhi) ro;
+cell patt: ptr[256] @ (L.pattlo, L.patthi) ro;
+cell flo: u8[256] @ L.freqlo_t ro;
+cell fhi: u8[256] @ L.freqhi_t ro;
+cell flo1: u8[256] @ L.freqlo_t + 1 ro;
+cell fhi1: u8[256] @ L.freqhi_t + 1 ro;
+cell tick0tbl: u8[16] @ L.tick0tbl ro;
+cell effecttbl: u8[5] @ L.effecttbl ro;
+
+// Shared work cells: the zero-page pointer, the funktempo table, every channel's
+// tempo (a global tempo sets all), the timing mark and the register files.
+cell funk: u8[2] @ L.funktbl;
+cell temp: u16 @ L.temp;
+cell temp1: u8 @ L.temp;
+cell temp2: u8 @ L.temp + 1;
+cell tempos: u8[64] @ L.tempo;
+cell timing: u8 @ L.author + 31;
+cell chip: u8[25] @ L.sid out;
+cell ghost: u8[25] @ L.ghost;
+cell regs: u8[25] @ L.regs;
+cell regs2: u8[25] @ L.regs2;
+
+cell initsongnum: u8 @ L.initsongnum operand;
+cell masterfader: u8 @ L.masterfader operand;
+cell tick0jump1: u8 @ L.tick0jump1 operand;
+cell tick0jump2: u8 @ L.tick0jump2 operand;
+cell effectjump: u8 @ L.effectjump operand;
+cell effectnum: u8 @ L.effectnum operand;
+cell speedcmp: u8 @ L.speedcmp operand;
+cell cscount: u8 @ L.cscount operand;
+cell csresty: u8 @ L.csresty operand;
+cell wavetick0jump: u8 @ L.wavetick0jump operand;
+
+// mt_play: the full-ghosting copy, then the song start a pending init number asks.
+machine play {
+  signal start: bool = false;
+  signal song: u8 = 0;
+  step {
+    if L.fullghost {
+      for r in 0..25 {
+        chip[r] := ghost[r];
+      }
+    }
+    let y = initsongnum;
+    if neg(y) {
+      return;
+    }
+    start := true;
+    song := y;
+    for k in 0..L.resetlen + 1 {
+      mem[L.songptr + k] := 0;
+    }
+    if !L.ghosted && !L.stereo {
+      if L.nchan == 2 {
+        regs[0x12] := 0;
+      }
+      if L.nchan == 1 {
+        regs[0x0B] := 0;
+        regs[0x12] := 0;
+      }
+    }
+    for f in 0..L.nfilt {
+      mem[L.regs + f * (L.regs2 - L.regs) + 0x15] := 0;
+      mem[L.filtctrl + f * (L.filtctrl2 - L.filtctrl)] := 0;
+    }
+    if !L.nofilter {
+      for f in 0..L.nfilt {
+        mem[L.filtstep + f * (L.filtstep2 - L.filtstep)] := 0;
+      }
+    }
+    initsongnum := 0xFF;
+  }
+}
+
+// The filter step of chip f: cutoff, routing/resonance and type|volume.
+machine filter[f in 0..L.nfilt] {
+  cell fstep: u8 @ L.filtstep + f * (L.filtstep2 - L.filtstep) operand;
+  cell ftime: u8 @ L.filttime + f * (L.filttime2 - L.filttime) operand;
+  cell cutoff: u8 @ L.filtcutoff + f * (L.filtcutoff2 - L.filtcutoff) operand;
+  cell ctrl: u8 @ L.filtctrl + f * (L.filtctrl2 - L.filtctrl) operand;
+  cell ftype: u8 @ L.filttype + f * (L.filttype2 - L.filttype) operand;
+  cell out: u8[25] @ L.regs + f * (L.regs2 - L.regs);
+  step {
+    if !L.nofilter {
+      let y = fstep;
+      if y != 0 {
+        let modulate = !L.nofiltermod && ftime != 0;
+        if !modulate {
+          let b = ftime1[y];
+          if b == 0 {
+            cutoff := fspd1[y];
+          } elif !L.nofiltermod && !neg(b) {
+            ftime := b;
+            modulate := true;
+          } else {
+            ftype := b << 1;
+            ctrl := fspd1[y];
+            if ftime0[y] == 0 {
+              y += 1;
+              cutoff := fspd1[y];
+            }
+          }
+        }
+        let next = true;
+        if modulate {
+          cutoff := fspd1[y] + cutoff;
+          ftime -= 1;
+          next := ftime == 0;
+        }
+        if next {
+          let jump = ftime0[y] == LOOP;
+          y += 1;
+          fstep := ite(jump, fspd1[y], y);
+        }
+      }
+      out[0x16] := cutoff;
+    }
+    out[0x17] := ctrl;
+    out[0x18] := ftype | masterfader;
+  }
+}
+
+machine chan[x in 0..L.nchan] {
+  cell songptr: u8 @ L.songptr + 7 * x;
+  cell trans: u8 @ L.trans + 7 * x;
+  cell repeat: u8 @ L.repeat + 7 * x;
+  cell pattptr: u8 @ L.pattptr + 7 * x;
+  cell packedrest: u8 @ L.packedrest + 7 * x;
+  cell newfx: u8 @ L.newfx + 7 * x;
+  cell newparam: u8 @ L.newparam + 7 * x;
+  cell fx: u8 @ L.fx + 7 * x;
+  cell param: u8 @ L.param + 7 * x;
+  cell newnote: u8 @ L.newnote + 7 * x;
+  cell waveptr: u8 @ L.waveptr + 7 * x;
+  cell wave: u8 @ L.wave + 7 * x;
+  cell pulseptr: u8 @ L.pulseptr + 7 * x;
+  cell pulsetime: u8 @ L.pulsetime + 7 * x;
+  cell songnum: u8 @ L.songnum + 7 * x;
+  cell pattnum: u8 @ L.pattnum + 7 * x;
+  cell counter: u8 @ L.counter + 7 * x;
+  cell note: u8 @ L.note + 7 * x;
+  cell instr: u8 @ L.instr + 7 * x;
+  cell gate: u8 @ L.gate + 7 * x;
+  cell vibtime: u8 @ L.vibtime + 7 * x;
+  cell vibdelay: u8 @ L.vibdelay + 7 * x;
+  cell wavetime: u8 @ L.wavetime + 7 * x;
+  cell freqlo: u8 @ L.freqlo + 7 * x;
+  cell freqhi: u8 @ L.freqhi + 7 * x;
+  cell pulselo: u8 @ L.pulselo + 7 * x;
+  cell pulsehi: u8 @ L.pulsehi + 7 * x;
+  cell adv: u8 @ L.adv + 7 * x;
+  cell srv: u8 @ L.srv + 7 * x;
+  cell gatetimer: u8 @ L.gatetimer + 7 * x;
+  cell lastnote: u8 @ L.lastnote + 7 * x;
+  cell adout: u8 @ L.adout + 7 * x + x / 3 * (L.adout2 - L.adout - 21);
+  cell srout: u8 @ L.srout + 7 * x + x / 3 * (L.srout2 - L.srout - 21);
+  cell ctrlout: u8 @ L.ctrlout + 7 * x + x / 3 * (L.ctrlout2 - L.ctrlout - 21);
+  cell voice: u8[7] @ L.voice + 7 * x + x / 3 * (L.voice2 - L.voice - 21) out;
+
+  // The rest of the call, one stage after another (each stage once in the
+  // code): k names the next stage, ka/ky/kn its operands.
+  signal k: u8 = 0;
+  signal ka: u8 = 0;
+  signal ky: u8 = 0;
+  signal kn: u8 = 0;
+
+  step {
+    if play.start {
+      initchn();
+      return;
+    }
+    counter -= 1;
+    if counter == 0 {
+      tick0();
+    } else {
+      if neg(counter) {
+        let a = tempos[7 * x];
+        if !L.nofunktempo && a < 2 {
+          tempos[7 * x] := a ^ 1;
+          a := funk[a] - 1;
+        }
+        counter := a;
+      }
+      k := WAVE;
+    }
+    if k == TICK0FX {
+      tick0cmd(newfx, newparam, ky);
+      k := kn;
+    }
+    if k == WAVE {
+      waveexec();
+    }
+    if k == WAVECMD {
+      tick0cmd(kn, ka, kn);
+      k := DONE;
+    }
+    if k == WAVEDONE {
+      wavedone();
+    }
+    if k == SPEED {
+      speedparam(ka, ky);
+    }
+    if k == NOTEFREQ {
+      if !L.nocalcspeed {
+        lastnote := kn;
+      }
+      if !L.novib {
+        vibtime := 0;
+      }
+      freqlo := flo[kn];
+      freqhi := fhi[kn];
+      k := DONE;
+    }
+    if k == DONE {
+      done();
+    }
+    if k == FETCH {
+      getnewnote();
+    }
+    if k == LOAD {
+      loadregs();
+    } elif k == WAVEONLY {
+      waveonly();
+    }
+  }
+
+  // mt_initchn: the channel's song index, default tempo and instrument 1.
+  proc initchn() {
+    if L.songs {
+      songnum := play.song + x;
+    }
+    tempos[7 * x] := L.deftempo;
+    counter := 1;
+    instr := 1;
+    if L.alt {
+      loadregswave();
+    } else {
+      waveonly();
+    }
+  }
+
+  // mt_tick0: the tick-0 jumps, the orderlist step and the new note's init.
+  proc tick0() {
+    if !L.noeffects {
+      let j = tick0tbl[newfx];
+      tick0jump1 := j;
+      tick0jump2 := j;
+    }
+    if pattptr == 0 {
+      sequencer();
+    }
+    nonewpatt();
+  }
+
+  // mt_sequencer: loop, transpose and repeat, then the next pattern; a repeat
+  // still counting holds the song position and plays the pattern again.
+  proc sequencer() {
+    temp := song[songnum];
+    stream ord = temp @ songptr grammar "pygoattracker.packed:STREAMS:orderlist";
+    let a = ord[0];
+    if a == LOOP {
+      ord.pos := ord[1];
+      a := ord[0];
+    }
+    if !L.notrans && a >= TRANSDOWN {
+      trans := a - TRANS;
+      ord.pos += 1;
+      a := ord[0];
+    }
+    if !L.norepeat && a >= REPEAT {
+      repeat += 1;
+      if a - REPEAT != repeat {
+        return;
+      }
+      repeat := 0;
+    } else {
+      pattnum := a;
+    }
+    ord.pos += 1;
+    songptr := ord.pos;
+  }
+
+  // mt_nonewpatt: the gate timer, then the new note's init or the tick-0 effect
+  // (TICK0FX, the instrument in ky, then stage kn).
+  proc nonewpatt() {
+    let y = instr;
+    ky := y;
+    if !L.fixedparams && !L.livegate {
+      gatetimer := ite(L.directwave, i_gate[y] & 0x7F, i_gate[y]);
+    }
+    if newnote == 0 {
+      tick0fx(WAVE);
+      return;
+    }
+    note := newnote - NOTE;
+    if !L.noeffects && !(L.notoneporta && L.noportamento && L.novib) {
+      fx := 0;
+    }
+    newnote := 0;
+    if !L.noinstrvib {
+      vibdelay := i_vibdelay[y];
+      if !L.noeffects && !L.novibinit {
+        param := i_vibparam[y];
+      }
+    }
+    if !L.notoneporta && newfx == TONEPORTA {
+      tick0fx(WAVE);
+      return;
+    }
+    firstwave(y);
+    if !L.nopulse && i_pulse[y] != 0 {
+      pulseptr := i_pulse[y];
+      if !L.nopulsemod {
+        pulsetime := 0;
+      }
+    }
+    if !L.nofilter && i_filt[y] != 0 {
+      filtptr(i_filt[y]);
+    }
+    waveptr := i_wave[y];
+    if L.alt {
+      adout := i_ad[y];
+      srout := i_sr[y];
+    } else {
+      srout := i_sr[y];
+      adout := i_ad[y];
+    }
+    if L.directwave && neg(i_gate[y]) {
+      tick0fx(WAVE);
+    } elif L.alt && !L.buffered {
+      tick0fx(END);
+    } elif L.buffered || L.initloadregs {
+      tick0fx(LOAD);
+    } else {
+      tick0fx(WAVEONLY);
+    }
+  }
+  proc tick0fx(then: u8) {
+    if L.noeffects {
+      k := then;
+    } else {
+      k := TICK0FX;
+      kn := then;
+    }
+  }
+
+  // mt_newnoteinit's waveform and gate (FIXEDPARAMS: one waveform for all).
+  proc firstwave(y: u8) {
+    let a = ite(L.fixedparams, L.firstwave, i_first[y]);
+    if !L.fixedparams && (L.zeroskip || !L.nofirstwavecmd) && a == 0 {
+      altwave();
+      return;
+    }
+    if !L.fixedparams && !L.nofirstwavecmd && a >= 0xFE {
+      gate := a;
+      altwave();
+      return;
+    }
+    wave := a;
+    if L.alt && !L.buffered && L.nofirstwavecmd {
+      ctrlout := a;
+    }
+    if L.legato || !L.nofirstwavecmd {
+      gate := 0xFF;
+    } else {
+      gate += 1;
+    }
+    altwave();
+  }
+  proc altwave() {
+    if L.alt && !L.buffered && !L.nofirstwavecmd {
+      ctrlout := wave & gate;
+    }
+  }
+
+  proc filtptr(a: u8) {
+    mem[L.filtstep + x / 3 * (L.filtstep2 - L.filtstep)] := a;
+    if !L.nofiltermod {
+      mem[L.filttime + x / 3 * (L.filttime2 - L.filttime)] := 0;
+    }
+  }
+
+  // mt_tick0_<n> with A = a and Y = y (the instrument, or the wavetable
+  // command's number): the code at the address entry n of the jump table holds,
+  // the handler a removed command's label shares with the next.
+  proc tick0cmd(n: u8, a: u8, y: u8) {
+    let j = tick0tbl[n];
+    if L.h0_0 && j == L.t0_0 {
+      if !L.noinstrvib {
+        tick0_34(i_vibparam[y]);
+      } else {
+        tick0_34(ite(L.vibzero, 0, a));
+      }
+    } elif L.h0_12 && j == L.t0_12 {
+      if !L.novib {
+        vibtime := 0;
+      }
+      tick0_34(a);
+    } elif L.h0_34 && j == L.t0_34 {
+      tick0_34(a);
+    } elif L.h0_5 && j == L.t0_5 {
+      adout := a;
+    } elif L.h0_6 && j == L.t0_6 {
+      srout := a;
+    } elif L.h0_7 && j == L.t0_7 {
+      wave := a;
+    } elif L.h0_8 && j == L.t0_8 {
+      waveptr := a;
+      if !L.nowavedelay {
+        wavetime := 0;
+      }
+    } elif L.h0_9 && j == L.t0_9 {
+      pulseptr := a;
+      pulsetime := 0;
+    } elif L.h0_a && j == L.t0_a {
+      filtptr(a);
+    } elif L.h0_b && j == L.t0_b {
+      mem[L.filtctrl + x / 3 * (L.filtctrl2 - L.filtctrl)] := a;
+      if a == 0 {
+        mem[L.filtstep + x / 3 * (L.filtstep2 - L.filtstep)] := 0;
+      }
+    } elif L.h0_c && j == L.t0_c {
+      mem[L.filtcutoff + x / 3 * (L.filtcutoff2 - L.filtcutoff)] := a;
+    } elif L.h0_d && j == L.t0_d {
+      if !L.noauthorinfo && a >= 0x10 {
+        timing := a;
+      } else {
+        masterfader := a;
+      }
+    } elif L.h0_e && j == L.t0_e {
+      funk[0] := sleft[a];
+      funk[1] := sright[a];
+      settempo(0);
+    } elif L.h0_f && j == L.t0_f {
+      settempo(a);
+    }
+  }
+  proc tick0_34(a: u8) {
+    if !(L.notoneporta && L.noportamento && L.novib) {
+      param := a;
+      fx := newfx;
+    }
+  }
+  proc settempo(a: u8) {
+    if L.noglobaltempo || (!L.nochanneltempo && neg(a)) {
+      tempos[7 * x] := a & 0x7F;
+      return;
+    }
+    for c in 0..L.ntempo {
+      tempos[7 * c] := a;
+    }
+  }
+
+  // mt_waveexec: one wavetable step; then the note's frequency (NOTEFREQ), a
+  // wavetable command (WAVECMD/SPEED) or the effects (WAVEDONE).
+  proc waveexec() {
+    let y = waveptr;
+    k := WAVEDONE;
+    if y == 0 {
+      return;
+    }
+    let a = wave1[y];
+    if !L.nowavedelay {
+      if a < 0x10 {
+        if a != wavetime {
+          let c = a >= wavetime;
+          wavetime += 1;
+          if wavetime != 0 {
+            return;
+          }
+          setwave(a - 0x10 - ite(c, 0, 1));
+        }
+      } else {
+        setwave(a - 0x10);
+      }
+    } elif a != 0 {
+      setwave(a);
+    }
+    let jump = wave0[y] == LOOP;
+    y += 1;
+    waveptr := ite(jump, note1[y], y);
+    if !L.nowavedelay {
+      wavetime := 0;
+    }
+    if !L.nowavecmd && wave2[y] >= 0xE0 {
+      wavecmd(wave2[y], y);
+      return;
+    }
+    let n = note2[y];
+    if n == 0 {
+      return;
+    }
+    if neg(n) {
+      n := (n + note) & 0x7F;
+    }
+    k := NOTEFREQ;
+    kn := n;
+  }
+  proc setwave(a: u8) {
+    if L.nowavecmd || a < 0xE0 {
+      wave := a;
+    }
+  }
+
+  // mt_execwavecmd: a tick-N effect (SPEED) or a tick-0 command (WAVECMD).
+  proc wavecmd(w: u8, y: u8) {
+    let n = w & 0x0F;
+    temp1 := n;
+    temp2 := note2[y];
+    if !(L.notoneporta && L.noportamento && L.novib) && n < 5 {
+      if L.effectnumop {
+        effectnum := n;
+      }
+      effectjump := effecttbl[n];
+      k := SPEED;
+      ka := effectjump;
+      ky := temp2;
+      return;
+    }
+    wavetick0jump := tick0tbl[n];
+    k := WAVECMD;
+    kn := n;
+    ka := temp2;
+  }
+
+  // mt_wavedone: this tick's continuous effect (none on tick 0 with the
+  // realtime optimization).
+  proc wavedone() {
+    k := DONE;
+    if L.notoneporta && L.noportamento && L.novib {
+      return;
+    }
+    if L.realtimeopt && counter == 0 {
+      return;
+    }
+    k := SPEED;
+    if L.noeffects {
+      ka := L.e_0;
+      ky := i_vibparam[instr];
+      return;
+    }
+    let e = fx;
+    if !L.nowavecmd && L.effectnumop {
+      effectnum := e;
+    }
+    effectjump := effecttbl[e];
+    ka := effectjump;
+    ky := param;
+  }
+
+  // mt_setspeedparam: entry y's 16-bit speed into temp1/temp2, then the effect
+  // code at low byte j; z is the zero flag its first branch tests.
+  proc speedparam(j: u8, y: u8) {
+    k := DONE;
+    let z = false;
+    if L.nocalcspeed {
+      temp1 := sright[y];
+      z := temp1 == 0;
+    } elif !L.nonormalspeed && !neg(sleft[y]) {
+      temp2 := sleft[y];
+      temp1 := sright[y];
+      z := temp1 == 0;
+    } elif L.nonormalspeed && !L.nozerospeed && y == 0 {
+      temp1 := 0;
+      temp2 := 0;
+      z := true;
+    } else {
+      cscount := sright[y];
+      csresty := y;
+      let n = lastnote;
+      let c = !borrow(flo1[n], flo[n]);
+      temp1 := flo1[n] - flo[n];
+      let hi = fhi1[n] - fhi[n] - ite(c, 0, 1);
+      let count = cscount;
+      while count != 0 bound 256 {
+        temp1 := (temp1 >> 1) | ((hi & 1) << 7);
+        hi := hi >> 1;
+        count -= 1;
+      }
+      y := csresty;
+      temp2 := hi;
+      z := y == 0;
+    }
+    if j == L.e_0 {
+      if L.noinstrvib || (!L.vibstop && z) || (L.vibstop && vibdelay == 0) {
+        return;
+      }
+      if vibdelay > ite(L.vibstop, 1, 0) {
+        vibdelay -= 1;
+        return;
+      }
+      if L.he_4 {
+        vibrato(y);
+      } else {
+        porta(L.he_3, y);
+      }
+    } elif L.he_4 && j == L.e_4 {
+      vibrato(y);
+    } elif L.he_3 && j == L.e_3 {
+      porta(true, y);
+    } elif j == L.e_12 {
+      porta(false, y);
+    }
+  }
+
+  // mt_effect_4: the vibrato ramp, turning where vibtime passes the depth.
+  proc vibrato(y: u8) {
+    let depth: u8 = 0;
+    if L.nocalcspeed {
+      temp2 := 0;
+      depth := sleft[y];
+    } else {
+      let l = sleft[y];
+      if !L.nonormalspeed && !neg(l) {
+        temp2 := 0;
+      }
+      speedcmp := l & 0x7F;
+      depth := speedcmp;
+    }
+    let a = vibtime;
+    if !neg(a) && a > depth {
+      a ^= 0xFF;
+    }
+    a += 2;
+    vibtime := a;
+    if a & 1 == 0 {
+      freqadd(false);
+    } else {
+      freqsub(true);
+    }
+  }
+
+  // mt_effect_3 (entry3) / mt_effect_12: portamento by the speed, toneporta
+  // toward the note, snapping to it (NOTEFREQ) where the distance changes sign.
+  proc porta(entry3: bool, y: u8) {
+    if entry3 && y == 0 {
+      found();
+      return;
+    }
+    if L.nocalcspeed {
+      temp2 := sleft[y];
+    }
+    if !L.noportamento {
+      let n = ite(L.effectnumop, effectnum, fx);
+      if n < 2 {
+        freqadd(false);
+        return;
+      }
+      if n == 2 {
+        freqsub(true);
+        return;
+      }
+    }
+    if L.notoneporta {
+      return;
+    }
+    let t = note;
+    let lo = freqlo - flo[t];
+    let c = !borrow(freqlo, flo[t]);
+    let hi = freqhi - fhi[t] - ite(c, 0, 1);
+    c := !borrow(freqhi, fhi[t], !c);
+    if c {
+      let c2 = !borrow(lo, temp1);
+      let h = hi - temp2 - ite(c2, 0, 1);
+      if neg(h) {
+        found();
+        return;
+      }
+      freqsub(!borrow(hi, temp2, !c2));
+    } else {
+      let c2 = carry(lo, temp1);
+      let h = hi + temp2 + u8(c2);
+      if !neg(h) {
+        found();
+        return;
+      }
+      freqadd(carry(hi, temp2, c2));
+    }
+  }
+  proc found() {
+    k := NOTEFREQ;
+    kn := note;
+  }
+  proc freqadd(c: bool) {
+    let lo = freqlo;
+    freqlo := lo + temp1 + u8(c);
+    freqhi := freqhi + temp2 + u8(carry(lo, temp1, c));
+  }
+  proc freqsub(c: bool) {
+    let lo = freqlo;
+    freqlo := lo - temp1 - ite(c, 0, 1);
+    freqhi := freqhi - temp2 - ite(borrow(lo, temp1, !c), 1, 0);
+  }
+
+  // mt_done: the gate timer's row fetch (FETCH) and the pulse step, in build
+  // order, then the registers (LOAD).
+  proc done() {
+    let fetch = false;
+    if L.fixedparams {
+      fetch := counter == L.gateparam;
+    } elif L.livegate {
+      fetch := counter == i_gate[instr];
+    } else {
+      fetch := counter == gatetimer;
+    }
+    if !(L.pulseopt && fetch) {
+      pulseexec();
+    }
+    k := ite(fetch, FETCH, LOAD);
+  }
+
+  // mt_pulseexec: set rows, timed modulation and jumps of the pulse table.
+  proc pulseexec() {
+    if L.nopulse {
+      return;
+    }
+    let y = pulseptr;
+    if y == 0 || (L.pulseopt && counter == 0 && pattptr == 0) {
+      return;
+    }
+    if L.nopulsemod || pulsetime == 0 {
+      let a = ptime1[y];
+      if L.nopulsemod || neg(a) {
+        if !L.simplepulse {
+          pulsehi := a;
+        }
+        pulselo := pspd1[y];
+        if L.simplepulse && L.ghosted {
+          pulsehi := pulselo;
+        }
+        nextpulse(y);
+        return;
+      }
+      pulsetime := a;
+    }
+    let s = pspd1[y];
+    let lo = pulselo;
+    if L.simplepulse {
+      let v = lo + s + u8(carry(lo, s));
+      pulselo := v;
+      if L.ghosted {
+        pulsehi := v;
+      }
+    } else {
+      if neg(s) {
+        pulsehi -= 1;
+      }
+      if L.pulse2x {
+        s := s << 1;
+      }
+      pulselo := lo + s;
+      if carry(lo, s) {
+        pulsehi += 1;
+      }
+    }
+    pulsetime -= 1;
+    if pulsetime == 0 {
+      nextpulse(y);
+      return;
+    }
+    pulseout();
+  }
+  proc nextpulse(y: u8) {
+    let jump = ptime0[y] == LOOP;
+    y += 1;
+    pulseptr := ite(jump, pspd1[y], y);
+    pulseout();
+  }
+  proc pulseout() {
+    if !L.buffered {
+      voice[2] := pulselo;
+      voice[3] := ite(L.simplepulse, pulselo, pulsehi);
+    }
+  }
+
+  // mt_getnewnote: one packed pattern row, read on the gate timer's call.
+  proc getnewnote() {
+    k := LOAD;
+    temp := patt[pattnum];
+    stream row = temp @ pattptr grammar "pygoattracker.packed:STREAMS:pattern";
+    let a = row[0];
+    if a < FX {
+      instr := a;
+      row.pos += 1;
+      a := row[0];
+    } elif a >= PACKEDREST {
+      let r = packedrest;
+      if r == 0 {
+        r := a;
+      }
+      packedrest := r + 1;
+      if packedrest == 0 {
+        rest(row);
+      }
+      return;
+    }
+    if !L.noeffects && a < NOTE {
+      newfx := a & 0x0F;
+      if newfx != 0 {
+        row.pos += 1;
+        newparam := row[0];
+      }
+      if a >= FXONLY {
+        rest(row);
+        return;
+      }
+      row.pos += 1;
+      a := row[0];
+    }
+    if a == REST {
+      rest(row);
+      return;
+    }
+    if !L.nogate && a > REST {
+      gate := a | 0xF0;
+      rest(row);
+      return;
+    }
+    newnote := ite(L.notrans, a, a + trans + u8(a > REST));
+    if !L.notoneporta && newfx == TONEPORTA {
+      rest(row);
+      return;
+    }
+    if (L.hrinstr && L.nohrinstr) || L.legato {
+      if instr >= L.firstnohr {
+        if L.legato && instr >= L.firstlegato {
+          rest(row);
+          return;
+        }
+        gate := 0xFE;
+        rest(row);
+        return;
+      }
+    }
+    if L.hrinstr {
+      if L.alt {
+        adout := L.adparam;
+        srout := L.srparam;
+      } else {
+        srout := L.srparam;
+        adout := L.adparam;
+      }
+    }
+    gate := 0xFE;
+    rest(row);
+  }
+  proc rest(row: stream) {
+    row.pos += 1;
+    pattptr := ite(row[0] == 0, 0, row.pos);
+  }
+
+  // mt_loadregs: the voice registers, to the chip or the ghost.
+  proc loadregs() {
+    if L.alt {
+      loadregswave();
+      return;
+    }
+    if !L.buffered {
+      voice[0] := freqlo;
+      voice[1] := freqhi;
+    } elif !L.ghosted {
+      voice[5] := adv;
+      voice[6] := srv;
+      voice[2] := pulselo;
+      voice[3] := ite(L.simplepulse, pulselo, pulsehi);
+      voice[0] := freqlo;
+      voice[1] := freqhi;
+    }
+    waveonly();
+  }
+  proc waveonly() {
+    ctrlout := wave & gate;
+  }
+  proc loadregswave() {
+    ctrlout := wave & gate;
+    if !L.ghosted {
+      voice[0] := freqlo;
+      voice[1] := freqhi;
+      if L.buffered {
+        voice[2] := pulselo;
+        voice[3] := ite(L.simplepulse, pulselo, pulsehi);
+        voice[5] := adv;
+        voice[6] := srv;
+      }
+    }
+  }
+}
+
+schedule {
+  play;
+  if play.start {
+    for c in L.exec {
+      chan[c];
+    }
+  } else {
+    for f in 0..L.nfilt {
+      filter[f];
+    }
+    for c in L.exec {
+      chan[c];
+    }
+  }
+}

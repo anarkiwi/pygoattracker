@@ -321,7 +321,6 @@ def test_binary_relocator_players_decompile(rel):
 
 # Binary-relocator tunes whose replay parts from their 6502 later in the song.
 _BINARY_DIVERGES = {
-    "MUSICIANS/M/Morton_Adam/Arpo4.sid": "the player's output freezes where the 6502 plays on",
     "MUSICIANS/Z/Zabutom/Sad_Pillow_Cyber_Prophecy.sid": (
         "voice 2's frequency holds where the 6502's slides"
     ),

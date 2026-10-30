@@ -1,15 +1,1 @@
-[
- {
-  "compare": "lead",
-  "frames": 23,
-  "id": "34fb4bcbdec4",
-  "key": "('first', '6502:edge:53cee856c20550270dc630ab', '')",
-  "kind": "first",
-  "left": "6502",
-  "md5": "0f5ea9b0fae5a743abdd71f25636a321",
-  "reason": "$10F2 BMI $1123 -> $1123: reference frame 14, register $00 v1_freq_lo",
-  "relpath": "MUSICIANS/M/Mr_Death/Aeppelepsi_Gubbjaevel.sid",
-  "right": "format:auto",
-  "song": 1
- }
-]
+[]

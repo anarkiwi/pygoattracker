@@ -3,11 +3,15 @@
 ``specs/gt1_<family>.play`` states each family's play call; :func:`binding` resolves
 its ``layout`` from the relocated reference in memory: labels, table bases, the
 self-modified operands (``Reference.smc`` in code order) and the packer's parameters.
+:func:`spec_binding` is a decompiled tune's own image bound that way, as the
+:class:`~pysidtracker.formats.SpecBinding` ``SidFormat.spec_player`` plays.
 """
 
 from functools import lru_cache
 from importlib import resources
 
+from pysidtracker import SidImage
+from pysidtracker.formats import SpecBinding
 from pysidtracker.playspec import parse as parse_spec
 
 from pygoattracker.gt1 import (
@@ -242,3 +246,16 @@ def entries(view) -> set:
     """The play entry of the playroutine in ``view``."""
     found = locate(view)
     return {found.address + found.ref.play_entry}
+
+
+def spec_binding(model) -> SpecBinding:
+    """The family spec of the decompiled ``model`` bound to its own tune image."""
+    image = SidImage.from_bytes(model.sid or model.song.to_sid())
+    return SpecBinding(
+        spec(model.song.ref.family),
+        binding,
+        image.image,
+        entries,
+        model.subtune,
+        image.header.is_psid,
+    )

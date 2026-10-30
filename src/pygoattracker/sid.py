@@ -114,7 +114,11 @@ class PackedInfo:
 
 @dataclass
 class DecompiledSid:
-    """Result of decompiling a ``.sid``: the song, its typed form, and how to play it."""
+    """Result of decompiling a ``.sid``: the song, its typed form, and how to play it.
+
+    ``subtune`` is the song of ``song`` the player selects; ``start`` the 0-based
+    PSID song the tune's init is called with.
+    """
 
     song: Song
     info: PackedInfo
@@ -123,6 +127,7 @@ class DecompiledSid:
     typed: TypedSong | None = None
     image: SidImage | None = field(default=None, repr=False)
     memory: bytes | None = field(default=None, repr=False)
+    start: int = 0
 
     def player(self) -> Player:
         """A :class:`Player` of this subtune configured as the image's own player.
@@ -572,7 +577,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     info.state = state(probe, build)
     info.wrap = wrap
     info.code = probe.span
-    decoded = DecompiledSid(song, info, header, subtune, typed, image, mem)
+    decoded = DecompiledSid(song, info, header, subtune, typed, image, mem, subtune)
     return _finish(decoded, t.song)
 
 

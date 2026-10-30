@@ -31,7 +31,7 @@ jobs:
         # never committed; pysidtracker's cache action persists all of .tunecache.
         uses: anarkiwi/pysidtracker/.github/actions/cache@v0.46.0
         with:
-          key: ${{ hashFiles('pyproject.toml', 'tests/data/hvsc_goattracker_sample.txt', 'tests/_fixture_cache.py', 'tests/_gt1_code.py') }}
+          key: ${{ hashFiles('pyproject.toml', 'tests/data/hvsc_goattracker_sample.txt', 'tests/_fixture_cache.py', 'tests/_gt1_code.py', 'src/pygoattracker/gt2sources.py') }}
           tunes: tests/data/hvsc_goattracker_sample.txt tests/_gt1_code.py
       - name: pytest + coverage (> 85%)
         run: pytest --cov=pygoattracker --cov-report=term-missing --cov-fail-under=85

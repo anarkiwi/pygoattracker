@@ -61,7 +61,8 @@ play-routine variations (see [docs/oracle-testing.md](docs/oracle-testing.md)); 
 See [docs/usage.md](docs/usage.md) for building songs, playback, register logs,
 WAV rendering, NinjaTracker 2, and the command line,
 [docs/format.md](docs/format.md) for the format specification, data model, and
-`.sid` decompilation notes, [docs/grammar.md](docs/grammar.md) for the GT2 and V1.x song grammars
+`.sid` decompilation notes, [docs/spec-hook.md](docs/spec-hook.md) for playing a decompiled tune's own image
+through the spec (`SidFormat.spec`, the in-place binder, standard notes), [docs/grammar.md](docs/grammar.md) for the GT2 and V1.x song grammars
 (abstract syntax, byte encodings, playback semantics, canonical text), and [docs/oracle-testing.md](docs/oracle-testing.md)
 for the byte-exact oracle tests.
 

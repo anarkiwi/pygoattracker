@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from jennings.opcodes import OPCODES
 
-from pygoattracker.gt2spec import Match
-from tests._gt2match import _Env
+from pygoattracker.gt2match import Match
+from pygoattracker.gt2match import _Env
 
 _ENCODE = {v: op for op, v in sorted(OPCODES.items(), reverse=True)}
 _FORMS = {"mem": ("zp", "abs"), "memx": ("zpx", "absx"), "memy": ("zpy", "absy")}

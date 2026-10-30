@@ -45,9 +45,10 @@ class _Reads:
 
 
 @lru_cache(maxsize=256)
-def _program(binding: tuple) -> tuple:
-    """``(program, frame)`` of the spec elaborated for the layout items ``binding``."""
-    program = elaborate(gt2spec.spec(), dict(binding))
+def _program(binding: tuple, standard: int | None) -> tuple:
+    """``(program, frame)`` of the spec elaborated for the layout items ``binding``,
+    reading the standard notes of clock ``standard`` (None: the image's table)."""
+    program = elaborate(gt2spec.spec(), dict(binding), standard=standard)
     return program, compile_program(program)
 
 
@@ -84,7 +85,9 @@ class Player(SpecPlayer):
 
     ``build``: the playback options (keyword ``options`` override its fields);
     ``state``: what the first call starts from; ``freq_table``: the 128 note
-    frequencies; ``validate`` checks the streams the spec opens.
+    frequencies; ``notes``: a clock in Hz, to answer every note-table read with the
+    standard equal-tempered word at that clock; ``validate`` checks the streams
+    the spec opens.
     """
 
     MASK_PW_HI = True
@@ -97,6 +100,7 @@ class Player(SpecPlayer):
         state: PlayerState | None = None,
         freq_table=None,
         validate: bool = False,
+        notes: int | None = None,
         **options,
     ):
         build = replace(build or Build(), **options)
@@ -126,6 +130,7 @@ class Player(SpecPlayer):
             bind=lambda view, entry: image.layout,
             entries=lambda view: {image.entry},
             validate=validate,
+            notes=notes,
         )
         if self._routes or image.ghost is not None:
             self._store = self._routed
@@ -172,7 +177,9 @@ class Player(SpecPlayer):
     def _instance(self, entry: int) -> tuple:
         key = (self._bus.bits, entry)
         if key not in self._compiled:
-            program, frame = _program(tuple(sorted(self.image.layout.items())))
+            program, frame = _program(
+                tuple(sorted(self.image.layout.items())), self._standard
+            )
             self._compiled[key] = (program, frame, controls(program))
         return self._compiled[key]
 

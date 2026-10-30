@@ -10,10 +10,11 @@ from pathlib import Path
 
 import pytest
 from pysidtracker.oracle import EmuPlayer
+from pysidtracker.playspec import SpecRuntimeError
 from pysidtracker.testing import resolve_tune
 
-from pygoattracker import SidParseError
-from pygoattracker.errors import GoatTrackerError, SngValidationError
+from pygoattracker import SidParseError, gt1spec
+from pygoattracker.errors import SngValidationError
 from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
     Gt1Instrument,
@@ -552,15 +553,16 @@ def test_effect_index_outside_jump_table():
     song = make_song("1.53")
     player = Gt1Player(song)
     player.play_frame()
-    player._mem[player._chn + 44] = 9  # pylint: disable=protected-access
-    player._mem[player._chn + 66] = 3  # pylint: disable=protected-access
-    with pytest.raises(GoatTrackerError, match="jump table"):
+    chn = gt1spec.binding(player.view(), player.entry)["chn"]
+    player._mem[chn + 44] = 9  # pylint: disable=protected-access
+    player._mem[chn + 66] = 3  # pylint: disable=protected-access
+    with pytest.raises(SpecRuntimeError, match="assert"):
         player.play_frame()
 
 
 def test_orderlist_without_pattern_raises():
     song = make_song(orderlists=[[bytes((0xF0, 0xFF, 0x00))] * 3])
-    with pytest.raises(GoatTrackerError, match="never reaches"):
+    with pytest.raises(SpecRuntimeError, match="ran past 256"):
         pass_frames(Gt1Player(song))
 
 

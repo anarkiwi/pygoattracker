@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 
 PLAYER_ORG = 0x1000
 V15 = "1.5"
-V14 = "1.4"
 _AUTHOR = 32
 # Initial tick, gate timer and hard-restart AD/SR the packer writes by default.
 DEFAULT_PARAMS = (4, 2, 0x0F, 0x00)
@@ -251,7 +250,7 @@ def _match_at(mem, ref: Reference, address: int) -> Gt1Match | None:
 
 
 def find_player(mem) -> Gt1Match | None:
-    """Locate a known GoatTracker V1.x playroutine in a 64 KiB image."""
+    """Locate a known GoatTracker V1.x playroutine in a memory image."""
     buf = bytes(mem)
     for name in PLAYERS:
         ref = reference(name)
@@ -652,13 +651,14 @@ class DecompiledGt1:
     song: Gt1Song
     header: SidHeader
     subtune: int = 0
+    sid: bytes | None = None
 
     def player(self) -> Gt1Player:
-        """A :class:`~pygoattracker.gt1player.Gt1Player` of this subtune."""
+        """A :class:`~pygoattracker.gt1player.Gt1Player` of this subtune on its tune."""
         # pylint: disable-next=import-outside-toplevel
         from pygoattracker.gt1player import Gt1Player
 
-        return Gt1Player(self.song, subtune=self.subtune)
+        return Gt1Player(self.song, subtune=self.subtune, sid=self.sid)
 
 
 class Gt1SidParser(BaseSidParser):
@@ -673,9 +673,8 @@ class Gt1SidParser(BaseSidParser):
     def parse(self, data, subtune=0, **kwargs) -> DecompiledGt1:
         load_address = kwargs.get("load_address")
         song = decompile_gt1(data, subtune, load_address)
-        return DecompiledGt1(
-            song, parse_sid_header(as_psid(data, load_address)), subtune
-        )
+        sid = as_psid(data, load_address)
+        return DecompiledGt1(song, parse_sid_header(sid), subtune, sid)
 
     def recognize(self, image: SidImage):
         return find_player(image.mem)

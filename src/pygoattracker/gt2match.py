@@ -1,18 +1,18 @@
 """A tune's GoatTracker 2 playroutine, matched against the playroutine sources.
 
-:func:`match` walks a source tree (:func:`tests._gt2refs.sources`) over the
+:func:`match` walks a source tree (:func:`pygoattracker.gt2sources.sources`) over the
 image's bytes depth first, taking each conditional block the bytes and the defines
 chosen so far allow; a whole match gives every label's address and the defines.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 from jennings.opcodes import OPCODES
 
-from pygoattracker.gt2spec import Match
-from tests._gt2refs import sources
+from pygoattracker.gt2sources import sources
 
 _MODES = {
     "mem": ("zp", "abs"),
@@ -45,6 +45,28 @@ _UNARY = {
     "u-": lambda a: -a,
     "u!": lambda a: int(not a),
 }
+
+
+@dataclass(frozen=True)
+class Match:
+    """A playroutine source at ``start``: its ``name``, the address after it, the
+    ``symbols`` (labels, relocator defines, tables), operand ``exprs`` values and
+    the labels ``passed`` (those its taken blocks define)."""
+
+    name: str
+    start: int
+    end: int
+    symbols: dict
+    exprs: dict
+    passed: frozenset = frozenset()
+    slips: int = 0
+
+    def __getitem__(self, name: str) -> int:
+        return self.symbols[name]
+
+    def get(self, name: str, default=None):
+        """A symbol's value, else ``default``."""
+        return self.symbols.get(name, default)
 
 
 class _Env:

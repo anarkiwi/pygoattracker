@@ -2,18 +2,21 @@
 
 ``specs/goattracker.play`` states the play call of every V2.34-V2.76 build;
 :func:`layout` binds it to a playroutine's :class:`Match`: its labels, tables and
-operands, and its relocator defines.
+operands, and its relocator defines. :class:`Binder` matches the playroutine in a
+decompiled tune's own image and binds the spec to it in place; :func:`spec_binding`
+is that as the model's :class:`~pysidtracker.formats.SpecBinding`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 
+from pysidtracker.formats import SpecBinding
 from pysidtracker.playspec import parse as parse_spec
 
 from pygoattracker.errors import SidParseError
+from pygoattracker.gt2match import Match, match
 
 # Release behaviour no define states (see the spec's flags of the same names).
 FEATURES = {
@@ -138,28 +141,6 @@ _FEATURES = ("pulse2x", "livegate", "zeroskip", "initloadregs", "vibzero")
 _TICK0 = ("0", "12", "34", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f")
 # Releases whose global tempo stores three channels' tempos whatever the count.
 _TEMPO3 = {"gt2_235", "gt2_255", "gt2_261", "gt2_265"}
-
-
-@dataclass(frozen=True)
-class Match:
-    """A playroutine source at ``start``: its ``name``, the address after it, the
-    ``symbols`` (labels, relocator defines, tables), operand ``exprs`` values and
-    the labels ``passed`` (those its taken blocks define)."""
-
-    name: str
-    start: int
-    end: int
-    symbols: dict
-    exprs: dict
-    passed: frozenset = frozenset()
-    slips: int = 0
-
-    def __getitem__(self, name: str) -> int:
-        return self.symbols[name]
-
-    def get(self, name: str, default=None):
-        """A symbol's value, else ``default``."""
-        return self.symbols.get(name, default)
 
 
 @lru_cache(maxsize=None)
@@ -314,3 +295,60 @@ def layout(found: Match, exec_channels=None, chip_writes=False) -> dict:
         exec=tuple(range(nchan) if exec_channels is None else exec_channels),
     )
     return out
+
+
+class Binder:
+    """The spec bound in place to the playroutine in a tune's own memory.
+
+    ``code`` is the ``(start, end)`` of the playroutine in the tune's image and
+    ``idle`` the channels its play does not run. A binder is the ``bind`` of a
+    :class:`~pysidtracker.playspec.SpecPlayer` (``binder(view, entry)``) and
+    ``binder.entries`` its ``entries``; :meth:`match` is the playroutine source
+    matched in the code.
+    """
+
+    def __init__(self, code, idle=()):
+        self.code, self.idle = tuple(code), tuple(idle)
+        self._found = None
+
+    def match(self, view) -> Match:
+        """The playroutine source matched in ``view``."""
+        if self._found is None:
+            self._found = match(view, *self.code)
+        if self._found is None:
+            raise SidParseError("no GoatTracker 2 playroutine source matches the code")
+        return self._found
+
+    def __call__(self, view, entry: int) -> dict:  # pylint: disable=unused-argument
+        """The spec layout of the playroutine in ``view``."""
+        found = self.match(view)
+        nchan = found.get("NUMCHANNELS", 3)
+        return layout(found, [c for c in range(nchan) if c not in self.idle])
+
+    def entries(self, view) -> set:
+        """The play entry of the playroutine in ``view``."""
+        return {self.match(view)["mt_play"]}
+
+
+def binder(model) -> Binder:
+    """The :class:`Binder` of a :class:`~pygoattracker.sid.DecompiledSid`'s own image."""
+    code = model.info.code
+    if code is None or code[0] is None:
+        raise SidParseError("the decompiled tune has no playroutine code span")
+    return Binder(code, model.info.playback.idle)
+
+
+def spec_binding(model) -> SpecBinding:
+    """The spec of the decompiled ``model`` bound to its own tune image, which
+    ``SidFormat.spec_player`` plays in place."""
+    if model.image is None:
+        raise SidParseError("the decompiled tune has no image")
+    bound = binder(model)
+    return SpecBinding(
+        spec(),
+        bound,
+        model.image.image,
+        bound.entries,
+        model.start,
+        model.header.is_psid,
+    )

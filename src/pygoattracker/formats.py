@@ -13,7 +13,7 @@ from typing import Iterable, Sequence
 
 from pysidtracker import MemPlayer, SidFormat
 
-from pygoattracker import gt1streams, packed, text
+from pygoattracker import gt1spec, gt1streams, gt2spec, packed, text
 from pygoattracker.canonical import canonical
 from pygoattracker.gt1 import DecompiledGt1, Gt1SidParser
 from pygoattracker.gt1typed import Gt1TypedSong
@@ -107,7 +107,13 @@ GOATTRACKER1 = SidFormat(
     probes=GT1_PROBES,
     grammar=gt1streams.STREAMS,
     streams=gt1_streams,
-    player_modules=("pygoattracker.gt1", "pygoattracker.gt1player"),
+    spec=gt1spec.spec_binding,
+    player_modules=(
+        "pygoattracker.gt1",
+        "pygoattracker.gt1player",
+        "pygoattracker.gt1spec",
+        *(f"pygoattracker:specs/gt1_{family}.play" for family in ("11", "14", "15")),
+    ),
 )
 
 GOATTRACKER2 = SidFormat(
@@ -120,11 +126,15 @@ GOATTRACKER2 = SidFormat(
     grammar=packed.STREAMS,
     streams=gt2_streams,
     canonical=canonical,
+    spec=gt2spec.spec_binding,
     player_modules=(
         "pygoattracker.sid",
         "pygoattracker.player",
         "pygoattracker.packed",
         "pygoattracker.gt2spec",
+        "pygoattracker.gt2match",
+        "pygoattracker.gt2sources",
+        "pygoattracker:specs/goattracker.play",
         "pygoattracker.songimage",
     ),
 )

@@ -5,11 +5,14 @@ GT1 oracle tune's whole song.
 """
 
 import pytest
+from pysidtracker.irqhost import TunePlayer
+from pysidtracker.notes import frequency
 from pysidtracker.playspec.tv import validate
 from pysidtracker import SidImage
 from pysidtracker.testing import resolve_tune, song_frames
 
 from pygoattracker import gt1spec
+from pygoattracker.formats import GOATTRACKER1
 from pygoattracker.gt1 import decompile_gt1, find_player
 from pygoattracker.gt1player import Gt1Player
 from tests.test_gt1 import DriverEmu, make_song, make_song11, with_sfx
@@ -19,6 +22,16 @@ from tests.test_oracle_hvsc import TUNES
 RAM = ((0, 0x100), (0x200, 0xD000), (0xE000, 0x10000))
 GT1_TUNES = {k: v for k, v in TUNES.items() if k.startswith("gt1_")}
 JOKE = "DEMOS/G-L/Joke.sid"
+STANDARD = (
+    "gt1_152_beautiful_day",
+    "gt1_151_h_fusion",
+    "gt1_150b_menace47",
+    "gt1_152_4x_assatas_song",
+    "gt1_111_easy_going",
+    "gt1_14b_asynkro_theme",
+    "gt1_096_mw1_title",
+)
+CLOCK = 985248
 
 
 def assert_memory_equals_the_6502(raw: bytes, subtune: int, frames: int):
@@ -100,3 +113,41 @@ def test_row_reader_is_proven_against_the_6502():
     assert result.proven, result.counterexample and {
         k: v for k, v in result.counterexample.items() if k != "memory"
     }
+
+
+def standard_table(raw: bytes, model, clock: int) -> bytes:
+    """``raw`` with the note table its playroutine reads set to the standard words."""
+    view = GOATTRACKER1.spec_player(model).view()
+    layout = gt1spec.binding(view, *gt1spec.entries(view))
+    low, high = layout["freqlo"], layout["freqhi"]
+    base = (
+        len(raw) - len(SidImage.from_bytes(raw).image) - model.header.real_load_address
+    )
+    out = bytearray(raw)
+    for note in range(abs(high - low)):
+        word = frequency(note, clock)
+        out[base + low + note] = word & 0xFF
+        out[base + high + note] = word >> 8
+    return bytes(out)
+
+
+@pytest.mark.oracle
+@pytest.mark.parametrize("path, song", GT1_TUNES.values(), ids=GT1_TUNES)
+def test_format_spec_player_grid_equals_the_family_player(path, song):
+    raw = resolve_tune(path).read_bytes()
+    model = GOATTRACKER1.load(raw, song - 1)
+    frames = song_frames(raw, song)
+    spec = GOATTRACKER1.spec_player(model)
+    assert spec.render_grid(frames) == GOATTRACKER1.player(model).render_grid(frames)
+
+
+@pytest.mark.oracle
+@pytest.mark.parametrize("name", STANDARD)
+def test_standard_notes_equal_the_6502_on_a_standard_table(name):
+    path, song = TUNES[name]
+    raw = resolve_tune(path).read_bytes()
+    model = GOATTRACKER1.load(raw, song - 1)
+    frames = song_frames(raw, song)
+    standard = GOATTRACKER1.spec_player(model, notes=CLOCK).render_grid(frames)
+    patched = standard_table(raw, model, CLOCK)
+    assert standard == TunePlayer(patched, song - 1).render_grid(frames)

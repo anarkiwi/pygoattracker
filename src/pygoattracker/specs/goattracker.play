@@ -84,10 +84,10 @@ cell sleft: u8[256] @ L.speedleft ro;
 cell sright: u8[256] @ L.speedright ro;
 cell song: ptr[256] @ (L.songlo, L.songhi) ro;
 cell patt: ptr[256] @ (L.pattlo, L.patthi) ro;
-cell flo: u8[256] @ L.freqlo_t ro;
-cell fhi: u8[256] @ L.freqhi_t ro;
-cell flo1: u8[256] @ L.freqlo_t + 1 ro;
-cell fhi1: u8[256] @ L.freqhi_t + 1 ro;
+cell flo: u8[256] @ L.freqlo_t ro notes(lo, 0);
+cell fhi: u8[256] @ L.freqhi_t ro notes(hi, 0);
+cell flo1: u8[256] @ L.freqlo_t + 1 ro notes(lo, 1);
+cell fhi1: u8[256] @ L.freqhi_t + 1 ro notes(hi, 1);
 cell tick0tbl: u8[16] @ L.tick0tbl ro;
 cell effecttbl: u8[5] @ L.effecttbl ro;
 

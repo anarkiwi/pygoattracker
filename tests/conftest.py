@@ -17,6 +17,23 @@ def note(name: str) -> int:
     return constants.note_value(name)
 
 
+def pass_frames(player) -> int:
+    """Play calls of one whole pass of ``player``'s song: through the call in which
+    its last channel loops (or ends) its orderlist, or until the playroutine stops.
+
+    ``player`` is a fresh :class:`~pygoattracker.player.Player` or
+    :class:`~pygoattracker.gt1player.Gt1Player`; it is played through.
+    """
+    frames = 0
+    while not frames or getattr(player, "playing", True):
+        counts = list(getattr(player.loops, "values", lambda: player.loops)())
+        if counts and all(counts):
+            break
+        player.play_frame()
+        frames += 1
+    return frames
+
+
 def add_test_instrument(
     song: Song,
     waveform: int = 0x41,

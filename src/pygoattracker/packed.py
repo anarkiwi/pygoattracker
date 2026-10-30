@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 from lark import Transformer, v_args
 from pysidtracker import REACH, ByteGrammar, Parsed, find_code_all
-from pysidtracker.codescan import jump_table, play_entries
+from pysidtracker.codescan import play_entries
 from pysidtracker.mos6502 import OP_JMP, OP_JSR, RETURN_OPS, disasm_len
 from pysidtracker.facets import Entry, Variant, inferred
 
@@ -257,7 +257,7 @@ class PlayerCode(NamedTuple):
 
 
 _TEMPO = "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D"
-_JUMPS = "4C {init:w} 4C ?? ??"
+_JUMPS = "4C {init:w} 4C {play:w}"
 _TABLE = 6  # jmp mt_init, jmp mt_play
 
 
@@ -267,11 +267,9 @@ def player_span(image, data):
     greloc emits the jump table (``jmp mt_init``, ``jmp mt_play``), the player
     code and then the data, so an image holding several players keeps each one's
     code between its jump table and its data. The instance is the last
-    ``mt_initchn`` below ``data`` and the last jump table before it whose
-    ``mt_init`` lies between the two (a table's first entry, where a third jump
-    follows; a play jump may lead out of the player, into a wrapper), else the
-    last whose ``mt_play`` does (:func:`~pysidtracker.codescan.jump_table`); the
-    whole image without such a jump table.
+    ``mt_initchn`` below ``data`` and the last run of jumps before it whose first
+    or second target lies between the two (a wrapper may divert the other, init
+    or play, out of the player); the whole image without such a jump table.
     """
     tempo = find_code_all(image, _TEMPO, end=data)
     if not tempo:
@@ -280,11 +278,10 @@ def player_span(image, data):
     tables = {
         m.addr
         for m in find_code_all(image, _JUMPS, end=t)
-        if m.addr < m.captures["init"] <= t
+        if any(m.addr < m.captures[k] <= t for k in ("init", "play"))
     }
     if not tables:
-        base = jump_table(image, t)
-        return PlayerCode(image) if base is None else PlayerCode(image, base, data)
+        return PlayerCode(image)
     base = max(tables)
     while base - 3 in tables:
         base -= 3

@@ -5,7 +5,7 @@
 GoatTracker is a family of tracker applications for composing C64/SID music by
 Lasse Öörni (Cadaver). pygoattracker implements the GTS5 song format and the
 playroutine from first principles, following the GoatTracker 2.76 format
-documentation and `gplay.c`.
+documentation and the packed playroutine `player.s`.
 
 `read_sng` reads every GoatTracker song generation: GTS5/GTS4/GTS3 and GTS2
 (early 3-table GoatTracker 2.xx) as the GT2 model, converted on load exactly
@@ -264,13 +264,23 @@ passband, and vibrato parameters map by analogy.
 
 ## Player and playback notes
 
-The player is one class (`Player`) deriving from `pysidtracker.MemPlayer`; it
-ports the GoatTracker 2 playroutine tick for tick: sequencer
-(transpose/repeat/restart), funktempo, wave/pulse/filter table execution
-including wavetable command execution, speedtable vibrato/portamento (including
-note-independent speeds), gateoff timer, and hard restart. Its render is
-validated byte-exactly against a `sidplayfp` oracle
-([oracle-testing.md](oracle-testing.md)).
+The player (`Player`) is a `pysidtracker.playspec.SpecPlayer` running
+`specs/goattracker.play`, a playspec of the packed playroutine (`player.s` /
+`altplayer.s`, V2.34–V2.76, mono and stereo): sequencer (transpose/repeat/restart),
+funktempo, wave/pulse/filter table execution including wavetable commands,
+speedtable vibrato/portamento (including calculated speeds), gateoff timer and
+hard restart, with every greloc define a layout flag. `songimage.song_image` packs
+the song as greloc packs it (instruments in hard-restart/no-hard-restart/legato
+order, packed patterns and orderlists, 1-based tables) behind a stub jump table,
+so the spec's layout is known by construction; the `Build` options become the
+defines (`adparam`, the pulse/realtime skips, SIMPLEPULSE, NOEFFECTS for
+`live_vibrato`, DEFAULTTEMPO, the binary relocator's `vibstop`/`vibinit`/
+`nohr_wave`/`pulse_step`), `idle` the channels the schedule runs, a `state` the
+variables and ghost the first call starts from, `calls` the `mt_play` calls a
+frame's stub makes, and `voices`/`overlay` where each channel's register stores
+land. The packed player never stops: a song plays on for as long as it is called.
+Its render is validated byte-exactly against a `sidplayfp` oracle, and the spec run
+in place on real tunes against their own 6502 ([oracle-testing.md](oracle-testing.md)).
 
 `play_frame()` returns one PAL frame's changed register writes in ascending
 register order (the first frame returns all 25 registers, since the base
@@ -290,7 +300,7 @@ any other emulator object with `write_register` / `clock` /
 
 ## References
 
-- GoatTracker 2.76 format documentation and `gplay.c`
+- GoatTracker 2.76 format documentation and `player.s`
   ([GoatTracker 2](https://sourceforge.net/projects/goattracker2/)).
 - [NinjaTracker 2](http://covertbitops.c64.org).
 - [pyresidfp](https://pypi.org/project/pyresidfp/) — reSIDfp SID emulation.

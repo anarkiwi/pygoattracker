@@ -53,7 +53,8 @@ song = read_sng("tune.sng")
 print(song.name, song.author, song.copyright)
 ```
 
-The player is one class deriving from `pysidtracker.MemPlayer`; its render is
+The player is a `pysidtracker` playspec of the packed GoatTracker 2 playroutine
+(`specs/goattracker.play`) run on the song packed as the relocator packs it; its render is
 validated byte-exactly against a `sidplayfp` oracle across GoatTracker
 play-routine variations (see [docs/oracle-testing.md](docs/oracle-testing.md)).
 

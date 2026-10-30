@@ -1,0 +1,32 @@
+// GoatTracker 1 musicroutine 11.x: the cutoff accumulates cutoffadd plus the
+// carry flag the play call is entered with, then the channels run as a linked
+// list (next index 0 ends; bounded), each visited in chain order.
+spec gt1_chain;
+layout { cutoff, cutoffadd, chnnext, visits, order, sid: addr; }
+cell cutoff: u8 @ L.cutoff;
+cell cutoffadd: u8 @ L.cutoffadd;
+cell chnnext: u8[256] @ L.chnnext;
+cell visits: u8[256] @ L.visits;
+cell order: u8[16] @ L.order;
+cell sid: u8[32] @ L.sid out;
+
+machine player {
+  step {
+    cutoff := cutoff + cutoffadd + u8(cpu.c);
+    sid[0x16] := cutoff;
+    let x: u8 = 0;
+    let k: u8 = 0;
+    let go = true;
+    while go bound 256 {
+      visits[x] += 1;
+      order[k] := x;
+      k += 1;
+      x := chnnext[x];
+      go := x != 0;
+    }
+  }
+}
+
+schedule {
+  player;
+}

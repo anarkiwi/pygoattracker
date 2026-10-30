@@ -219,10 +219,12 @@ The voice layout is read off the player, not assumed:
   between the player and the chip), from the bytes its voice holds for waveforms
   setting and clearing every bit, each set by a held wavetable row.
 - **player and wrapper** (`DecompiledSid.info.wrap`): a player's jump table is the
-  last run of jumps before its `mt_initchn` whose init or play target lies in its
-  code (a wrapper may divert the other), and of the players in a module the one
-  whose table the init enters (`pysidtracker.trace.trace_init_argument`) is the
-  one the song selects; its play entries are the table's
+  one the tune's init enters last (in the order the traced init first runs each
+  instruction), where it jumps into that player's code, so a module bundling
+  several players plays the one its song selects; else the last run of jumps
+  before its `mt_initchn` whose play entry leads into its code
+  (`pysidtracker.codescan.jump_table`) or whose init entry leads to `mt_init`'s
+  song store (a wrapper diverts its play). Its play entries are the table's
   (`pysidtracker.codescan.play_entries`), or, where the table's play jump leads
   out of the player into a wrapper, the first call that wrapper makes back into
   it. A header play routine that is not the player's own entry runs as written

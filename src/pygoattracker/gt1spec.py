@@ -249,8 +249,10 @@ def entries(view) -> set:
 
 
 def spec_binding(model) -> SpecBinding:
-    """The family spec of the decompiled ``model`` bound to its own tune image."""
+    """The family spec of the decompiled ``model`` bound to its own tune image; its
+    ``sid`` is the tune's own PSID/RSID, none for a bare image or an exported song."""
     image = SidImage.from_bytes(model.sid or model.song.to_sid())
+    own = model.sid is not None and not model.wrapped
     return SpecBinding(
         spec(model.song.ref.family),
         binding,
@@ -258,4 +260,5 @@ def spec_binding(model) -> SpecBinding:
         entries,
         model.subtune,
         image.header.is_psid,
+        model.sid if own else None,
     )

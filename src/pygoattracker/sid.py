@@ -117,7 +117,8 @@ class DecompiledSid:
     """Result of decompiling a ``.sid``: the song, its typed form, and how to play it.
 
     ``subtune`` is the song of ``song`` the player selects; ``start`` the 0-based
-    PSID song the tune's init is called with.
+    PSID song the tune's init is called with. ``wrapped`` is set where the header is
+    the loader's own, for a bare ``.prg``/``.bin``.
     """
 
     song: Song
@@ -128,6 +129,7 @@ class DecompiledSid:
     image: SidImage | None = field(default=None, repr=False)
     memory: bytes | None = field(default=None, repr=False)
     start: int = 0
+    wrapped: bool = False
 
     def player(self) -> Player:
         """A :class:`Player` of this subtune configured as the image's own player.
@@ -409,7 +411,8 @@ def decompile_sid(src, subtune=0, load_address=None) -> DecompiledSid:
     are unpacked via shared playroutine detection (emulated init); the song data
     is where the player the header song runs reads it (:mod:`pygoattracker.observe`).
     """
-    raw = as_psid(read_bytes(src), _bin_default(src, load_address))
+    given = read_bytes(src)
+    raw = as_psid(given, _bin_default(src, load_address))
     image = _load_image(raw)
     detection = detect_playroutine(image, _recognize, subtune=subtune)
     if detection.anchor is None:
@@ -428,6 +431,7 @@ def decompile_sid(src, subtune=0, load_address=None) -> DecompiledSid:
     info.playback = replace(
         info.playback, init_regs=init_regs(_load_image(raw), subtune)
     )
+    decoded.wrapped = bytes(given[:4]) not in (b"PSID", b"RSID")
     return decoded
 
 

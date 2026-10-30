@@ -21,6 +21,7 @@ from tests.conftest import add_test_instrument, pass_frames
 from tests.test_gt1 import _n, make_song, make_song11, make_song14
 
 CLOCK = 985248
+NTSC = 1022727
 FIXTURES = ("gt2_full", "gt2_minimal")
 SYNTHETIC_GT1 = {
     "1.53": make_song,
@@ -192,3 +193,71 @@ def test_gt1_binding_is_the_models_own_image():
     entries = binding.entries(view)
     assert entries == gt1spec.entries(view)
     assert binding.bind(view, next(iter(entries)))["sid"] == constants.SID_BASE
+
+
+def with_clock(raw: bytes, clock: int) -> bytes:
+    """``raw`` with the PSID header's clock flags set to ``clock`` (1 PAL, 2 NTSC)."""
+    head = bytearray(raw)
+    flags = int.from_bytes(head[0x76:0x78], "big") & ~0xC | clock << 2
+    head[0x76:0x78] = flags.to_bytes(2, "big")
+    return bytes(head)
+
+
+def note_steps(grid) -> list:
+    """The distinct successive frequency words of voice 0 in ``grid``."""
+    steps = []
+    for word in words(grid):
+        if not steps or word != steps[-1]:
+            steps.append(word)
+    return steps
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+def test_gt2_binding_sid_is_the_tunes_own_container(name):
+    sources()
+    raw = fixture_sid(name)
+    assert GOATTRACKER2.spec(GOATTRACKER2.load(raw)).sid == raw
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+def test_gt2_bare_prg_has_no_sid(name):
+    sources()
+    prg = fixture_sid(name)[0x7C:]
+    assert GOATTRACKER2.spec(GOATTRACKER2.load(prg)).sid is None
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+def test_gt2_notes_follow_the_header_clock(name):
+    sources()
+    pal = GOATTRACKER2.load(with_clock(fixture_sid(name), 1))
+    ntsc = GOATTRACKER2.load(with_clock(fixture_sid(name), 2))
+    frames = pass_frames(pal.player())
+    grid = GOATTRACKER2.spec_player(ntsc, notes=True).render_grid(frames)
+    assert grid == GOATTRACKER2.spec_player(ntsc, notes=NTSC).render_grid(frames)
+    assert grid != GOATTRACKER2.spec_player(pal, notes=True).render_grid(frames)
+    assert GOATTRACKER2.spec_player(pal, notes=True).render_grid(frames) == (
+        GOATTRACKER2.spec_player(pal, notes=CLOCK).render_grid(frames)
+    )
+
+
+@pytest.mark.parametrize("clock, hz", [(1, CLOCK), (2, NTSC)])
+@pytest.mark.parametrize("player", SYNTHETIC_GT1)
+def test_gt1_notes_follow_the_header_clock(player, clock, hz):
+    raw = with_clock(gt1_notes_song(player).to_sid(), clock)
+    model = GOATTRACKER1.load(raw)
+    assert GOATTRACKER1.spec(model).sid == raw
+    grid = GOATTRACKER1.spec_player(model, notes=True).render_grid(
+        pass_frames(model.player())
+    )
+    assert note_steps(grid)[:95] == [0] + [frequency(n, hz) for n in range(94)]
+
+
+@pytest.mark.parametrize("player", SYNTHETIC_GT1)
+def test_gt1_bare_prg_has_no_sid(player):
+    prg = gt1_notes_song(player).to_sid()[0x7C:]
+    model = GOATTRACKER1.load(prg)
+    assert GOATTRACKER1.spec(model).sid is None
+    frames = pass_frames(model.player())
+    assert GOATTRACKER1.spec_player(model).render_grid(frames) == (
+        GOATTRACKER1.player(model).render_grid(frames)
+    )

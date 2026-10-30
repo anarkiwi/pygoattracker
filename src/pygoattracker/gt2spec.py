@@ -351,4 +351,5 @@ def spec_binding(model) -> SpecBinding:
         bound.entries,
         model.start,
         model.header.is_psid,
+        None if model.wrapped else model.image.container + model.image.image,
     )

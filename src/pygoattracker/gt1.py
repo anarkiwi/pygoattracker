@@ -2,21 +2,25 @@
 
 The packer (``relocator()`` in ``goattrk.c``) copies a playroutine, relocates its
 absolute operands and appends the song tables; this module matches the relocated
-code against the assembled playroutines in :mod:`pygoattracker._gt1_refs`.
+code against facts about each assembled playroutine in :mod:`pygoattracker._gt1_builds`
+(digests of its fixed bytes, label offsets and relocation targets; no code).
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from pysidtracker import REACH, BaseSidParser, SidHeader, SidImage, run_init
 from pysidtracker.image import load_prefix, require_ram
 from pysidtracker.mos6502 import disasm_len
 
-from pygoattracker._gt1_refs import PLAYERS
+from pygoattracker._gt1_builds import PLAYERS
 from pygoattracker.errors import SidParseError, SngParseError, SngValidationError
 from pygoattracker.gt1streams import ORDER_REACH, STREAMS
 from pygoattracker.sid import _load_image, as_psid, parse_sid_header
@@ -95,20 +99,33 @@ _JUMP = 3
 _INSTR_FIELDS = 8
 
 
+_SEED = 0x6A71
+_WEIGHTS = np.random.default_rng(_SEED).integers(1, 256, size=(2, 0x800))
+_SPAN = 0x20000
+_CODE: dict = {}
+
+
 @dataclass(frozen=True)
 class Reference:
-    """One assembled playroutine and what the packer changes in it."""
+    """Facts about one assembled playroutine and what the packer changes in it.
+
+    ``relocs`` are ``(offset, word)`` of each relocated operand as assembled at
+    :data:`PLAYER_ORG` (a table operand's high byte is its virtual page);
+    ``sums`` are :data:`_WEIGHTS`-weighted sums of the bytes the packer keeps.
+    """
 
     name: str
     family: str
-    code: bytes
     labels: dict
+    length: int
     code_end: int
     relocs: tuple
     params: tuple
     smc: tuple
     zeropage: tuple
-    regex: re.Pattern
+    sums: tuple
+    freq: str
+    author: tuple | None = None
     author_end: int = _AUTHOR
 
     @property
@@ -134,7 +151,36 @@ class Reference:
     @property
     def free(self) -> tuple:
         """Code bytes a tune may change: self-modified operands and zero-page temps."""
-        return tuple(sorted(self.smc + self.zeropage))
+        return tuple(sorted(self.smc + tuple(pos for pos, _ in self.zeropage)))
+
+    @property
+    def wild(self) -> frozenset:
+        """Offsets below ``code_end`` whose bytes the packer or the tune may change."""
+        out = {p + k for p, _ in self.relocs for k in (0, 1)}
+        out.update(p + k for p in self.params for k in (0, 1))
+        out.update(self.free)
+        if self.author_end != _AUTHOR:
+            out.update(range(_AUTHOR, self.author_end))
+        return frozenset(out)
+
+    @property
+    def code(self) -> bytes:
+        """The assembled playroutine, as :func:`register_code` registered it."""
+        if self.name not in _CODE:
+            raise SngValidationError(
+                f"no player code registered for GoatTracker {self.name}; "
+                "register_code() it from a tune or build of that release"
+            )
+        return _CODE[self.name]
+
+
+def register_code(name: str, code: bytes) -> None:
+    """Register the assembled code of playroutine ``name`` (for :meth:`Gt1Song.pack`
+    of songs not decompiled from a tune)."""
+    ref = reference(name)
+    if len(code) != ref.length or _sums(ref, np.frombuffer(code, np.uint8)) != ref.sums:
+        raise SngValidationError(f"code is not GoatTracker {name}'s playroutine")
+    _CODE[name] = bytes(code)
 
 
 def _walk(code: bytes, author):
@@ -168,49 +214,71 @@ def _instructions(code: bytes, author, end: int):
         pos += size
 
 
-@lru_cache(maxsize=None)
-def reference(name: str) -> Reference:
-    """The preprocessed reference for playroutine ``name``."""
-    entry = PLAYERS.get(name)
-    if entry is None:
-        raise SngParseError(f"unknown playroutine {name!r}")
-    code, author = entry["code"], entry["author"]
+def _kernel(ref: Reference) -> np.ndarray:
+    """The two weight rows over the fixed bytes of ``ref`` (zero where wild)."""
+    keep = np.ones(ref.code_end, bool)
+    keep[sorted(ref.wild)] = False
+    return _WEIGHTS[:, : ref.code_end] * keep
+
+
+def _sums(ref: Reference, code: np.ndarray) -> tuple:
+    """The weighted sums of ``code``'s fixed bytes."""
+    return tuple(int(v) for v in _kernel(ref) @ code[: ref.code_end].astype(np.int64))
+
+
+def analyse(name: str, family: str, code: bytes, labels: dict, author) -> dict:
+    """The facts :mod:`pygoattracker._gt1_builds` keeps of an assembled playroutine."""
     relocs, params, end = _walk(code, author)
-    wild = set()
-    for pos in relocs:
-        wild.update((pos, pos + 1))
-    for pos in params:
-        wild.update((pos, pos + 1))
-    smc, zeropage = set(), set()
+    smc, zeropage = set(), {}
     for pos, op, size in _instructions(code, author, end):
         if size == 2 and op in _ZP_MODES and code[pos + 1] in _ZP_TEMPS:
-            zeropage.add(pos + 1)
+            zeropage[pos + 1] = code[pos + 1]
         if size == 3 and op in _SMC_STORES and pos + 1 in relocs:
             target = int.from_bytes(code[pos + 1 : pos + 3], "little") - PLAYER_ORG
             if 0 <= target < end:
                 smc.add(target)
-    hrtimer = entry["labels"].get("mt_hrtimer")
+    hrtimer = labels.get("mt_hrtimer")
     if author and hrtimer is not None and author[0] <= hrtimer < _AUTHOR:
         smc.add(hrtimer)
-    wild.update(smc | zeropage)
-    if author:
-        wild.update(range(_AUTHOR, author[1]))
-    pattern = b"".join(
-        b"." if pos in wild else re.escape(code[pos : pos + 1]) for pos in range(end)
-    )
-    return Reference(
-        name=name,
-        family=entry["family"],
-        code=code,
-        labels=dict(entry["labels"]),
-        code_end=end,
-        relocs=relocs,
-        params=params,
-        smc=tuple(sorted(smc)),
-        zeropage=tuple(sorted(zeropage)),
-        regex=re.compile(pattern, re.S),
-        author_end=author[1] if author else _AUTHOR,
-    )
+    hi, lo = labels["mt_freqtblhi"], labels["mt_freqtbllo"]
+    size = abs(lo - hi)
+    facts = {
+        "family": family,
+        "labels": dict(labels),
+        "length": len(code),
+        "code_end": end,
+        "relocs": tuple((p, int.from_bytes(code[p : p + 2], "little")) for p in relocs),
+        "params": params,
+        "smc": tuple(sorted(smc)),
+        "zeropage": tuple(sorted(zeropage.items())),
+        "freq": _digest(code[hi : hi + size] + code[lo : lo + size]),
+        "author": tuple(author) if author else None,
+        "author_end": author[1] if author else _AUTHOR,
+    }
+    facts["sums"] = _sums(_reference(name, facts), np.frombuffer(code, np.uint8))
+    return facts
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.blake2b(bytes(data), digest_size=16).hexdigest()
+
+
+def _reference(name: str, facts: dict) -> Reference:
+    return Reference(name=name, **{"sums": (), **facts})
+
+
+@lru_cache(maxsize=None)
+def reference(name: str) -> Reference:
+    """The facts of playroutine ``name``."""
+    facts = PLAYERS.get(name)
+    if facts is None:
+        raise SngParseError(f"unknown playroutine {name!r}")
+    return _reference(name, facts)
+
+
+@lru_cache(maxsize=None)
+def _kernel_fft(name: str) -> np.ndarray:
+    return np.fft.rfft(_kernel(reference(name))[:, ::-1], _SPAN)
 
 
 @dataclass
@@ -228,11 +296,10 @@ def _tags(ref: Reference) -> dict:
 
 
 def _match_at(mem, ref: Reference, address: int) -> Gt1Match | None:
-    """Validate the relocations of a regex hit; None if they are inconsistent."""
+    """Validate the relocations of a candidate; None if they are inconsistent."""
     tags = _tags(ref)
     tables: dict = {}
-    for pos in ref.relocs:
-        want = int.from_bytes(ref.code[pos : pos + 2], "little")
+    for pos, want in ref.relocs:
         have = mem[address + pos] | mem[address + pos + 1] << 8
         tag = tags.get(want >> 8)
         if tag is None:
@@ -249,13 +316,22 @@ def _match_at(mem, ref: Reference, address: int) -> Gt1Match | None:
     return Gt1Match(ref=ref, address=address, tables=tables, params=params)
 
 
+def _candidates(spectrum: np.ndarray, ref: Reference) -> np.ndarray:
+    """Addresses whose bytes give ``ref``'s weighted sums, ascending."""
+    corr = np.fft.irfft(spectrum * _kernel_fft(ref.name), _SPAN)
+    sums = np.rint(corr[:, ref.code_end - 1 : ref.code_end - 1 + 0x10000])
+    hit = np.all(sums == np.asarray(ref.sums)[:, None], axis=0)
+    return np.flatnonzero(hit[: 0x10000 - ref.length + 1])
+
+
 def find_player(mem) -> Gt1Match | None:
     """Locate a known GoatTracker V1.x playroutine in a memory image."""
     buf = bytes(mem)
+    spectrum = np.fft.rfft(np.frombuffer(buf.ljust(0x10000, b"\0"), np.uint8), _SPAN)
     for name in PLAYERS:
         ref = reference(name)
-        for hit in ref.regex.finditer(buf):
-            found = _match_at(buf, ref, hit.start())
+        for address in _candidates(spectrum, ref):
+            found = _match_at(buf, ref, int(address))
             if found is not None:
                 return _prefer_data_match(buf, found)
     return None
@@ -266,17 +342,30 @@ def _prefer_data_match(buf: bytes, found: Gt1Match) -> Gt1Match:
     ref = found.ref
     for name in PLAYERS:
         other = reference(name)
-        if other.regex.pattern != ref.regex.pattern:
+        if (other.sums, other.wild) != (ref.sums, ref.wild):
             continue
         hi, lo = other.labels["mt_freqtblhi"], other.labels["mt_freqtbllo"]
         size = abs(lo - hi)
-        if all(
-            buf[found.address + pos : found.address + pos + size]
-            == other.code[pos : pos + size]
-            for pos in (hi, lo)
+        at = found.address
+        if _digest(buf[at + hi : at + hi + size] + buf[at + lo : at + lo + size]) == (
+            other.freq
         ):
             return Gt1Match(other, found.address, found.tables, found.params)
     return found
+
+
+def extract_code(mem, found: Gt1Match) -> bytes:
+    """The playroutine ``found`` in ``mem`` as assembled at :data:`PLAYER_ORG`: its
+    relocated operands restored and its zero-page temporaries the reference's."""
+    ref = found.ref
+    code = bytearray(mem[found.address : found.address + ref.length])
+    for pos, want in ref.relocs:
+        code[pos + 1] = want >> 8
+        if pos not in ref.smc:
+            code[pos] = want & 0xFF
+    for pos, zp in ref.zeropage:
+        code[pos] = zp
+    return bytes(code)
 
 
 @dataclass
@@ -331,6 +420,8 @@ class Gt1Song:
     patterns: list = field(default_factory=list)
     initialized: bool = False
     segments: tuple = ()
+    # The playroutine as assembled (``extract_code`` of a decompiled tune; else registered).
+    code: bytes = b""
     # V1.25 editor-song marker (``gt1sng.parse_gts1``); makes ``pack`` run the relocator first.
     sng: "Gt1Sng | None" = None
 
@@ -375,7 +466,7 @@ class Gt1Song:
         """Absolute addresses of the packed tables, laid out in :attr:`segments` order."""
         if self.sng is not None:
             return self._packed().layout()
-        pos, starts = self.address + len(self.ref.code), {}
+        pos, starts = self.address + self.ref.length, {}
         sizes = self._sizes()
         for name in self.segments:
             starts[name] = pos
@@ -399,10 +490,9 @@ class Gt1Song:
 
     def _player_code(self, tables: dict) -> bytearray:
         ref = self.ref
-        code = bytearray(ref.code)
+        code = bytearray(self.code or ref.code)
         tags = _tags(ref)
-        for pos in ref.relocs:
-            want = int.from_bytes(ref.code[pos : pos + 2], "little")
+        for pos, want in ref.relocs:
             tag = tags.get(want >> 8)
             if tag is None:
                 value = want - PLAYER_ORG + self.address
@@ -522,7 +612,7 @@ def decompile_image(mem, found: Gt1Match, end: int = 0x10000) -> Gt1Song:
     songhi = (tab["songtblhi"] + ref.song_bias) & 0xFFFF
     nsongs3 = (songhi - songlo) & 0xFFFF
     npatt = (tab["patttblhi"] - tab["patttbllo"]) & 0xFFFF
-    _need(inst == found.address + len(ref.code), "instruments do not follow the player")
+    _need(inst == found.address + ref.length, "instruments do not follow the player")
     _need(nsongs3 % 3 == 0 and nsongs3 and npatt, "song or pattern table size")
     order_addrs = [_word(mem, songlo + i, songhi + i) for i in range(nsongs3)]
     patt_addrs = [
@@ -566,7 +656,8 @@ def decompile_image(mem, found: Gt1Match, end: int = 0x10000) -> Gt1Song:
         params=found.params,
         author=bytes(mem[base + _AUTHOR : base + ref.author_end]),
         state={pos: mem[base + pos] for pos in ref.free},
-        data=bytes(mem[base + ref.code_end : base + len(ref.code)]),
+        data=bytes(mem[base + ref.code_end : base + ref.length]),
+        code=extract_code(mem, found),
         instruments=[Gt1Instrument(*row) for row in rows],
         wavetable=list(
             zip(mem[wave : wave + wavelen], mem[wave + wavelen : wave + 2 * wavelen])

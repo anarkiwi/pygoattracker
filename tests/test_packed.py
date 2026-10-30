@@ -17,6 +17,7 @@ from pygoattracker import sid
 from pygoattracker import typed as T
 from pygoattracker.model import Orderlist, PlayPattern, Repeat, Transpose
 from pygoattracker.player import Player
+from tests.conftest import pass_frames
 from tests.test_sid import DATA, _minimal_packed
 
 TEMPO = "A9 05 9D 10 20 A9 01 9D 11 20 9D 12 20"
@@ -135,8 +136,9 @@ def test_the_tuning_is_the_frequencies_and_the_player_reads_past_it():
 
 def test_the_player_plays_the_typed_song_as_it_plays_the_song():
     d = sid.decompile_sid(_minimal_packed())
-    a = Player(d.typed, freq_table=d.info.note_read).render_grid(20)
-    b = Player(d.song, freq_table=d.info.note_read).render_grid(20)
+    frames = pass_frames(Player(d.song, freq_table=d.info.note_read))
+    a = Player(d.typed, freq_table=d.info.note_read).render_grid(frames)
+    b = Player(d.song, freq_table=d.info.note_read).render_grid(frames)
     assert a == b
 
 

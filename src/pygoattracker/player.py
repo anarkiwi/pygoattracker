@@ -1,8 +1,10 @@
 """GoatTracker 2 playroutine in Python.
 
 :class:`Player` is a :class:`pysidtracker.MemPlayer`: it inherits the
-flat memory image, the post-init snapshot, the diffing :meth:`play_frame` and the
-:meth:`render_grid`/:meth:`iter_frames` drivers, and implements only the two
+flat memory image, the post-init snapshot, the diffing
+:meth:`~pysidtracker.MemPlayer.play_frame` and the
+:meth:`~pysidtracker.MemPlayer.render_grid`/:meth:`~pysidtracker.MemPlayer.iter_frames`
+drivers, and implements only the two
 tracker-specific hooks -- :meth:`_init` (build the playroutine state and run the
 editor's reset) and :meth:`_frame` (advance one play call, writing this frame's
 SID registers into ``$D400``). Everything else here is a private transcription of

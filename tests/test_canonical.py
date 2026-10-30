@@ -17,10 +17,10 @@ from pygoattracker.reader import read_sng
 from pygoattracker.rebuild import song_into_sid
 from pygoattracker.sid import decompile_sid
 from pygoattracker.writer import build_sng
+from tests.conftest import pass_frames
 from tests.test_gt1 import make_song11
 
 DATA = Path(__file__).parent / "data"
-FRAMES = 300
 
 LEAD = T.Instrument(0x09, 0x89, 1, 1, 1, 1, 2, 2, first_wave=T.SetWave(0x09))
 BASS = T.Instrument(0x00, 0xF8, 4, 0, 0, 0, 0, 3, first_wave=T.SetWave(0x41))
@@ -72,8 +72,10 @@ def canon(s: T.TypedSong, subtune: int = 0) -> str:
     return text.dumps(canonical_song(s, subtune))
 
 
-def grid(s: T.TypedSong, subtune: int = 0):
-    return Player(s, subtune=subtune).render_grid(FRAMES)
+def grid(s: T.TypedSong, subtune: int = 0, **options):
+    """``s``'s register grid over one whole pass of the song."""
+    frames = pass_frames(Player(s, subtune=subtune, **options))
+    return Player(s, subtune=subtune, **options).render_grid(frames)
 
 
 def same_play(a: T.TypedSong, b: T.TypedSong) -> bool:
@@ -285,7 +287,5 @@ def test_only_the_tuning_the_player_can_read_counts():
     played = tuning[:48] + (0,) + tuning[49:]
     for other, same in ((unread, True), (played, False)):
         texts = [text.dumps(canonical_song(song(), 0, f)) for f in (tuning, other)]
-        grids = [
-            Player(song(), freq_table=f).render_grid(FRAMES) for f in (tuning, other)
-        ]
+        grids = [grid(song(), freq_table=f) for f in (tuning, other)]
         assert (texts[0] == texts[1]) == (grids[0] == grids[1]) == same

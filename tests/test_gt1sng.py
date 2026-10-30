@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from pysidtracker.oracle import EmuPlayer
+from pysidtracker.testing import resolve_tune, song_frames
 
 from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.gt1 import DEFAULT_PARAMS, Gt1Song, decompile_gt1
@@ -29,6 +30,7 @@ from tests._fixture_cache import (
     goattrk093_song,
     goattrk_song,
 )
+from tests.conftest import pass_frames
 
 ORACLE_SID = "MUSICIANS/C/Cadaver/GoatTracker_Classical_Example.sid"
 DOJO_SID = "MUSICIANS/C/Cadaver/Dojo.sid"
@@ -38,8 +40,6 @@ V153_SONGS = sorted(GOATTRK_SONGS)
 
 
 def _oracle_sid(relpath: str = ORACLE_SID) -> Path:
-    from pysidtracker.testing import resolve_tune
-
     path = resolve_tune(relpath)
     if path is None:
         pytest.skip("oracle sid unavailable (no local HVSC tree, mirror offline)")
@@ -114,6 +114,13 @@ def emulated(song: Gt1Song, frames: int, subtune: int = 0):
     return emu.render_grid(frames)
 
 
+def assert_plays_as_6502(song: Gt1Song):
+    """``song``'s native player renders the packed 6502 playroutine's grid over one
+    whole pass of the song (:func:`pass_frames`)."""
+    frames = pass_frames(Gt1Player(song))
+    assert Gt1Player(song).render_grid(frames) == emulated(song, frames)
+
+
 @pytest.mark.parametrize("name", SONGS)
 def test_parse_and_round_trip(name):
     data = goatold_song(name)
@@ -127,20 +134,23 @@ def test_parse_and_round_trip(name):
 @pytest.mark.parametrize("name", SONGS)
 def test_playback_matches_6502_playroutine(name):
     song = parse_gts1(goatold_song(name))
-    assert Gt1Player(song).render_grid(120) == emulated(song, 120)
+    assert_plays_as_6502(song)
 
 
 def test_goatclas_matches_gvsc_sid():
     """The relocator must reproduce the editor's packed tune byte for byte."""
-    sid = _oracle_sid().read_bytes()
+    path = _oracle_sid()
+    sid = path.read_bytes()
     image = sid[0x7E:]
     song = parse_gts1(goatold_song("GOATCLAS.SNG"), "11.3")
     assert song.sng.name == b"GoatTracker classical example"
     assert relocate(song).pack() == (0x1000, image)
     decoded = decompile_gt1(sid)
     assert decoded.player == "11.3"
-    assert Gt1Player(song).render_grid(300) == Gt1Player(decoded).render_grid(300)
-    assert Gt1Player(song).render_grid(300) == emulated(song, 300)
+    frames = song_frames(path)
+    grid = Gt1Player(song).render_grid(frames)
+    assert grid == Gt1Player(decoded).render_grid(frames)
+    assert grid == emulated(song, frames)
 
 
 def test_goatclas_relocates_instruments_and_wavetable():
@@ -313,7 +323,7 @@ def test_author_block_per_playroutine():
 @pytest.mark.parametrize("player", ("11.1", "11.2", "11.3", "11.4", "11.5"))
 def test_playback_matches_6502_for_each_playroutine(player):
     song = parse_gts1(goatold_song("GOATCLAS.SNG"), player)
-    assert Gt1Player(song).render_grid(120) == emulated(song, 120)
+    assert_plays_as_6502(song)
 
 
 @pytest.mark.parametrize("member", V093_SONGS)
@@ -413,24 +423,26 @@ def test_v153_parse_and_round_trip(name):
 @pytest.mark.parametrize("name", V153_SONGS)
 def test_v153_playback_matches_6502_playroutine(name):
     song = parse_gts1(goattrk_song(name))
-    assert Gt1Player(song).render_grid(300) == emulated(song, 300)
+    assert_plays_as_6502(song)
 
 
 def test_dojo_matches_hvsc_sid():
     """The relocator must reproduce the editor's packed tune byte for byte."""
-    sid = _oracle_sid(DOJO_SID).read_bytes()
+    path = _oracle_sid(DOJO_SID)
+    sid = path.read_bytes()
     image = sid[0x7E:]
     song = parse_gts1(goattrk_song("examples/dojo.sng"))
     assert relocate(song).pack() == (0x1000, image)
     decoded = decompile_gt1(sid)
     assert decoded.player == "1.53"
-    assert Gt1Player(song).render_grid(300) == Gt1Player(decoded).render_grid(300)
+    frames = song_frames(path)
+    assert Gt1Player(song).render_grid(frames) == Gt1Player(decoded).render_grid(frames)
 
 
 @pytest.mark.parametrize("player", ("1.50", "1.50b", "1.51", "1.52"))
 def test_v153_playback_matches_6502_for_each_player(player):
     song = parse_gts1(goattrk_song("examples/dojo.sng"), player)
-    assert Gt1Player(song).render_grid(120) == emulated(song, 120)
+    assert_plays_as_6502(song)
 
 
 def test_v153_instrument_conversion_and_dedup():

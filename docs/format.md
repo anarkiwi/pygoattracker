@@ -218,10 +218,11 @@ The voice layout is read off the player, not assumed:
 - **overlay**: each channel's `(and, or)` on the control byte it writes (a hook
   between the player and the chip), from the bytes its voice holds for waveforms
   setting and clearing every bit, each set by a held wavetable row.
-- **player and wrapper** (`DecompiledSid.info.wrap`): of the jump tables before a
-  player's `mt_initchn`, the player is the last one the init enters
-  (`pysidtracker.trace.trace_init_argument`), so a module bundling several players
-  plays the one its song selects; its play entries are the table's
+- **player and wrapper** (`DecompiledSid.info.wrap`): a player's jump table is the
+  last run of jumps before its `mt_initchn` whose init or play target lies in its
+  code (a wrapper may divert the other), and of the players in a module the one
+  whose table the init enters (`pysidtracker.trace.trace_init_argument`) is the
+  one the song selects; its play entries are the table's
   (`pysidtracker.codescan.play_entries`), or, where the table's play jump leads
   out of the player into a wrapper, the first call that wrapper makes back into
   it. A header play routine that is not the player's own entry runs as written

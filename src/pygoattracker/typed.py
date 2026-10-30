@@ -8,8 +8,10 @@ and converts both ways without loss (``TypedSong.from_song(s).to_song() == s``).
 from dataclasses import dataclass, field, fields
 from functools import partial
 
+from pysidtracker.bytegrammar import fits
+
 from pygoattracker import constants as C
-from pygoattracker.errors import GoatTrackerError, SngValidationError
+from pygoattracker.errors import SngValidationError
 from pygoattracker.model import Instrument as RawInstrument
 from pygoattracker.model import Orderlist, Pattern, Song, Subtune, Table
 from pygoattracker.model import Row as RawRow
@@ -604,18 +606,7 @@ class Instrument:
 # ---- the song ---------------------------------------------------------------
 
 
-_CODEC_ERRORS = (ValueError, KeyError, TypeError, OverflowError, GoatTrackerError)
-
-
-def fits(value, encode, decode, what: str) -> None:
-    """Raise unless ``value`` has bytes that read back as it: every field fits its
-    width, in the context ``encode``/``decode`` read it in."""
-    try:
-        back = decode(bytes(encode(value)))
-    except _CODEC_ERRORS as exc:
-        raise SngValidationError(f"{what}: {value!r} has no bytes ({exc})") from exc
-    if back != value:
-        raise SngValidationError(f"{what}: {value!r} reads back as {back!r}")
+_fits = partial(fits, error=SngValidationError)
 
 
 def _byte(value):
@@ -690,41 +681,43 @@ class TypedSong:
             (self.speedtable, speed_bytes, speed_row, "speedtable"),
         ):
             for num, row in enumerate(rows, 1):
-                fits(row, enc, lambda raw, f=dec: f(*raw), f"{name} row {num}")
+                _fits(row, enc, lambda raw, f=dec: f(*raw), f"{name} row {num}")
         if self.speed0 is not None:
-            fits(self.speed0, speed_bytes, lambda raw: speed_row(*raw), "speed0")
+            _fits(self.speed0, speed_bytes, lambda raw: speed_row(*raw), "speed0")
         for num, ins in enumerate(self.instruments, 1):
             rebuild = lambda raw, n=ins.name: Instrument.of(RawInstrument(*raw, n))
-            fits(ins, _ins_bytes, rebuild, f"instrument {num}")
+            _fits(ins, _ins_bytes, rebuild, f"instrument {num}")
         for s_num, sub in enumerate(self.subtunes):
             for c_num, order in enumerate(sub.channels):
                 what = f"subtune {s_num} orderlist {c_num}"
                 for entry in order.entries:
-                    fits(
+                    _fits(
                         entry,
                         lambda e: (e.to_byte(),),
                         lambda raw: entry_from_byte(raw[0]),
                         what,
                     )
-                fits(order.restart, _byte, _unbyte, f"{what} restart")
+                _fits(order.restart, _byte, _unbyte, f"{what} restart")
         for p_num, rows in enumerate(self.patterns):
             for r_num, row in enumerate(rows):
                 what = f"pattern {p_num} row {r_num}"
-                fits(
+                _fits(
                     row.note,
                     lambda n: (note_byte(n),),
                     lambda raw: note_of(raw[0]),
                     what,
                 )
                 if row.instrument is not None:
-                    fits(row.instrument, _byte, _unbyte, what)
+                    _fits(row.instrument, _byte, _unbyte, what)
                 if row.command is not None:
-                    fits(row.command, command_bytes, lambda raw: command_of(*raw), what)
+                    _fits(
+                        row.command, command_bytes, lambda raw: command_of(*raw), what
+                    )
                 if row.length < 1:
                     raise SngValidationError(f"{what}: length {row.length} below 1")
-        fits(self.firstnote, _byte, _unbyte, "firstnote")
+        _fits(self.firstnote, _byte, _unbyte, "firstnote")
         for freq in self.freq:
-            fits(
+            _fits(
                 freq,
                 lambda v: v.to_bytes(2, "little"),
                 lambda raw: int.from_bytes(raw, "little"),

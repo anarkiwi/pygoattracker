@@ -225,3 +225,4 @@ __marimo__/
 core.[0-9]*
 .roundtrip/
 .hvsc-survey/
+.coverage-work/

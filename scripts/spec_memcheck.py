@@ -57,11 +57,9 @@ def spec_player(data: bytes, song: int):
     return fmt.player(fmt.load(data, song - 1))
 
 
-def check(data: bytes, song: int) -> dict:
-    """Play 1-based ``song`` of ``data`` on the spec and on the 6502, whole song."""
-    spec = spec_player(data, song)
-    cpu = Host(data, song - 1)
-    frames = song_frames(data, song)
+def compare(spec, cpu, frames: int) -> dict:
+    """Play ``frames`` calls on ``spec`` and ``cpu`` side by side: ``frame`` "ok",
+    else the first call whose SID registers or RAM differ, and where."""
     for frame in range(frames):
         spec.play_frame()
         cpu.play_frame()
@@ -82,6 +80,13 @@ def check(data: bytes, song: int) -> dict:
                 frames=frames, frame=frame, at=f"{at:04X}", mine=mine, real=real
             )
     return dict(frames=frames, frame="ok")
+
+
+def check(data: bytes, song: int) -> dict:
+    """Play 1-based ``song`` of ``data`` on the spec and on the 6502, whole song."""
+    return compare(
+        spec_player(data, song), Host(data, song - 1), song_frames(data, song)
+    )
 
 
 def _job(job):

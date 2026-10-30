@@ -64,6 +64,30 @@ def _describe_gt1(model: DecompiledGt1) -> Iterable[str]:
     yield f"instruments: {len(song.instruments)}"
 
 
+class Stored(bytes):
+    """A stream's stored bytes, as a byte-grammar listing's model."""
+
+    def to_bytes(self) -> bytes:
+        """The bytes themselves."""
+        return bytes(self)
+
+
+def _stored(streams) -> list:
+    """``(name, model, rule)`` of ``(name, rule, bytes)`` streams."""
+    return [(name, Stored(raw), rule) for name, rule, raw in streams]
+
+
+def gt2_streams(model: DecompiledSid) -> list:
+    """The packed orderlists and patterns the layout points at, as stored."""
+    mem = model.image.mem if model.memory is None else model.memory
+    return _stored(packed.stream_trees(mem, model.info.layout))
+
+
+def gt1_streams(model) -> list:
+    """The orderlists and patterns of ``model.song``, a V1.x song."""
+    return _stored(gt1streams.stream_trees(model.song))
+
+
 GT2_PROBES = {
     "typed": lambda model: text.dumps(model.typed),
     "repack": lambda model: model.repack(),

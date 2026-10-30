@@ -100,8 +100,22 @@ def stream_trees(song) -> list:
         for s, chans in enumerate(song.orderlists)
         for c, blob in enumerate(chans)
     ]
-    patt = "editor_pattern" if read.editor else "pattern"
-    return out + [(f"pattern {k}", patt, bytes(b)) for k, b in enumerate(song.patterns)]
+    return out + [
+        (f"pattern {k}", pattern_rule(b, read.editor), bytes(b))
+        for k, b in enumerate(song.patterns)
+    ]
+
+
+def pattern_rule(blob: bytes, editor: bool) -> str:
+    """The rule a pattern's bytes read as: a packed pattern the end of the data
+    cuts short is a ``pattern_cut``."""
+    if editor:
+        return "editor_pattern"
+    try:
+        STREAMS.parse_prefix(bytes(blob), "pattern")
+    except SngParseError:
+        return "pattern_cut"
+    return "pattern"
 
 
 def pattern_rows(blob: bytes, editor: bool) -> tuple:

@@ -127,6 +127,22 @@ def _sid2sng(args) -> None:
     print(f"wrote {args.output}")
 
 
+def _sng2sid(args) -> None:
+    from pygoattracker import text
+    from pygoattracker.gt1typed import Gt1TypedSong
+    from pygoattracker.rebuild import song_into_sid
+
+    data = Path(args.song).read_bytes()
+    if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
+        song = read_sng(data)
+    else:
+        song = text.loads(data.decode())
+    if isinstance(song, (Gt1Song, Gt1TypedSong)):
+        raise GoatTrackerError("a GoatTracker V1.x song has no GoatTracker 2 player")
+    Path(args.output).write_bytes(song_into_sid(Path(args.sid).read_bytes(), song))
+    print(f"wrote {args.output}")
+
+
 def _typed(data: bytes, subtune: int):
     """The typed song of a .sng, or of a packed GoatTracker 2 or V1.x .sid."""
     from pygoattracker import gt1, sid
@@ -171,9 +187,9 @@ def _fromtext(args) -> None:
 
 
 def _grammar(args) -> None:
-    from pysidtracker.bytegrammar import render
+    from types import SimpleNamespace
 
-    from pygoattracker import gt1, gt1streams, packed, sid
+    from pygoattracker.formats import GOATTRACKER1, GOATTRACKER2
 
     data = Path(args.song).read_bytes()
     if data[:4] in constants.SNG_COMPATIBLE_MAGICS:
@@ -182,23 +198,13 @@ def _grammar(args) -> None:
             raise GoatTrackerError(
                 "a GoatTracker 2 .sng holds counted sections, not streams"
             )
-        grammar, streams = gt1streams.STREAMS, gt1streams.stream_trees(song)
+        fmt, model = GOATTRACKER1, SimpleNamespace(song=song)
     else:
         try:
-            dec = sid.decompile_sid(data, subtune=args.subtune)
+            fmt, model = GOATTRACKER2, GOATTRACKER2.load(data, args.subtune)
         except GoatTrackerError:
-            song = gt1.decompile_gt1(data, args.subtune)
-            grammar, streams = gt1streams.STREAMS, gt1streams.stream_trees(song)
-        else:
-            mem = dec.image.mem if dec.memory is None else dec.memory
-            grammar, streams = packed.STREAMS, packed.stream_trees(mem, dec.info.layout)
-    for name, rule, raw in streams:
-        print(f"{name}:")
-        try:
-            lines = list(render(grammar.tree(raw, rule)))
-        except GoatTrackerError as exc:
-            lines = [f"! {exc}"]
-        print("\n".join("  " + line for line in lines))
+            fmt, model = GOATTRACKER1, GOATTRACKER1.load(data, args.subtune)
+    print("\n".join(fmt.listing(model)))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -243,6 +249,14 @@ def _parser() -> argparse.ArgumentParser:
     sid2sng.add_argument("output", help=".sng file to write")
     sid2sng.add_argument("--subtune", type=int, default=0)
     sid2sng.set_defaults(func=_sid2sng)
+
+    sng2sid = commands.add_parser(
+        "sng2sid", help="write a .sng or song text into a packed .sid's player"
+    )
+    sng2sid.add_argument("sid", help="packed GoatTracker 2 .sid file")
+    sng2sid.add_argument("song", help=".sng or song text file")
+    sng2sid.add_argument("output", help=".sid file to write")
+    sng2sid.set_defaults(func=_sng2sid)
 
     totext = commands.add_parser(
         "text", help="print a .sng or packed .sid in its song grammar"

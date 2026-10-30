@@ -61,11 +61,12 @@ See [docs/usage.md](docs/usage.md) for building songs, playback, register logs,
 WAV rendering, NinjaTracker 2, and the command line,
 [docs/format.md](docs/format.md) for the format specification, data model, and
 `.sid` decompilation notes, [docs/grammar.md](docs/grammar.md) for the GT2 and V1.x song grammars
-(abstract syntax, byte encodings, playback semantics), and [docs/oracle-testing.md](docs/oracle-testing.md)
+(abstract syntax, byte encodings, playback semantics, canonical text), and [docs/oracle-testing.md](docs/oracle-testing.md)
 for the byte-exact oracle tests.
 
 Installed, it also registers the `goattracker1` and `goattracker2` formats with
-the `pysidtracker` CLI (`pysidtracker info|reglog|wav tune.sid`); see
+the `pysidtracker` CLI (`pysidtracker info|reglog|wav|grammar tune.sid`, and
+`pysidtracker equiv a.sid b.sid` for GT2); see
 [docs/usage.md](docs/usage.md#pysidtracker-command-line).
 
 ## Development

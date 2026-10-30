@@ -5,7 +5,7 @@ states what they mean, per GoatTracker 2.76's ``readme.txt`` and ``player.s``,
 and converts both ways without loss (``TypedSong.from_song(s).to_song() == s``).
 """
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from functools import partial
 
 from pysidtracker.bytegrammar import fits
@@ -639,6 +639,35 @@ def raw_rows(rows) -> list[RawRow]:
         out.append(RawRow(note_byte(r.note), r.instrument or 0, *held))
         out += [RawRow(C.REST, 0, *held) for _ in range(r.length - 1)]
     return out
+
+
+REST_RUN = 0x40  # the rows a packed rest byte ($C0-$FF) spans at most
+
+
+def packed_rows(rows, state_first: bool = True) -> tuple[Row, ...]:
+    """greloc's packed form of editor ``rows`` (:func:`raw_rows` reads it back): a
+    command stated where it changes and, with ``state_first``, on the first row;
+    rests after the first row run together."""
+    out, held = [], None if state_first else (0, 0)
+    for r in rows:
+        cmd = command_bytes(r.command)
+        same, held = cmd == held, cmd
+        last = out[-1] if len(out) > 1 else Row(KeyOn())
+        if (
+            same
+            and _bare_rest(r)
+            and _bare_rest(last)
+            and last.command is None
+            and last.length < REST_RUN
+        ):
+            out[-1] = replace(last, length=last.length + 1)
+        else:
+            out.append(Row(r.note, r.instrument, None if same else r.command))
+    return tuple(out)
+
+
+def _bare_rest(row: Row) -> bool:
+    return isinstance(row.note, Rest) and row.instrument is None
 
 
 @dataclass(frozen=True)

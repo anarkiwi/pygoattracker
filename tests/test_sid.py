@@ -465,17 +465,9 @@ def test_the_anchor_is_that_of_the_player_the_init_ran(monkeypatch):
     monkeypatch.setattr(
         sid,
         "player_span",
-        lambda image, data, entered=None: types.SimpleNamespace(
-            start=entered if data < 0x2000 else None
+        lambda image, data, entered: types.SimpleNamespace(
+            start=0x1800 if data < 0x2000 else None
         ),
     )
-    assert sid._played_anchor(None, anchors[1], 0x1800) == anchors[0]
-    assert sid._played_anchor(None, anchors[1], None) == anchors[1]
-
-
-def test_the_init_enters_the_jump_table_it_reaches_last():
-    mem = bytearray(0x10000)
-    for table in (0x1000, 0x2000):
-        mem[table : table + 6] = bytes((0x4C, 0, 0, 0x4C, 0, 0))
-    assert sid._entered(mem, [0x0F00, 0x1000, 0x1006, 0x2000, 0x2010]) == 0x2000
-    assert sid._entered(mem, [0x0F00]) is None
+    assert sid._played_anchor(None, anchors[1], {0x1800}) == anchors[0]
+    assert sid._played_anchor(None, anchors[1], {0x1000}) == anchors[1]

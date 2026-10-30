@@ -66,7 +66,7 @@ class Trace:
     ``$D400-$D7FF``,
     ``counted``
     the origins of the bytes incremented or decremented in place, ``pcs`` every
-    instruction address run, in the order first run.
+    instruction address run.
     """
 
     def __init__(self, subject, mpu, mem):
@@ -76,7 +76,7 @@ class Trace:
         self.cells = {}
         self.reads, self.stores, self.sid = [], [], []
         self.counted = set()
-        self.pcs = {}
+        self.pcs = set()
         self._rd, self._wr = [], []
         observe_data_access(mpu, self._rd.append, lambda a, v: self._wr.append(a))
 
@@ -86,7 +86,7 @@ class Trace:
     def _step(self):
         mpu, sub, rd, wr, regs = self.mpu, self.subject, self._rd, self._wr, self.regs
         pc = mpu.pc
-        self.pcs.setdefault(pc)
+        self.pcs.add(pc)
         name, mode = OPCODES[sub[pc]]
         rd.clear()
         wr.clear()

@@ -7,18 +7,9 @@ for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
 
 import pytest  # noqa: E402  (after the BLAS thread caps)
 
-from pysidtracker import survey  # noqa: E402
-from pysidtracker.testing import default_cache  # noqa: E402
 
 from pygoattracker import constants  # noqa: E402
 from pygoattracker.model import Instrument, Pattern, Row, Song  # noqa: E402
-
-
-def pytest_sessionstart(session):
-    """Settle the oracle trace cache once, before xdist workers would race to empty
-    its stale traces."""
-    if not hasattr(session.config, "workerinput"):
-        survey.oracle_cache(default_cache("csv"))
 
 
 def note(name: str) -> int:

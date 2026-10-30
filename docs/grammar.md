@@ -125,8 +125,13 @@ parsed by `pysidtracker.ByteGrammar` (one latin-1 character per byte) into
 `typed` rows and orderlist entries (`packed.pattern_rows`, `packed_orderlist`).
 A pattern reads as `player.s`'s `mt_getnewnote` walks it: `$00` ends it only
 after a row, and after an instrument byte any byte below `$60` is a command and
-any from `$60` a note. `pygoattracker grammar tune.sid` prints every stream's
-parse tree.
+any from `$60` a note (from `$C0` a `Gate`, not a rest run). The player reads
+each stream with an 8-bit cursor: rows that fill its 256-byte reach end the
+pattern (greloc writes no end mark after a 256-byte pattern), an orderlist with
+no `$FF` in reach wraps to its start (restart 0, written back without an end),
+and a last row the reach cuts short wraps the cursor into the pattern's own
+start, which rows cannot state, so the rows end before it.
+`pygoattracker grammar tune.sid` prints every stream's parse tree.
 
 Two extra transforms apply: a packed tempo `t >= 3` is stored as `t − 1`, and
 the instrument and table columns depend on the build (NOWAVEDELAY,

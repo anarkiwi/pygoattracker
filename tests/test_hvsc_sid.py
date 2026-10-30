@@ -33,7 +33,6 @@ raises a clean ``SidParseError`` (never any other exception).
 """
 
 import functools
-import re
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +40,7 @@ import pytest
 
 from pysidtracker import PlayroutineKind
 from pysidtracker.oracle import register_grid
-from pysidtracker.testing import resolve_tune
+from pysidtracker.testing import check_outcome, corpus_params, resolve_tune
 
 from pygoattracker import sid
 from pygoattracker.errors import SidParseError
@@ -114,7 +113,7 @@ _OVERCLAIMED = {
     "MUSICIANS/B/Bayliss_Richard/Synthia_in_the_Cyber_Crypt.sid": (False,)
     + (True,) * 3,
     "MUSICIANS/B/Bayliss_Richard/Trance_Sector.sid": (False,) * 3 + (True,) * 11,
-    "MUSICIANS/L/Linus/Darkness.sid": (False,) + (None,) * 5,
+    "MUSICIANS/L/Linus/Darkness.sid": (False,) + (True,) * 5,
 }
 
 # Representatives, one per decoder capability, that must fully decompile and
@@ -175,8 +174,8 @@ def test_sample_list_is_deterministic():
     assert len(sample) > 250
 
 
-@pytest.mark.parametrize("rel", _sample())
-def test_hvsc_sample_tune(rel):
+@pytest.mark.parametrize("rel,message", corpus_params(_sample(), _NOT_DECODED))
+def test_hvsc_sample_tune(rel, message):
     """A sampled tune is recognized as a direct-load image, decompiles, and
     re-encodes from its typed song to its own packed bytes (or, for a pattern
     spelt outside greloc's grammar, to bytes the player reads the same) and to
@@ -184,13 +183,11 @@ def test_hvsc_sample_tune(rel):
     path = _resolve(rel)
     if path is None:
         pytest.skip(f"{rel} unavailable (local or mirror)")
-    if rel in _NOT_DECODED:
-        with pytest.raises(SidParseError, match=re.escape(_NOT_DECODED[rel])):
-            _decompile(path)
+    result = check_outcome(_decompile, path, message, SidParseError)
+    if result is None:
         return
     parser = sid.GoatTrackerSidParser()
     assert parser.detect(path.read_bytes(), init=False).kind is PlayroutineKind.DIRECT
-    result = _decompile(path)
     assert result.song.patterns and result.song.subtunes
     patterns = set(result.info.layout.patt_addrs)
     # inline effect parameters become speed rows, which cannot be packed back
@@ -244,12 +241,13 @@ def test_hvsc_representatives(rel, expect):
 
 
 def test_wrapper_selected_player():
-    """Issue #34: a wrapper rewrites the play entry per song to pick a player.
+    """Issue #34: a wrapper rewrites the init and play jumps per song to pick a
+    player.
 
-    Ewe_Woz_Ere_DX bundles two players. Songs 1-9 enter the wrapper-selected
-    build (zero-page ghost that the play wrapper flushes to the chip), which the
-    decoder must select -- not the frequency anchor it sees first. Songs 2 and 9
-    are the issue's named cases; they decode to the wrapper-flush build.
+    Ewe_Woz_Ere_DX bundles two players. Songs 1-9 run the one at $8000, whose
+    play jump leads to a wrapper calling ``mt_play`` and flushing its zero-page
+    ghost; song 10 the one at $7900. The init selects the player, and the
+    wrapper runs around ``mt_play`` into the ghost it flushes.
     """
     rel = "MUSICIANS/B/Bop/Ewe_Woz_Ere_DX.sid"
     path = _resolve(rel)
@@ -257,11 +255,10 @@ def test_wrapper_selected_player():
         pytest.skip(f"{rel} unavailable (local or mirror)")
     raw = path.read_bytes()
     for subtune in (1, 8):  # songs 2 and 9
-        result = sid.decompile_sid(raw, subtune=subtune)
-        assert (
-            result.info.playback.wrapper_flush
-        ), f"song {subtune + 1}: the wrapper-selected ghost-flush build must be the one decoded"
-        assert result.player() is not None, f"song {subtune + 1}: no player"
+        wrap = sid.decompile_sid(raw, subtune=subtune).info.wrap
+        assert (wrap.entries, wrap.sink) == ({0x80B3}, 0xE2)
+    wrap = sid.decompile_sid(raw, subtune=9).info.wrap
+    assert (wrap.entries, wrap.sink) == ({0x7903, 0x79B2}, None)
 
 
 def _tune(rel):

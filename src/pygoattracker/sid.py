@@ -39,7 +39,9 @@ from pysidtracker import (
 from pysidtracker import parse_sid_header as _parse_sid_header
 from pysidtracker.image import load_prefix
 from pysidtracker.trace import trace_init_argument
+from pysidtracker.emu import SidWriteLog
 from pysidtracker.wrap import Wrap, Wrapped, count_entries, measure_wrap
+from pysidtracker.wrap import boot as boot_wrap
 from pysidtracker.poweron import power_on_ram
 
 from pygoattracker import constants
@@ -371,12 +373,13 @@ def _all_anchors(image):
     return kept
 
 
-def _played_anchor(after, anchor, pcs, reached=None):
-    """The frequency-table anchor of the player whose jump table the init ran, else
-    ``anchor``: a wrapper bundling several players runs the one its song selects."""
+def _played_anchor(after, anchor, reached):
+    """The frequency-table anchor of the player whose jump table the init enters
+    (``reached(table)``), else ``anchor``: a wrapper bundling several players runs
+    the one its song selects."""
     for found in _all_anchors(after):
-        start = player_span(after, found[0], reached).start
-        if start is not None and start in pcs:
+        start = player_span(after, found[0]).start
+        if start is not None and reached(start):
             return found
     return anchor
 
@@ -459,6 +462,20 @@ def _mirror(voices, chips):
     return tuple(v if v is None or v // 0x20 in chips else v % 0x20 for v in voices)
 
 
+def _flushed(image, wrap, voices):
+    """``voices`` (offsets from ``$D400`` the play routine writes each channel to)
+    as offsets into the ghost ``wrap`` flushes: the ghost byte the routine copies
+    to each voice's first register."""
+    if voices is None:
+        return None
+    mpu, mem = boot_wrap(image, wrap.song)[1:3]
+    log = SidWriteLog(mpu, mirrors=False)
+    for _ in range(2):
+        writes = log.call(mem, wrap.play)
+    read = {reg: addr - wrap.sink for reg, addr, _, _ in writes if addr is not None}
+    return tuple(v if v is None else read.get(v, v) for v in voices)
+
+
 def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> DecompiledSid:
     """The song data the player the tune's init selects reads, decompiled, its
     voices on the header's ``chips``."""
@@ -467,7 +484,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     def reached(table):
         return trace_init_argument(image, None, table, subtune) is not None
 
-    base = player_span(image, anchor[0], reached).start
+    base = player_span(image, anchor[0]).start
     play = header.play_address or (None if base is None else base + 3)
     traced = []
 
@@ -484,7 +501,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     for addr, (org, exact, *_) in traced[0].cells.items():
         if exact and org is not None and org != addr:
             copies.setdefault(org, []).append(addr)
-    anchor = _played_anchor(after, anchor, traced[0].pcs, reached)
+    anchor = _played_anchor(after, anchor, reached)
     t = song_tables((*booted[:3], play or booted[3]), traced[0])
 
     def pointers(lo, hi, n):
@@ -525,14 +542,14 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
         channels=t.stride,
     )
 
-    code = player_span(after, anchor[0], reached)
+    code = player_span(after, anchor[0])
     entries = frozenset() if code.start is None else play_entry(after, code)
     wrap = measure_wrap(image, subtune, play, entries)
     if play is not None and count_entries(image, subtune, play, entries) > 1:
         play = code.start + 3
 
     def bench(lay):
-        span = (player_span(after, lay.freq_addr, reached).start, lay.freq_addr)
+        span = (player_span(after, lay.freq_addr).start, lay.freq_addr)
         return Bench(
             image, lay, sizes, tuple(orders), subtune, play, span, t.song, copies
         )
@@ -551,7 +568,8 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     probe = bench(lay)
     build = replace(measure(probe, t.channels), idle=t.idle)
     if wrap is not None and wrap.sink is not None:
-        build = replace(build, ghost=wrap.sink)
+        voices = _flushed(image, wrap, build.voices)
+        build = replace(build, ghost=wrap.sink, voices=voices)
     build = replace(build, voices=_mirror(build.voices, chips))
     song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)

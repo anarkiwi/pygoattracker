@@ -261,30 +261,34 @@ _JUMPS = "4C {init:w} 4C ?? ??"
 _TABLE = 6  # jmp mt_init, jmp mt_play
 
 
-def player_span(image, data, reached=None):
+def player_span(image, data):
     """The :class:`PlayerCode` of the player whose song data starts at ``data``.
 
     greloc emits the jump table (``jmp mt_init``, ``jmp mt_play``), the player
     code and then the data, so an image holding several players keeps each one's
     code between its jump table and its data. The instance is the last
-    ``mt_initchn`` below ``data`` and the last jump table before it
-    (:func:`~pysidtracker.codescan.jump_table`); ``reached(base)``, where given,
-    names the tables the tune's init enters, and of the tables whose ``mt_init``
-    lies between table and ``mt_initchn`` the last it enters is the player a
-    bundling wrapper selects. The whole image without a jump table.
+    ``mt_initchn`` below ``data`` and the last jump table before it whose
+    ``mt_init`` lies between the two (a table's first entry, where a third jump
+    follows; a play jump may lead out of the player, into a wrapper), else the
+    last whose ``mt_play`` does (:func:`~pysidtracker.codescan.jump_table`); the
+    whole image without such a jump table.
     """
     tempo = find_code_all(image, _TEMPO, end=data)
     if not tempo:
         return PlayerCode(image)
     t = tempo[-1].addr
-    tables = [
+    tables = {
         m.addr
         for m in find_code_all(image, _JUMPS, end=t)
         if m.addr < m.captures["init"] <= t
-    ]
-    base = next((b for b in reversed(tables) if reached and reached(b)), None)
-    base = jump_table(image, t) if base is None else base
-    return PlayerCode(image) if base is None else PlayerCode(image, base, data)
+    }
+    if not tables:
+        base = jump_table(image, t)
+        return PlayerCode(image) if base is None else PlayerCode(image, base, data)
+    base = max(tables)
+    while base - 3 in tables:
+        base -= 3
+    return PlayerCode(image, base, data)
 
 
 def play_entry(image, code: PlayerCode) -> frozenset:

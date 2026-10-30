@@ -1,0 +1,63 @@
+// GoatTracker 1.5 frame globals live in self-modified immediates (operand
+// cells); channel variables sit at base + var + x for x in {0, 7, 14}; the
+// arpeggio counter steps by 1 (2 with param bit 7), wrapping at 6.
+spec gt1_globals;
+layout { filttime, cutoffadd, d416, d417, d418, volume, chn, freq_lo, freq_hi, sid: addr; }
+const ARPCOUNT = 0;
+const NOTE = 1;
+const FXPARAM = 2;
+const ACC = 3;
+const FREQLO = 21;
+const FREQHI = 28;
+cell filttime: u8 @ L.filttime operand;
+cell cutoffadd: u8 @ L.cutoffadd operand;
+cell d416: u8 @ L.d416 operand;
+cell d417: u8 @ L.d417 operand;
+cell d418: u8 @ L.d418 operand;
+cell volume: u8 @ L.volume operand;
+cell freq_lo: u8[128] @ L.freq_lo ro;
+cell freq_hi: u8[128] @ L.freq_hi ro;
+cell sid: u8[32] @ L.sid out;
+
+machine filter {
+  step {
+    if filttime != 0 {
+      filttime -= 1;
+      d416 += cutoffadd;
+    }
+    sid[0x16] := d416;
+    sid[0x17] := d417;
+    sid[0x18] := d418 & volume;
+  }
+}
+
+machine chan[x in 0..3] {
+  cell arpcount: u8 @ L.chn + ARPCOUNT + 7 * x;
+  cell note: u8 @ L.chn + NOTE * 21 + 7 * x;
+  cell fxparam: u8 @ L.chn + FXPARAM * 21 + 7 * x;
+  cell acc: u8 @ L.chn + ACC * 21 + 7 * x;
+  cell flo: u8 @ L.chn + FREQLO * 21 + 7 * x;
+  cell fhi: u8 @ L.chn + FREQHI * 21 + 7 * x;
+  step {
+    let count = arpcount;
+    let nxt = count + 1 + (acc >> 7);
+    arpcount := ite(nxt >= 6, 0, nxt);
+    let phase = count >> 1;
+    let offset: u8 = 0;
+    if phase < 1 {
+      offset := (fxparam & 0x70) >> 4;
+    } elif phase == 1 {
+      offset := fxparam & 0x0F;
+    }
+    let n = offset + note;
+    flo := freq_lo[n];
+    fhi := freq_hi[n];
+  }
+}
+
+schedule {
+  filter;
+  for c in 0..3 {
+    chan[c];
+  }
+}

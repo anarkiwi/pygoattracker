@@ -73,7 +73,7 @@ pysid-tune-fetch --tests tests --tests tests/data/hvsc_goattracker_sample.txt --
 ## Whole-HVSC survey
 
 [`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
-(`pip install "pysidtracker[survey]>=0.42.0"`) compares every GoatTracker tune
+(`pip install "pysidtracker[survey]>=0.46.0"`) compares every GoatTracker tune
 in an HVSC tree against the oracle over each subtune's full HVSC song length.
 `scripts/oracle_hvsc.py` holds this library's `PLAYER` SIDId regex and
 `render` (`DecompiledSid.player()`), which the oracle tests above share; its `info` is the decoded

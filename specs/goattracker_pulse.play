@@ -1,0 +1,43 @@
+// GoatTracker 2 pulse table: set rows ($80+: 12-bit width from both bytes),
+// timed modulation rows with a signed 8-bit speed, $FF jumps.
+spec gt2_pulse;
+layout { pptr, ptime, pulse_lo, pulse_hi, pl, pr: addr; }
+cell pl: u8[256] @ L.pl - 1 ro;
+cell pr: u8[256] @ L.pr - 1 ro;
+
+machine chan[x in 0..3] {
+  cell pptr: u8 @ L.pptr + x;
+  cell ptime: u8 @ L.ptime + x;
+  cell pulse: u16 @ (L.pulse_lo + x, L.pulse_hi + x);
+  step {
+    if pptr == 0 {
+      return;
+    }
+    if pl[pptr] == 0xFF {
+      pptr := pr[pptr];
+      if pptr == 0 {
+        return;
+      }
+    }
+    if ptime == 0 {
+      let left = pl[pptr];
+      if left >= 0x80 {
+        pulse := word(pr[pptr], left & 0x0F);
+        pptr += 1;
+        return;
+      }
+      ptime := left;
+    }
+    pulse := (pulse + sx(pr[pptr])) & 0x0FFF;
+    ptime -= 1;
+    if ptime == 0 {
+      pptr += 1;
+    }
+  }
+}
+
+schedule {
+  for c in 0..3 {
+    chan[c];
+  }
+}

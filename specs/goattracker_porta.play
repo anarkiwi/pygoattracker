@@ -1,0 +1,66 @@
+// GoatTracker 2 tick-N effects on the 16-bit channel frequency: portamento,
+// toneporta snapping at the target, and the vibrato ramp (vibtime ^ $FF turn).
+spec gt2_porta;
+layout { freq_lo_w, freq_hi_w, note, vibtime, effect, speed, depth, freq_lo, freq_hi: addr; }
+cell freq_lo: u8[128] @ L.freq_lo ro;
+cell freq_hi: u8[128] @ L.freq_hi ro;
+
+machine chan[x in 0..3] {
+  cell freq: u16 @ (L.freq_lo_w + x, L.freq_hi_w + x);
+  cell note: u8 @ L.note + x;
+  cell vibtime: u8 @ L.vibtime + x;
+  cell effect: u8 @ L.effect + x;
+  cell speed: u16 @ (L.speed + x, L.speed + 3 + x);
+  cell depth: u8 @ L.depth + x;
+  step {
+    if effect == 1 {
+      freq += speed;
+    } elif effect == 2 {
+      freq -= speed;
+    } elif effect == 3 {
+      toneporta();
+    } elif effect == 4 {
+      vibrato();
+    }
+  }
+  proc toneporta() {
+    let target = word(freq_lo[note], freq_hi[note]);
+    if speed == 0 {
+      reached(target);
+      return;
+    }
+    if freq < target {
+      freq += speed;
+      if freq > target {
+        reached(target);
+      }
+    }
+    if freq > target {
+      freq -= speed;
+      if freq < target {
+        reached(target);
+      }
+    }
+  }
+  proc reached(target: u16) {
+    freq := target;
+    vibtime := 0;
+  }
+  proc vibrato() {
+    if vibtime < 0x80 && vibtime > depth {
+      vibtime ^= 0xFF;
+    }
+    vibtime += 2;
+    if vibtime & 1 != 0 {
+      freq -= speed;
+    } else {
+      freq += speed;
+    }
+  }
+}
+
+schedule {
+  for c in 0..3 {
+    chan[c];
+  }
+}

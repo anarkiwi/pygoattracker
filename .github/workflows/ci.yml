@@ -29,7 +29,7 @@ jobs:
         # HVSC tunes, pinned GoatTracker/NinjaTracker fixtures and HVSC's
         # DOCUMENTS/Songlengths.md5 (whole-song render lengths) are copyright and
         # never committed; pysidtracker's cache action persists all of .tunecache.
-        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.42.0
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.46.0
         with:
           key: ${{ hashFiles('pyproject.toml', 'tests/data/hvsc_goattracker_sample.txt', 'tests/_fixture_cache.py') }}
           tunes: tests/data/hvsc_goattracker_sample.txt
@@ -53,7 +53,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Cache tunes and oracle traces
-        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.42.0
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.46.0
         with:
           key: ${{ hashFiles('pyproject.toml', 'tests/test_oracle_hvsc.py', 'tests/data/pathdiff.json') }}
           sidtrace: "true"

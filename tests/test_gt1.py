@@ -4,8 +4,6 @@ Synthetic songs are packed with each V1.x playroutine and played both natively
 and by running the packed 6502 playroutine itself on jennings.
 """
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +17,7 @@ from pygoattracker.gt1 import (
     ORDERLIST_ENDSONG,
     Gt1Instrument,
     Gt1Song,
+    analyse,
     decompile_gt1,
     find_player,
     pattern_len,
@@ -27,7 +26,8 @@ from pygoattracker.gt1 import (
 )
 from pygoattracker.gt1player import Gt1Player
 from pygoattracker.sid import _load_image, parse_sid_header
-from pygoattracker._gt1_refs import PLAYERS
+from pygoattracker._gt1_builds import PLAYERS
+from tests import _gt1_code
 from tests._fixture_cache import _archive_member
 from tests.conftest import pass_frames
 
@@ -458,13 +458,15 @@ def test_reference_relocation_walk():
     assert ref.labels["mt_chnwave"] + 84 == ref.labels["mt_freqtblhi"]
     assert all(0 <= pos < ref.code_end for pos in ref.smc)
     for name in PLAYERS:
-        assert reference(name).regex.match(PLAYERS[name]["code"]) is not None
+        mem = bytearray(0x10000)
+        mem[0x1000 : 0x1000 + reference(name).length] = _gt1_code.code_of(name)
+        assert find_player(mem).ref.name == name
 
 
 def test_state_and_zeropage_survive_round_trip():
     song = make_song("1.52")
     ref = song.ref
-    song.state = {pos: 0x33 for pos in ref.zeropage}
+    song.state = {pos: 0x33 for pos, _ in ref.zeropage}
     song.state[ref.labels["mt_volume"] + 1] = 0xF7
     decoded = decompile_gt1(song.to_sid())
     assert decoded.state[ref.labels["mt_volume"] + 1] == 0xF7
@@ -566,14 +568,15 @@ def test_orderlist_without_pattern_raises():
         pass_frames(Gt1Player(song))
 
 
-def test_generated_references_are_current():
-    result = subprocess.run(
-        [sys.executable, str(REPO / "scripts" / "gt1_refs.py"), "--check"],
-        capture_output=True,
-        text=True,
-        check=False,
+@pytest.mark.parametrize("name", sorted(_gt1_code.ARCHIVE))
+def test_facts_match_the_build_assembled_from_its_archive(name):
+    """The committed facts of each archive build are the facts of its source assembled
+    now: relocations, wild offsets, digests and zero-page temporaries."""
+    facts = PLAYERS[name]
+    code = _gt1_code.code_of(name)
+    assert (
+        analyse(name, facts["family"], code, facts["labels"], facts["author"]) == facts
     )
-    assert result.returncode == 0, result.stderr
 
 
 # One HVSC tune per playroutine cluster no assembled reference recognizes.

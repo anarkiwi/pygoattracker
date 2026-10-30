@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 from pysidtracker.bytegrammar import fits
 
-from pygoattracker._gt1_refs import PLAYERS
+from pygoattracker._gt1_builds import PLAYERS
 from pygoattracker import gt1streams as streams
 from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.gt1 import (

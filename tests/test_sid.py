@@ -30,6 +30,7 @@ from pygoattracker.packed import (
     pattern_rows,
 )
 from pygoattracker.player import Player
+from tests.conftest import pass_frames
 from pygoattracker.reader import parse_sng
 from pygoattracker.writer import build_sng
 
@@ -248,9 +249,10 @@ def test_parser_parse_returns_decompiled_sid(packed):
     decoded = sid.GoatTrackerSidParser().parse(packed)
     assert isinstance(decoded, sid.DecompiledSid)
     assert len(decoded.song.patterns) == 2
-    assert decoded.player().render_grid(8) == sid.decompile_sid(
+    frames = pass_frames(decoded.player())
+    assert decoded.player().render_grid(frames) == sid.decompile_sid(
         packed
-    ).player().render_grid(8)
+    ).player().render_grid(frames)
 
 
 def test_parser_recognizes_packed_player(packed):
@@ -355,13 +357,15 @@ def test_survey_render(packed):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import oracle_hvsc  # pylint: disable=import-outside-toplevel
 
-    grid, info = oracle_hvsc.render(packed, 1, 60)
     d = sid.decompile_sid(packed)
+    frames = pass_frames(d.player())
+    grid, info = oracle_hvsc.render(packed, 1, frames)
     want = Player(
         d.typed, freq_table=d.info.note_read, simplepulse=d.info.playback.simplepulse
-    ).render_grid(60)
-    assert grid.shape == (60, 25) and (grid == np.asarray(want)).all()
-    assert (np.asarray(oracle_hvsc.player(packed, 1).render_grid(60)) == grid).all()
+    ).render_grid(frames)
+    assert grid.shape == (frames, 25) and (grid == np.asarray(want)).all()
+    oracle = oracle_hvsc.player(packed, 1).render_grid(frames)
+    assert (np.asarray(oracle) == grid).all()
     assert json.loads(json.dumps(info))["simplepulse"] == d.info.playback.simplepulse
     assert {"adparam", "firstnohr", "pulseopt", "realtime", "state"} <= set(info)
     with pytest.raises(pysidtracker.SidParseError):
@@ -398,7 +402,8 @@ def test_player_uses_the_build_s_hard_restart_adsr():
     _redefine(d, adparam=0xFF, srparam=0x01)
     player = d.player()
     assert player.build.adparam == 0xFF01
-    assert player.render_grid(60) != stock.render_grid(60)
+    frames = pass_frames(d.player())
+    assert player.render_grid(frames) != stock.render_grid(frames)
 
 
 def test_player_uses_the_build_s_pulse_and_realtime_optimizations():

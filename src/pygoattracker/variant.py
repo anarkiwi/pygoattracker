@@ -6,14 +6,7 @@ unshown defines fall back to ``default``; the song-data heuristics that stand in
 an unshown define are ``inferred``.
 """
 
-from pysidtracker.facets import (
-    DEFAULT_SOURCE,
-    Entry,
-    Facet,
-    FacetRegistry,
-    inferred,
-    reference_detector,
-)
+from pysidtracker.facets import DEFAULT_SOURCE, Entry, inferred
 
 # Playroutine releases that differ in behaviour, by facet. Releases before V1.25 are
 # musicroutine 11.1 with edits, oldest first, each later one changing one behaviour.
@@ -34,28 +27,10 @@ RELEASE_FACETS = {
     "author": ("11.3", "11.4", "11.5"),
 }
 
-RELEASE_REGISTRY = FacetRegistry(
-    Facet(
-        name,
-        "release",
-        domain=(False, True),
-        default=False,
-        detector=reference_detector(
-            lambda ref: ref, dict.fromkeys(refs, True), "reference"
-        ),
-    )
-    for name, refs in RELEASE_FACETS.items()
-)
-
 
 def release_refs(facet):
     """The releases whose behaviour ``facet`` is on."""
     return frozenset(RELEASE_FACETS[facet])
-
-
-def release_variant(ref):
-    """The :class:`~pysidtracker.facets.Variant` of GT1 release ``ref``."""
-    return RELEASE_REGISTRY.detect(ref)
 
 
 def tristate_entry(value, default):

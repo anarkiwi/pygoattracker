@@ -21,8 +21,6 @@ from pygoattracker.typed import (
     Instrument,
     Jump,
     Note,
-    PortamentoDown,
-    PortamentoUp,
     PulseMod,
     PulseSet,
     Row,
@@ -31,10 +29,9 @@ from pygoattracker.typed import (
     SetWavePtr,
     SimplePulseMod,
     SimplePulseSet,
+    SPEED_COMMANDS,
     Stop,
-    TonePortamento,
     TypedSong,
-    Vibrato,
     WaveCommand,
     WaveStep,
     rows_of,
@@ -43,7 +40,6 @@ from pygoattracker.typed import (
 )
 
 TABLES = ("wave", "pulse", "filter")
-_SPEED = (PortamentoUp, PortamentoDown, TonePortamento, Vibrato, FunkTempo)
 _POINTERS = {SetWavePtr: "wave", SetPulsePtr: "pulse", SetFilterPtr: "filter"}
 _SONG_STOPS = (DoNothing, SetWavePtr, FunkTempo)
 
@@ -59,7 +55,7 @@ def _command(cmd, ref):
         return DoNothing()
     if type(cmd) in _POINTERS:
         return type(cmd)(ref(_POINTERS[type(cmd)], cmd.row))
-    if isinstance(cmd, _SPEED):
+    if isinstance(cmd, SPEED_COMMANDS):
         return replace(cmd, speed=ref("speed", cmd.speed))
     return cmd
 

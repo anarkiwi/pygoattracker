@@ -218,12 +218,18 @@ The voice layout is read off the player, not assumed:
 - **overlay**: each channel's `(and, or)` on the control byte it writes (a hook
   between the player and the chip), from the bytes its voice holds for waveforms
   setting and clearing every bit, each set by a held wavetable row.
-- **wrapper** (`DecompiledSid.info.wrap`): a header play routine that is not the
-  player's own entry runs as written in the 6502 emulator, and each entry into
-  `mt_play` is one `Player` tick (a wrapper calling it twice is double speed). Where
-  the routine's SID writes all fall outside `mt_play`, it flushes a ghost: the
-  player is a ghost build whose tick lands in that ghost, flushed when the routine
-  says (`wrap.Wrapped`). The build is measured at `mt_play` itself.
+- **player and wrapper** (`DecompiledSid.info.wrap`): of the jump tables before a
+  player's `mt_initchn`, the player is the last one the init enters
+  (`pysidtracker.trace.trace_init_argument`), so a module bundling several players
+  plays the one its song selects; its play entries are the table's
+  (`pysidtracker.codescan.play_entries`), or, where the table's play jump leads
+  out of the player into a wrapper, the first call that wrapper makes back into
+  it. A header play routine that is not the player's own entry runs as written
+  in the 6502 emulator (`pysidtracker.wrap.Wrapped`), and each entry into
+  `mt_play` is one `Player.tick` (a wrapper calling it twice is double speed).
+  Where the routine's SID writes all fall outside `mt_play`, it flushes a ghost:
+  the player is a ghost build whose tick lands in that ghost, flushed when the
+  routine says. The build is measured at `mt_play` itself.
 
 ### NinjaTracker 2
 

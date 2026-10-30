@@ -29,8 +29,8 @@ BUILDS = {
     "MUSICIANS/D/Dalezy/You_Am_I-You_Are_the_RNGMNN.sid": dict(
         adparam=0xFF, srparam=0xF0
     ),
-    # a play wrapper flushing its zero-page ghost.
-    "MUSICIANS/B/Bop/Ewe_Woz_Ere_DX.sid": dict(wrapper=True),
+    # the zero-page ghost a play wrapper outside the player flushes.
+    "MUSICIANS/B/Bop/Ewe_Woz_Ere_DX.sid": dict(ghost=0xE2, alt=None),
     # NONORMALSPEED: realtime from a calculated-speed effect.
     "MUSICIANS/P/Psych858o/Squarish.sid": dict(realtime=False),
     # realtime from the tick 0 of a tie; no speed rows but greloc's zero row.

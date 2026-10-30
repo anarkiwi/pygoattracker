@@ -12,6 +12,8 @@ from typing import NamedTuple
 
 from lark import Transformer, v_args
 from pysidtracker import REACH, ByteGrammar, Parsed, find_code_all
+from pysidtracker.codescan import jump_table, play_entries
+from pysidtracker.mos6502 import OP_JMP, OP_JSR, RETURN_OPS, disasm_len
 from pysidtracker.facets import Entry, Variant, inferred
 
 from pygoattracker import constants as C
@@ -113,7 +115,6 @@ class PlayerBuild:
     ``ghost``: the full-buffering ghost registers (None: the player writes the chip);
     ``alt``: altplayer.s, whose flush ascends. Below ``firstnohr`` hard restart, below
     ``firstlegato`` gate-off, then legato. None: a define the player does not show.
-    ``wrapper``: a play wrapper outside the player flushes its zero-page ghost;
     ``pulsestep``: the pulse change a +1 modulation speed makes;
     ``funk``: the funk tempo table a ghost build's first play call starts from;
     ``channels``: the channels the player inits; ``idle``: those its play never
@@ -148,7 +149,6 @@ class PlayerBuild:
     simplepulse: bool | None = None
     noeffects: bool | None = None
     funk: tuple | None = None
-    wrapper: bool = False
     channels: int | None = None
     idle: tuple = ()
     voices: tuple | None = None
@@ -166,7 +166,6 @@ class PlayerBuild:
             "optimize_realtime": tristate_entry(self.realtime, True),
             "pulse_step": tristate_entry(self.pulsestep or None, 1),
             "default_tempo": tristate_entry(self.deftempo, None),
-            "wrapper_flush": Entry(self.wrapper, inferred("probe")),
             "voices": tristate_entry(
                 self.voices or default_voices(self.channels), None
             ),
@@ -196,7 +195,6 @@ class Build:
     tick (greloc NOEFFECTS) instead of the one latched at note init;
     ``default_tempo``: greloc DEFAULTTEMPO, every channel's starting countdown (None:
     the editor's instrument-63 rule over tempo 5);
-    ``wrapper_flush``: a play wrapper flushes an all-zero ghost, muting frame one;
     ``init_regs``: ``(reg, value)`` SID writes of the tune's init routine;
     ``voices``: each channel's register offset from ``$D400`` (``$20`` a chip, None:
     silent; None: channel ``c`` on chip ``c // 3``, voice ``c % 3``);
@@ -216,7 +214,6 @@ class Build:
     simplepulse: bool = False
     live_vibrato: bool = False
     default_tempo: int | None = None
-    wrapper_flush: bool = False
     init_regs: tuple = ()
     voices: tuple | None = None
     calls: int = 1
@@ -260,33 +257,52 @@ class PlayerCode(NamedTuple):
 
 
 _TEMPO = "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D"
+_JUMPS = "4C {init:w} 4C ?? ??"
+_TABLE = 6  # jmp mt_init, jmp mt_play
 
 
-def player_span(image, data):
+def player_span(image, data, reached=None):
     """The :class:`PlayerCode` of the player whose song data starts at ``data``.
 
     greloc emits the jump table (``jmp mt_init``, ``jmp mt_play``), the player
     code and then the data, so an image holding several players keeps each one's
     code between its jump table and its data. The instance is the last
-    ``mt_initchn`` below ``data`` and the last jump table before it whose
-    ``mt_play`` lies between the two (a table's first entry, where a third jump
-    follows); the whole image without such a jump table.
+    ``mt_initchn`` below ``data`` and the last jump table before it
+    (:func:`~pysidtracker.codescan.jump_table`); ``reached(base)``, where given,
+    names the tables the tune's init enters, and of the tables whose ``mt_init``
+    lies between table and ``mt_initchn`` the last it enters is the player a
+    bundling wrapper selects. The whole image without a jump table.
     """
     tempo = find_code_all(image, _TEMPO, end=data)
     if not tempo:
         return PlayerCode(image)
     t = tempo[-1].addr
-    bases = [
+    tables = [
         m.addr
-        for m in find_code_all(image, "4C ?? ?? 4C {p:w}", end=t)
-        if m.addr < m.captures["p"] <= t
+        for m in find_code_all(image, _JUMPS, end=t)
+        if m.addr < m.captures["init"] <= t
     ]
-    if not bases:
-        return PlayerCode(image)
-    base = bases[-1]
-    while base - 3 in bases:
-        base -= 3
-    return PlayerCode(image, base, data)
+    base = next((b for b in reversed(tables) if reached and reached(b)), None)
+    base = jump_table(image, t) if base is None else base
+    return PlayerCode(image) if base is None else PlayerCode(image, base, data)
+
+
+def play_entry(image, code: PlayerCode) -> frozenset:
+    """The entries of ``code``'s ``mt_play``: the jump table's play entries
+    (:func:`~pysidtracker.codescan.play_entries`), or, where its play jump leads
+    out of the player's code into a wrapper, the first call that wrapper makes
+    back into it."""
+    entries = play_entries(image, code.start)
+    out = [e for e in entries if not code.start <= e < code.end]
+    if not out:
+        return entries
+    mem, pc = image.mem, out[0]
+    while pc < len(mem) - 2 and mem[pc] not in (OP_JSR, OP_JMP, *RETURN_OPS):
+        pc += disasm_len(mem[pc])
+    target = mem[pc + 1] | mem[pc + 2] << 8
+    if mem[pc] in (OP_JSR, OP_JMP) and code.start + _TABLE <= target < code.end:
+        return frozenset({target})
+    return entries
 
 
 # mt_init's clear of two channel-variable blocks: ``txa; ldx #n; sta base,x; dex; bpl``.

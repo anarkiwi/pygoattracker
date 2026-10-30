@@ -22,6 +22,7 @@ running the init routine in a 6502 emulator (:mod:`jennings`).
 """
 
 import struct
+from functools import lru_cache
 from dataclasses import dataclass, field, replace
 
 from pysidtracker import (
@@ -37,6 +38,8 @@ from pysidtracker import (
 )
 from pysidtracker import parse_sid_header as _parse_sid_header
 from pysidtracker.image import load_prefix
+from pysidtracker.trace import trace_init_argument
+from pysidtracker.wrap import Wrap, Wrapped, count_entries, measure_wrap
 from pysidtracker.poweron import power_on_ram
 
 from pygoattracker import constants
@@ -55,11 +58,11 @@ from pygoattracker.packed import (
     pack,
     packed_orderlist,
     pattern_rows,
+    play_entry,
     player_span,
 )
 from pygoattracker.player import Player
-from pygoattracker.wrap import Wrap, Wrapped, wrapper
-from pygoattracker.probe import Bench, ProbeMiss, boot, calls, measure, state
+from pygoattracker.probe import Bench, ProbeMiss, boot, measure, state
 from pygoattracker.typed import DoNothing, TypedSong, WaveCommand
 from pygoattracker.variant import heuristic_entry
 from pygoattracker.model import Song, Subtune
@@ -134,7 +137,8 @@ class DecompiledSid:
         )
         if self.info.wrap is None:
             return player
-        return Wrapped(player, self.image, self.subtune, self.info.wrap)
+        sink = self.info.wrap.sink
+        return Wrapped(lambda: player.tick(sink), self.image, self.info.wrap)
 
     def repack(self) -> list[tuple[int, bytes, bytes]]:
         """``(address, packed, held)`` for each piece :func:`pack` writes that the memory
@@ -367,11 +371,11 @@ def _all_anchors(image):
     return kept
 
 
-def _played_anchor(after, anchor, pcs):
+def _played_anchor(after, anchor, pcs, reached=None):
     """The frequency-table anchor of the player whose jump table the init ran, else
     ``anchor``: a wrapper bundling several players runs the one its song selects."""
     for found in _all_anchors(after):
-        start = player_span(after, found[0]).start
+        start = player_span(after, found[0], reached).start
         if start is not None and start in pcs:
             return found
     return anchor
@@ -458,7 +462,12 @@ def _mirror(voices, chips):
 def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> DecompiledSid:
     """The song data the player the tune's init selects reads, decompiled, its
     voices on the header's ``chips``."""
-    base = player_span(image, anchor[0]).start
+
+    @lru_cache(maxsize=None)
+    def reached(table):
+        return trace_init_argument(image, None, table, subtune) is not None
+
+    base = player_span(image, anchor[0], reached).start
     play = header.play_address or (None if base is None else base + 3)
     traced = []
 
@@ -475,7 +484,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     for addr, (org, exact, *_) in traced[0].cells.items():
         if exact and org is not None and org != addr:
             copies.setdefault(org, []).append(addr)
-    anchor = _played_anchor(after, anchor, traced[0].pcs)
+    anchor = _played_anchor(after, anchor, traced[0].pcs, reached)
     t = song_tables((*booted[:3], play or booted[3]), traced[0])
 
     def pointers(lo, hi, n):
@@ -516,19 +525,14 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
         channels=t.stride,
     )
 
-    jump = player_span(after, anchor[0]).start
-    entries = set()
-    if jump is not None:
-        entries = {jump + 3}
-        if mem[jump + 3] == 0x4C:
-            entries.add(mem[jump + 4] | mem[jump + 5] << 8)
-    wrap = wrapper(image, subtune, play, entries)
-    ticks = 1 if play is None else calls(image, subtune, play, entries)
-    if ticks > 1:
-        play = jump + 3
+    code = player_span(after, anchor[0], reached)
+    entries = frozenset() if code.start is None else play_entry(after, code)
+    wrap = measure_wrap(image, subtune, play, entries)
+    if play is not None and count_entries(image, subtune, play, entries) > 1:
+        play = code.start + 3
 
     def bench(lay):
-        span = (player_span(after, lay.freq_addr).start, lay.freq_addr)
+        span = (player_span(after, lay.freq_addr, reached).start, lay.freq_addr)
         return Bench(
             image, lay, sizes, tuple(orders), subtune, play, span, t.song, copies
         )
@@ -546,10 +550,8 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
         )
     probe = bench(lay)
     build = replace(measure(probe, t.channels), idle=t.idle)
-    if wrap is not None:
-        build = replace(build, wrapper=False)
-        if wrap.sink is not None:
-            build = replace(build, ghost=wrap.sink)
+    if wrap is not None and wrap.sink is not None:
+        build = replace(build, ghost=wrap.sink)
     build = replace(build, voices=_mirror(build.voices, chips))
     song, info, typed = _build_song(mem, header, lay, anchor, orderlists, build, bases)
     info.state = state(probe, build)

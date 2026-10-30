@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from pysidtracker import registers as reg
-from pysidtracker.emu import observe_data_access, run_to_rts, run_to_rts_until
+from pysidtracker.emu import SidWriteLog, call_play, observe_data_access
 from pysidtracker.image import SidImage
 from pysidtracker.oracle import boot_flat
+from pysidtracker.wrap import BOOT_CYCLES, idle_init
 from vagrant_moses import memmap as mm
 
 from pygoattracker import constants as C
@@ -56,14 +57,12 @@ _REST = Row(Rest(), None, None, 24)
 _EFFECTS = (PortamentoUp, PortamentoDown, Vibrato)
 _CAP = 256
 _LDA_ABS_Y, _STA_ABS_X = 0xB9, 0x9D
-_CALLS = (0x20, 0x4C)  # jsr, jmp abs
 _ROUTE = 32
 _HELD = 96
 _WAVES = (0xCD, 0x02, 0x30)  # gate-on waveforms setting and clearing every bit
 _LONG = 4096
 _STRIDE = 16
 _CYCLES = 200_000
-_BOOT_CYCLES = 8_000_000
 _SPIN_STEPS = 1024
 _SPIN_PCS = 8
 
@@ -92,29 +91,6 @@ class ProbeMiss(Exception):
     """The planted data does not fit the image's layout, or does not play."""
 
 
-def _call(mpu, mem, play):
-    start = mpu.processorCycles
-    run_to_rts(mpu, mem, play, 0, _CYCLES)
-    if mpu.processorCycles - start > _CYCLES:
-        raise ProbeMiss("play call did not return")
-
-
-def _idle_init(_subject, mpu, mem, address, song):
-    """Run an RSID's init that never returns (an IRQ-driven player ends in a loop
-    in a loop) to that loop or :data:`_BOOT_CYCLES`."""
-    start_sp = mpu.sp
-    for byte in (0x00, 0x01):
-        mem[0x0100 + mpu.sp] = byte
-        mpu.sp = (mpu.sp - 1) & 0xFF
-    mpu.a, mpu.pc = song & 0xFF, address
-    start = mpu.processorCycles
-    spun = Spin()
-    while mpu.sp < start_sp and mpu.processorCycles - start <= _BOOT_CYCLES:
-        mpu.step()
-        if spun(mpu.pc):
-            break
-
-
 def boot(image, subtune=0, buf=None, init_run=None):
     """``(subject, mpu, mem, play)``: ``image`` after its init, booted by
     :func:`~pysidtracker.oracle.boot_flat`, and ``buf``'s ``{address: byte}`` planted
@@ -126,16 +102,14 @@ def boot(image, subtune=0, buf=None, init_run=None):
     def setup(_mpu, subject):
         box.append(subject)
 
-    run = None
-    if init_run is None and not image.header.play_address:
-        init_run = _idle_init
+    run = None if image.header.play_address else idle_init
     if init_run is not None:
 
         def run(mpu, mem, address, song, _max_cycles):
             init_run(box[0], mpu, mem, address, song)
 
     subject, mpu, mem, play = boot_flat(
-        image, subtune, _BOOT_CYCLES, setup=setup, init_run=run
+        image, subtune, BOOT_CYCLES, setup=setup, init_run=run
     )
     for addr, value in (buf or {}).items():
         subject[addr] = value
@@ -271,10 +245,11 @@ class Bench:
         subject, mpu, mem, play = boot(self.image, self.subtune, buf)
         return subject, mpu, mem, play if self.play is None else self.play
 
-    def frames(self, buf=None, cap=_CAP, writes=None):
+    def frames(self, buf=None, cap=_CAP, calls=None):
         """Each play call's registers of every SID the chip select decodes in
         ``$D400-$D7FF``: one 25-register row per ``$20`` block (pulse-width high to
-        a nibble), so a player writing a mirror or a second chip is read there."""
+        a nibble), so a player writing a mirror or a second chip is read there;
+        ``calls`` gets each call's :class:`~pysidtracker.emu.SidWriteLog` writes."""
         subject, mpu, mem, play = self.boot(buf)
         regs = np.zeros((len(_IO) // 0x20, C.SID_REGISTERS), np.int32)
         regs[:] = subject[_SID.start : _SID.stop]
@@ -284,14 +259,15 @@ class Bench:
                 regs[(addr - _IO.start) >> 5, addr & 0x1F] = value
 
         mem.subscribe_to_write(_IO, sid)
-        if writes is not None:
-            writes.mpu = mpu
-            observe_data_access(mpu, writes.read, writes.write)
+        log = None if calls is None else SidWriteLog(mpu)
+        if log is not None:
+            log.calls = calls
         hi = list(reg.PW_HI_REGS)
         for _ in range(cap):
-            if writes is not None:
-                writes.calls.append([])
-            _call(mpu, mem, play)
+            if log is None:
+                call_play(mpu, mem, play, _CYCLES, ProbeMiss)
+            else:
+                log.call(mem, play, _CYCLES, ProbeMiss)
             row = regs.copy()
             row[:, hi] &= 0x0F
             yield row
@@ -338,20 +314,6 @@ def _voice1(rows, hit):
         cols[: C.VOICE_REG_SIZE],
     )
     return rows[:, chip][:, cols]
-
-
-class _Writes:
-    """Each play call's SID writes, ``(register, address read last, pc, value)``."""
-
-    def __init__(self):
-        self.calls, self._last, self.mpu = [], None, None
-
-    def read(self, addr):
-        self._last = addr
-
-    def write(self, addr, value):
-        if addr in _IO and addr & 0x1F < C.SID_REGISTERS and self.calls:
-            self.calls[-1].append((addr & 0x1F, self._last, self.mpu.pc, value))
 
 
 def _notes(grid) -> list:
@@ -653,24 +615,21 @@ def _funk(bench, row):
 
 
 def _ghost(bench):
-    """``(ghost address, ascending, wrapper flush)`` of a buffering build: each play
-    call writes all 25 registers in one order, each from the ghost byte read just
-    before it. Flushed from outside the player, it is a play wrapper's, which on
-    the song-init call (no filter code run yet) outputs the ghost's silent volume."""
-    log = _Writes()
-    for _ in bench.frames(cap=3, writes=log):
+    """``(ghost address, ascending)`` of a buffering build: each play call writes
+    all 25 registers in one order, from the player's own code, each from the ghost
+    byte read just before it."""
+    log = []
+    for _ in bench.frames(cap=3, calls=log):
         pass
-    call = log.calls[-1]
+    call = log[-1]
     regs = [w[0] for w in call]
     order = list(range(C.SID_REGISTERS))
     base = {w[1] - w[0] for w in call if w[1] is not None}
-    if regs not in (order, order[::-1]) or len(base) != 1:
-        return None, None, False
     start, end = bench.span
-    if start is None or start <= call[0][2] < end:
-        return base.pop(), regs == order, False
-    first = [w[3] for w in log.calls[0] if w[0] == _MODEVOL]
-    return None, None, bool(first) and not first[-1] & 0x0F
+    inside = start is None or start <= call[0][2] < end
+    if regs not in (order, order[::-1]) or len(base) != 1 or not inside:
+        return None, None
+    return base.pop(), regs == order
 
 
 def _stores(bench, buf, match):
@@ -686,7 +645,7 @@ def _stores(bench, buf, match):
 
     observe_data_access(mpu, on_write=store)
     for _ in range(_CAP):
-        _call(mpu, mem, play)
+        call_play(mpu, mem, play, _CYCLES, ProbeMiss)
     return {base for (addr, base), seq in written.items() if match(seq, subject[addr])}
 
 
@@ -802,15 +761,15 @@ def _pulse(bench, subject):
         raise ProbeMiss("no pulsetable")
     rows = [(Row(bench.pitches(1)[0], 1), _REST)]
     buf = bench.plant(rows, {1: {"pulse": 1}}, {"wave": _WAVE, "pulse": _SETPULSE})
-    log = _Writes()
-    for _ in bench.frames(buf, cap=_ROUTE, writes=log):
+    log = []
+    for _ in bench.frames(buf, cap=_ROUTE, calls=log):
         pass
     left, right = _SETPULSE[0]
     lo, hi = (
         _unique(
             {
                 w[1]
-                for call in log.calls
+                for call in log
                 for w in call
                 if w[0] == reg and w[3] & mask == value & mask
             }
@@ -838,7 +797,7 @@ def _channels(bench):
     image loaded it, read at each channel's offset from the one store its probe
     locates."""
     subject, mpu, mem, play = bench.boot()
-    _call(mpu, mem, play)
+    call_play(mpu, mem, play, _CYCLES, ProbeMiss)
     out = []
     for name, probe in _CHANNEL_VARS:
         values = _shown(probe, bench, subject)
@@ -922,34 +881,6 @@ def _overlay(bench, voices):
     return tuple(out) if any(out) else None
 
 
-class _Entries:
-    """The addresses a play call runs through, seen as :func:`run_to_rts_until`'s
-    ``pcs``: learns the target of the first ``jsr``/``jmp`` and counts its visits."""
-
-    def __init__(self, mem):
-        self.mem = mem
-        self.count = 0
-        self.entry = None
-
-    def __contains__(self, pc):
-        mem = self.mem
-        self.count += pc == self.entry
-        if self.entry is None and mem[pc] in _CALLS:
-            self.entry = mem[pc + 1] | mem[pc + 2] << 8
-        return False
-
-
-def calls(image, subtune, play, entries):
-    """How many times one play call at ``play`` after the song-init one runs the
-    target of its first ``jsr``/``jmp``, where that is one of the player's play
-    ``entries`` (else 1)."""
-    subject, mpu, mem = boot(image, subtune)[:3]
-    _call(mpu, mem, play)
-    seen = _Entries(subject)
-    run_to_rts_until(mpu, mem, play, mpu.a, seen, _CYCLES)
-    return max(seen.count, 1) if seen.entry in entries else 1
-
-
 def _shown(probe, *args, default=None):
     """``probe(*args)``, or ``default`` where the planted song does not play."""
     try:
@@ -967,7 +898,7 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
     """Every :class:`~pygoattracker.packed.PlayerBuild` define the player sequencing
     ``channels`` (None: the editor's) shows."""
     lay = bench.lay
-    ghost, alt, wrapper = _shown(_ghost, bench, default=(None, None, False))
+    ghost, alt = _shown(_ghost, bench, default=(None, None))
     voices = _shown(_voices, bench, channels or C.MAX_CHN)
     overlay = voices and _shown(_overlay, bench, voices)
     try:
@@ -976,7 +907,6 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         return PlayerBuild(
             ghost=ghost,
             alt=alt,
-            wrapper=wrapper,
             channels=channels,
             voices=voices,
             overlay=overlay,
@@ -1020,7 +950,6 @@ def measure(bench: Bench, channels: int | None = None) -> PlayerBuild:
         noeffects=_shown(_noeffects, bench),
         simplepulse=_simplepulse(run),
         funk=None if row is None or ghost is None else _shown(_funk, bench, row),
-        wrapper=wrapper,
         channels=channels,
         voices=voices,
         overlay=overlay,
@@ -1037,13 +966,13 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
     funk = build.funk or (8, 5)
     channels = _channels(bench)
     if g is None:
-        log = _Writes()
+        log = []
         try:
             buf = bench.plant([(_REST,)], {1: {}}, {"wave": _WAVE})
-            first, regs = (row[0] for row in bench.frames(buf, cap=2, writes=log))
+            first, regs = (row[0] for row in bench.frames(buf, cap=2, calls=log))
         except ProbeMiss:
             return None
-        init = sorted({w[0] for w in log.calls[0]})
+        init = sorted({w[0] for w in log[0]})
         return PlayerState(
             registers=tuple(int(v) for v in regs),
             cutoff=int(regs[_CUTOFF]),
@@ -1058,7 +987,7 @@ def state(bench: Bench, build: PlayerBuild) -> PlayerState | None:
     subject, mpu, mem, play = bench.boot(buf)
     regs = tuple(subject[g : g + C.SID_REGISTERS])
     for _ in range(2):
-        _call(mpu, mem, play)
+        call_play(mpu, mem, play, _CYCLES, ProbeMiss)
     mode = subject[g + _MODEVOL]
     return PlayerState(
         registers=regs,

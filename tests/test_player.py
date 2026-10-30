@@ -961,7 +961,7 @@ def test_default_tempo_is_the_build_s():
         {"adparam": 0xF0F0, "default_tempo": 3},
         {"optimize_pulse": False, "optimize_realtime": False, "pulse_step": 2},
         {"simplepulse": True, "live_vibrato": True},
-        {"wrapper_flush": True, "init_regs": ((0x0E, 0xFF),)},
+        {"init_regs": ((0x0E, 0xFF),)},
     ],
 )
 def test_a_build_plays_as_its_keyword_options(song, options):

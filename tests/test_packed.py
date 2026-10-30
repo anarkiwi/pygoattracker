@@ -166,7 +166,6 @@ def test_a_build_s_defines_resolve_to_its_playback_options():
         pulsestep=4,
         realtime=False,
         deftempo=7,
-        wrapper=True,
     )
     assert build.resolve(live_vibrato=True) == P.Build(
         adparam=0x0F01,
@@ -175,7 +174,6 @@ def test_a_build_s_defines_resolve_to_its_playback_options():
         pulse_step=4,
         live_vibrato=True,
         default_tempo=7,
-        wrapper_flush=True,
     )
     assert (
         P.PlayerBuild(pulseopt=True, realtime=True, pulsestep=0).resolve() == P.Build()

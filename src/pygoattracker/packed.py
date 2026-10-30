@@ -257,25 +257,27 @@ class PlayerCode(NamedTuple):
 
 
 _TEMPO = "A9 {t} 9D ?? ?? A9 01 9D {c:w} 9D"
-_JUMPS = "4C {init:w} 4C {play:w}"
+_JUMPS = "4C {init:w} 4C ?? ??"
 # mt_init: store the song number (several songs: into its own adc operand, then
 # doubled with carry).
 _MT_INIT = re.compile(rb"\x8d..(?:\x0a\x69.\x8d|\x60)", re.S)
 _TABLE = 6  # jmp mt_init, jmp mt_play
 
 
-def player_span(image, data, entered=None):
+def player_span(image, data, entered=frozenset()):
     """The :class:`PlayerCode` of the player whose song data starts at ``data``.
 
     greloc emits the jump table (``jmp mt_init``, ``jmp mt_play``), the player
     code and then the data, so an image holding several players keeps each one's
     code between its jump table and its data. The instance is the last
-    ``mt_initchn`` below ``data`` and, between it and the one before, the table
-    the tune's init ``entered`` last where it jumps into the code (a bundling
-    wrapper's selection), else the last jump table before it: a run of jumps
-    whose play entry leads into the code (:func:`~pysidtracker.codescan.jump_table`)
-    or whose init entry leads to ``mt_init``'s song store (a wrapper diverts its
-    play); the whole image without one.
+    ``mt_initchn`` below ``data`` and, of the jump tables between it and the one
+    before whose init entry leads past them all into the code, the last the
+    tune's init ``entered`` (a bundling wrapper's selection; a table's first
+    entry, where jumps precede it); else the last jump
+    table before it: a run of jumps whose play entry leads into the code
+    (:func:`~pysidtracker.codescan.jump_table`) or whose init entry leads to
+    ``mt_init``'s song store (a wrapper diverts its play); the whole image
+    without one.
     """
     tempo = find_code_all(image, _TEMPO, end=data)
     if not tempo:
@@ -283,17 +285,17 @@ def player_span(image, data, entered=None):
     t = tempo[-1].addr
     low = tempo[-2].addr if len(tempo) > 1 else 0
     tables = {
-        m.addr: m.captures
+        m.addr: m.captures["init"]
         for m in find_code_all(image, _JUMPS, start=low, end=t)
-        if m.addr < m.captures["init"] <= t or m.addr < m.captures["play"] <= t
     }
-    if entered in tables:
-        return PlayerCode(image, entered, data)
-    inits = [
-        a
-        for a, c in tables.items()
-        if a < c["init"] <= t and _MT_INIT.match(bytes(image.mem[c["init"] :][:7]))
-    ]
+    code = [a for a, init in tables.items() if max(tables) < init <= t]
+    chosen = [a for a in code if a in entered]
+    if chosen:
+        base = max(chosen)
+        while base - 3 in tables:
+            base -= 3
+        return PlayerCode(image, base, data)
+    inits = [a for a in code if _MT_INIT.match(bytes(image.mem[tables[a] :][:7]))]
     bases = [b for b in (jump_table(image, t), *inits) if b is not None]
     if not bases:
         return PlayerCode(image)

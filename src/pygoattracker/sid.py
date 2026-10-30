@@ -371,21 +371,13 @@ def _all_anchors(image):
     return kept
 
 
-def _entered(mem, pcs):
-    """The jump table (``jmp``, ``jmp``) the init's ``pcs`` (in the order first run)
-    enter last, else None."""
-    return next((pc for pc in reversed(pcs) if mem[pc] == mem[pc + 3] == 0x4C), None)
-
-
 def _played_anchor(after, anchor, entered):
-    """The frequency-table anchor of the player whose jump table the init
-    ``entered`` last, else ``anchor``: a wrapper bundling several players runs the
-    one its song selects."""
+    """The frequency-table anchor of the first player whose jump table the init
+    ``entered``, else ``anchor``: a wrapper bundling several players runs the one
+    its song selects."""
     for found in _all_anchors(after):
-        if (
-            entered is not None
-            and player_span(after, found[0], entered).start == entered
-        ):
+        start = player_span(after, found[0], entered).start
+        if start is not None and start in entered:
             return found
     return anchor
 
@@ -503,7 +495,7 @@ def _decompile(image, header, anchor, subtune, chips=frozenset((0,))) -> Decompi
     for addr, (org, exact, *_) in traced[0].cells.items():
         if exact and org is not None and org != addr:
             copies.setdefault(org, []).append(addr)
-    entered = _entered(mem, list(traced[0].pcs))
+    entered = traced[0].pcs
     anchor = _played_anchor(after, anchor, entered)
     t = song_tables((*booted[:3], play or booted[3]), traced[0])
 

@@ -54,7 +54,7 @@ Issues = "https://github.com/anarkiwi/pygoattracker/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pygoattracker = ["*.lark"]
+pygoattracker = ["*.lark", "specs/*.play"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -65,7 +65,8 @@ addopts = "-ra -n auto -m 'not oracle'"
 markers = ["oracle: byte-exact comparison against the sidtrace Docker oracle"]
 
 [tool.coverage.run]
-branch = true
+# sys.monitoring leaves the compiled playspec frames untraced; it measures lines only.
+core = "sysmon"
 source = ["pygoattracker"]
 
 [tool.coverage.report]

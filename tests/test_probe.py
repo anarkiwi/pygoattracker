@@ -6,6 +6,7 @@ instrument classes the player's own ``cmp #FIRSTNOHRINSTR`` operands state.
 
 import dataclasses
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pysidtracker import SidImage
@@ -257,3 +258,12 @@ def test_a_variable_is_the_one_base_a_probe_finds():
     subject = bytes(range(32))
     assert probe._held(subject, 2) == (2, 9, 16)
     assert probe._held(subject, 2, 1) == (3, 10, 17)
+
+
+def test_a_play_call_writing_no_register_shows_no_ghost():
+    def frames(cap, calls):
+        calls.extend([] for _ in range(cap))
+        return iter(())
+
+    bench = SimpleNamespace(frames=frames, span=(0x1000, 0x2000))
+    assert probe._ghost(bench) == (None, None)

@@ -624,9 +624,10 @@ def _ghost(bench):
     regs = [w[0] for w in call]
     order = list(range(C.SID_REGISTERS))
     base = {w[1] - w[0] for w in call if w[1] is not None}
+    if regs not in (order, order[::-1]) or len(base) != 1:
+        return None, None
     start, end = bench.span
-    inside = start is None or start <= call[0][2] < end
-    if regs not in (order, order[::-1]) or len(base) != 1 or not inside:
+    if start is not None and not start <= call[0][2] < end:
         return None, None
     return base.pop(), regs == order
 

@@ -21,7 +21,6 @@ from pygoattracker.gt1 import (
     ORDERLIST_LOOP_AFTER,
     PULSE_ALWAYS,
     PULSEDIR_RESET,
-    PLAYER_ORG,
     Gt1Match,
     Reference,
     _match_at,
@@ -139,21 +138,27 @@ def spec(family: str):
     return parse_spec(resources.files(__package__).joinpath(name).read_text())
 
 
-def _table_of(ref: Reference, operand: int) -> int:
-    """The code offset of the table ``lda table,y; sta operand`` dispatches from."""
-    code, target = ref.code, (PLAYER_ORG + operand).to_bytes(2, "little")
+def _code(found: Gt1Match, mem) -> bytes:
+    """The relocated playroutine's bytes in ``mem``."""
+    return bytes(mem[found.address : found.address + found.ref.code_end])
+
+
+def _table_of(found: Gt1Match, mem, operand: int) -> int:
+    """The table ``lda table,y; sta operand`` dispatches from, in ``mem``."""
+    target = operand.to_bytes(2, "little")
+    code = _code(found, mem)
     for pos in range(len(code) - 5):
         if code[pos] == _LDA_ABS_Y and code[pos + 3] == _STA_ABS:
             if code[pos + 4 : pos + 6] == target:
-                return int.from_bytes(code[pos + 1 : pos + 3], "little") - PLAYER_ORG
-    raise SidParseError(f"{ref.name}: no table dispatch into ${operand:04x}")
+                return int.from_bytes(code[pos + 1 : pos + 3], "little")
+    raise SidParseError(f"{found.ref.name}: no table dispatch into ${operand:04x}")
 
 
 def zero_page(ref: Reference, mem, base: int) -> dict:
     """``zp0``-``zp3``: where the tune's code put the reference's $FC-$FF temporaries."""
     out = {f"zp{k}": ZP + k for k in range(4)}
-    for pos in reversed(ref.zeropage):
-        out[f"zp{ref.code[pos] - ZP}"] = mem[base + pos]
+    for pos, zp in reversed(ref.zeropage):
+        out[f"zp{zp - ZP}"] = mem[base + pos]
     return out
 
 
@@ -172,7 +177,7 @@ def layout(found: Gt1Match, mem) -> dict:
         out[var] = lab["mt_chn" + var.removesuffix("_v")]
     out.update(zip(PARAMS, (base + pos + 1 for pos in ref.params)))
     for table, operand in DISPATCH[ref.family].items():
-        out[table] = base + _table_of(ref, out[operand] - base)
+        out[table] = _table_of(found, mem, out[operand])
     out.update(
         chn=lab.get("mt_chnwave", 0),
         funk=lab.get("mt_funktempo", tables.get("filttbl", 0) + 2),
@@ -196,9 +201,7 @@ def layout(found: Gt1Match, mem) -> dict:
         sfx=int(ref.name in MUSICROUTINE11_SFX),
         timing=int(ref.name in MUSICROUTINE11_TIMING),
         stub=int(ref.stub_init),
-        entry_carry=int(
-            ref.family == "11" and ref.code[ref.labels["mt_filtcutoff"] - 1] != _CLC
-        ),
+        entry_carry=int(ref.family == "11" and mem[lab["mt_filtcutoff"] - 1] != _CLC),
         endsong=int(ref.name in ORDERLIST_ENDSONG),
         pulse_always=int(ref.name in PULSE_ALWAYS),
         init_wave=int(ref.name in INIT_WAVE),
@@ -208,14 +211,16 @@ def layout(found: Gt1Match, mem) -> dict:
     return out
 
 
-def row_reader(found: Gt1Match) -> tuple:
-    """``(start, stop)`` of a V1.5x player's row reader: from its pattern pointer
-    load (``ldy mt_chnpattnum,x; lda patttbllo,y``) to the next channel's step."""
-    ref = found.ref
-    pattnum = (PLAYER_ORG + ref.labels["mt_chnpattnum"]).to_bytes(2, "little")
-    start = ref.code.find(b"\xbc" + pattnum + b"\xb9\x00\x45")
-    stop = ref.code.find(b"\xe0\x0e\xb0")
-    return found.address + start, found.address + stop
+def row_reader(found: Gt1Match, mem) -> tuple:
+    """``(start, stop)`` of a V1.5x player's row reader in ``mem``: from its pattern
+    pointer load (``ldy mt_chnpattnum,x; lda patttbllo,y``) to the next channel's step.
+    """
+    ref, base = found.ref, found.address
+    pattnum = (base + ref.labels["mt_chnpattnum"]).to_bytes(2, "little")
+    table = found.tables["patttbllo"].to_bytes(2, "little")
+    code = _code(found, mem)
+    start = code.find(b"\xbc" + pattnum + b"\xb9" + table)
+    return base + start, base + code.find(b"\xe0\x0e\xb0", start)
 
 
 def locate(view, entry: int | None = None) -> Gt1Match:

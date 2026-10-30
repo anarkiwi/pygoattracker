@@ -80,3 +80,11 @@ def basic_song(rows=None, length: int = 8) -> Song:
 def song():
     """A basic one-note test song."""
     return basic_song()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _gt1_player_code():
+    """Register every GoatTracker V1.x build's code, assembled or extracted at test time."""
+    from tests import _gt1_code  # pylint: disable=import-outside-toplevel
+
+    _gt1_code.register_all()

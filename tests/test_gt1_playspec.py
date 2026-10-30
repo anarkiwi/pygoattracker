@@ -40,11 +40,16 @@ def assert_memory_equals_the_6502(raw: bytes, subtune: int, frames: int):
 
 
 @pytest.mark.parametrize(
-    "song",
-    [make_song("1.53"), make_song11("11.4"), with_sfx(make_song11("11.2"))],
+    "make",
+    [
+        lambda: make_song("1.53"),
+        lambda: make_song11("11.4"),
+        lambda: with_sfx(make_song11("11.2")),
+    ],
     ids=["1.53", "11.4", "11.2-sfx"],
 )
-def test_spec_memory_equals_the_6502_on_synthetic_songs(song):
+def test_spec_memory_equals_the_6502_on_synthetic_songs(make):
+    song = make()
     assert_memory_equals_the_6502(song.to_sid(), 0, pass_frames(Gt1Player(song)))
 
 
@@ -81,7 +86,7 @@ def test_row_reader_is_proven_against_the_6502():
     raw = resolve_tune(JOKE).read_bytes()
     player = Gt1Player(decompile_gt1(raw), sid=raw)
     view = player.view()
-    start, stop = gt1spec.row_reader(find_player(view))
+    start, stop = gt1spec.row_reader(find_player(view), view)
     result = validate(
         gt1spec.spec("1.5"),
         gt1spec.binding(view, player.entry),

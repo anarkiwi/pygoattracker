@@ -481,8 +481,8 @@ def _tests_songs_11(player: str) -> dict:
 
 
 def _gt1_corpus(player: str) -> dict:
-    """The tests' synthetic songs of the release's family, its example songs
-    and the oracle tunes of ``player``."""
+    """The tests' synthetic songs of the release's family, the example songs of
+    the release that ships ``player`` and the oracle tunes of ``player``."""
     family = reference(player).family
     out = {
         "1.5": _tests_songs_15,
@@ -491,10 +491,10 @@ def _gt1_corpus(player: str) -> dict:
     }[
         family
     ](player)
-    if family == "1.5":
+    if player == "1.53":
         for member in GOATTRK_SONGS:
             out[member] = (parse_gts1(goattrk_song(member), player), (0,))
-    elif family == "11":
+    elif player in _gt1_code.ARCHIVE and family == "11":
         for name in GOATOLD_SONGS:
             out[name] = (parse_gts1(goatold_song(name), player), (0,))
     for name, (relpath, song) in TUNES.items():

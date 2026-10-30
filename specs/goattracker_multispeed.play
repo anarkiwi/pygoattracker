@@ -1,0 +1,24 @@
+// GoatTracker 2 multispeed with ghost registers on two SIDs: the play routine
+// runs L.calls times per frame; each call first outputs the ghost registers the
+// previous call computed (one call late), channel c on chip c / 3.
+spec gt2_multispeed;
+layout { calls: byte; ghost, freq, sid: addr; }
+cell sid: u8[64] @ L.sid out;
+
+machine chan[x in 0..6] {
+  cell ghost: u8 @ L.ghost + x;
+  cell freq: u8 @ L.freq + x;
+  step {
+    sid[x / 3 * 0x20 + x % 3 * 7] := ghost;
+    freq += 1;
+    ghost := freq;
+  }
+}
+
+schedule {
+  for k in 0..L.calls {
+    for c in 0..6 {
+      chan[c];
+    }
+  }
+}

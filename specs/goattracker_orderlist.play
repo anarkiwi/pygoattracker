@@ -1,0 +1,43 @@
+// GoatTracker 2 orderlist step: loop+restart, at most one transpose, at most
+// one repeat, then the pattern; a pending repeat holds the song position.
+spec gt2_orderlist;
+layout { songptr, trans, repeat, pattnum, song_lo, song_hi: addr; }
+const LOOPSONG = 0xFF;
+const TRANSDOWN = 0xE0;
+const TRANSUP = 0xF0;
+const REPEAT = 0xD0;
+cell song: ptr[3] @ (L.song_lo, L.song_hi) ro;
+
+machine chan[x in 0..3] {
+  cell songptr: u8 @ L.songptr + x;
+  cell trans: u8 @ L.trans + x;
+  cell repeat: u8 @ L.repeat + x;
+  cell pattnum: u8 @ L.pattnum + x;
+  step {
+    stream ord = song[x] @ songptr;
+    if ord[0] == LOOPSONG {
+      ord.pos := ord[1];
+    }
+    if ord[0] >= TRANSDOWN && ord[0] < LOOPSONG {
+      trans := ord[0] - TRANSUP;
+      ord.pos += 1;
+    }
+    if ord[0] >= REPEAT && ord[0] < TRANSDOWN {
+      repeat := ord[0] - REPEAT;
+      ord.pos += 1;
+    }
+    pattnum := ord[0];
+    if repeat != 0 {
+      repeat -= 1;
+    } else {
+      ord.pos += 1;
+    }
+    songptr := ord.pos;
+  }
+}
+
+schedule {
+  chan[0];
+  chan[1];
+  chan[2];
+}

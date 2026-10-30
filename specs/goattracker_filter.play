@@ -1,0 +1,57 @@
+// GoatTracker 2 filter table: one shared machine per chip, run before the
+// channels, writing cutoff, routing/resonance and type|volume each call.
+spec gt2_filter;
+layout { fptr, ftime, cutoff, ctrl, ftype, fader, fl, fr, sid: addr; }
+cell fl: u8[256] @ L.fl - 1 ro;
+cell fr: u8[256] @ L.fr - 1 ro;
+cell fader: u8 @ L.fader;
+cell sid: u8[32] @ L.sid out;
+
+machine filter {
+  cell fptr: u8 @ L.fptr;
+  cell ftime: u8 @ L.ftime;
+  cell cutoff: u8 @ L.cutoff;
+  cell ctrl: u8 @ L.ctrl;
+  cell ftype: u8 @ L.ftype;
+  step {
+    if fptr != 0 {
+      if fl[fptr] == 0xFF {
+        fptr := fr[fptr];
+      }
+      if fptr != 0 {
+        if ftime == 0 {
+          let left = fl[fptr];
+          if left >= 0x80 {
+            ftype := left & 0x70;
+            ctrl := fr[fptr];
+            fptr += 1;
+            if fl[fptr] == 0 {
+              cutoff := fr[fptr];
+              fptr += 1;
+            }
+          } elif left != 0 {
+            ftime := left;
+          } else {
+            cutoff := fr[fptr];
+            fptr += 1;
+          }
+        }
+        if ftime != 0 {
+          cutoff += fr[fptr];
+          ftime -= 1;
+          if ftime == 0 {
+            fptr += 1;
+          }
+        }
+      }
+    }
+    sid[0x15] := 0;
+    sid[0x16] := cutoff;
+    sid[0x17] := ctrl;
+    sid[0x18] := ftype | fader;
+  }
+}
+
+schedule {
+  filter;
+}

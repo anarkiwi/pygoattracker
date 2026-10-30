@@ -1,0 +1,32 @@
+// GoatTracker 2 row timing: a per-channel tick counter reloaded from the
+// channel tempo, or (tempo 0/1) alternately from the two-entry funktempo table.
+spec gt2_tempo;
+layout { tick, tempo, rows, funk: addr; }
+cell funk: u8[2] @ L.funk ro;
+
+machine chan[x in 0..3] {
+  cell tick: u8 @ L.tick + x;
+  cell tempo: u8 @ L.tempo + x;
+  cell rows: u8 @ L.rows + x;
+  signal row: bool = false;
+  step {
+    tick -= 1;
+    if tick == 0 {
+      row := true;
+      rows += 1;
+    } elif neg(tick) {
+      if tempo >= 2 {
+        tick := tempo;
+      } else {
+        tick := funk[tempo];
+        tempo ^= 1;
+      }
+    }
+  }
+}
+
+schedule {
+  for c in 0..3 {
+    chan[c];
+  }
+}

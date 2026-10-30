@@ -73,9 +73,9 @@ The writer validates format limits and references before emitting anything.
 
 ## Play a song: SID register writes
 
-`Player` is a single class that transcribes the whole GoatTracker 2 playroutine
-and derives from [`pysidtracker.MemPlayer`](https://github.com/anarkiwi/pysidtracker),
-so it inherits the base per-frame machinery — `play_frame` (this frame's changed
+`Player` runs the playspec of the packed GoatTracker 2 playroutine on the song
+packed as the relocator packs it; it is a `pysidtracker.playspec.SpecPlayer`, a
+[`pysidtracker.MemPlayer`](https://github.com/anarkiwi/pysidtracker), so it inherits the base per-frame machinery — `play_frame` (this frame's changed
 `(reg, value)` writes), `render_grid` (forward-filled 25-register per-frame grid,
 `$D400..$D418`) and `iter_frames`:
 
@@ -90,7 +90,8 @@ for _ in range(50 * 60):                  # one minute at 50 Hz
 grid = Player(read_sng("tune.sng")).render_grid(250)   # 250 x 25 register grid
 ```
 
-Playback options default to the editor's; a `Build` (or its field names as
+The packed player never stops, so a render runs for the frames asked. Playback
+options default to the editor's; a `Build` (or its field names as
 keywords, which override it) selects others:
 
 ```python

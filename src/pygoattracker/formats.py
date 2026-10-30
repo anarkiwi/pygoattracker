@@ -124,5 +124,7 @@ GOATTRACKER2 = SidFormat(
         "pygoattracker.sid",
         "pygoattracker.player",
         "pygoattracker.packed",
+        "pygoattracker.gt2spec",
+        "pygoattracker.songimage",
     ),
 )

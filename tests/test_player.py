@@ -1,9 +1,6 @@
 """Playroutine behavior, frame by frame.
 
-Frame numbers: frame 0 is the first played frame (:class:`Player` is a
-:class:`pysidtracker.MemPlayer`, so ``_init`` runs the editor reset and the
-first :meth:`play_frame` is a real tick -- there is no separate all-zeros init
-frame). With the default tempo 6 the first pattern row initializes on frame 6
+Frame numbers: frame 0 is the first played frame, the song-init call. With the default tempo 6 the first pattern row initializes on frame 6
 and its wavetable starts executing on frame 7. Notes are fetched (and gateoff /
 hard restart applied) when the tick counter equals the gateoff timer, two frames
 before the row with the default test instrument. Pattern row N of the first
@@ -43,6 +40,17 @@ def started(song, **kwargs) -> Player:
 def whole(song, **kwargs) -> int:
     """Play calls of one whole pass of ``song`` (:func:`pass_frames`)."""
     return pass_frames(Player(song, **kwargs))
+
+
+def var(player: Player, name: str, channel: int = 0) -> int:
+    """Channel ``channel``'s playroutine variable ``name`` (a spec layout name)."""
+    return player.memory[player.image.layout[name] + 7 * channel]
+
+
+def poke(player: Player, channel: int = 0, **values) -> None:
+    """Set channel ``channel``'s playroutine variables."""
+    for name, value in values.items():
+        player._mem[player.image.layout[name] + 7 * channel] = value
 
 
 def play(player: Player, frames: int):
@@ -91,7 +99,7 @@ def test_first_call_only_inits_song(song):
     assert [value for reg, value in writes if reg != constants.MODE_VOL_REG] == [0] * (
         constants.SID_REGISTERS - 1
     )
-    assert [chan.tick for chan in player._channels] == [1] * constants.MAX_CHN
+    assert [var(player, "counter", c) for c in range(3)] == [1] * constants.MAX_CHN
 
 
 def test_single_note_timeline(song):
@@ -196,10 +204,7 @@ def test_per_channel_tempo():
     song.subtunes[0].channels[2].entries = [PlayPattern(1)]
     player = started(song)
     play(player, 8)
-    channels = player._channels
-    assert channels[0].tempo == 3
-    assert channels[1].tempo == 5
-    assert channels[2].tempo == 5
+    assert [var(player, "tempo", c) for c in range(3)] == [3, 5, 5]
 
 
 def test_funktempo():
@@ -442,34 +447,39 @@ def test_pulse_program(song):
     assert history == sorted(history)
 
 
-def test_pulse_zero_time_step_modulates_256_times(song):
-    song.pulsetable.left = [0x00, 0xFF]
-    song.pulsetable.right = [0x01, 0x00]
-    player = started(song)
-    chan = player._channels[0]
-    chan.pulse_table_ptr, chan.pulsetime, chan.pulse = 1, 0, 0x800
-    player._pulse_exec(chan)
-    assert (chan.pulse, chan.pulsetime, chan.pulse_table_ptr) == (0x801, 0xFF, 1)
-    for _ in range(255):
-        player._pulse_exec(chan)
-    assert (chan.pulse, chan.pulsetime, chan.pulse_table_ptr) == (0x900, 0, 2)
+def pulse_history(song, frames: int, **kwargs):
+    """Voice 0's 12-bit pulse width after each frame."""
+    player = started(song, **kwargs)
+    return [
+        (player.play_frame(), player.regs[3] << 8 | player.regs[2])[1]
+        for _ in range(frames)
+    ]
 
 
-def test_pulse_step_scales_each_modulation(song):
-    song.pulsetable.left = [0x02, 0x02, 0xFF]
-    song.pulsetable.right = [0x10, 0xF0, 0x00]
-    for step, history in (
+def test_pulse_zero_time_step_modulates_256_times():
+    song = basic_song(length=64)
+    song.pulsetable.left = [0x88, 0x00, 0xFF]
+    song.pulsetable.right = [0x00, 0x01, 0x00]
+    song.instruments[0].pulse_ptr = 1
+    history = pulse_history(song, 300, optimize_pulse=False)
+    start = history.index(0x800)
+    assert history[start : start + 257] == list(range(0x800, 0x901))
+    assert set(history[start + 256 :]) == {0x900}
+
+
+def test_pulse_step_scales_each_modulation():
+    song = basic_song(length=16)
+    song.pulsetable.left = [0x88, 0x02, 0x02, 0xFF]
+    song.pulsetable.right = [0x00, 0x10, 0xF0, 0x00]
+    song.instruments[0].pulse_ptr = 1
+    for step, steps in (
         (1, [0x810, 0x820, 0x810, 0x800]),
         (2, [0x820, 0x840, 0x820, 0x800]),
     ):
-        player = started(song, pulse_step=step)
-        chan = player._channels[0]
-        chan.pulse_table_ptr, chan.pulsetime, chan.pulse = 1, 0, 0x800
-        seen = []
-        for _ in range(4):
-            player._pulse_exec(chan)
-            seen.append(chan.pulse)
-        assert seen == history
+        history = pulse_history(song, 30, optimize_pulse=False, pulse_step=step)
+        start = history.index(0x800)
+        assert history[start + 1 : start + 5] == steps
+        assert set(history[start + 4 :]) == {0x800}
 
 
 def test_pulse_low_byte_unmasked(song):
@@ -617,15 +627,6 @@ def test_wavetable_absolute_note_and_delay(song):
     assert history[11] == constants.FREQ_TABLE[48]
 
 
-def test_illegal_wavetable_command_stops(song):
-    song.wavetable.left = [0x41, 0xFE, 0xFF]
-    song.wavetable.right = [0x00, 0x00, 0x00]
-    player = started(song)
-    play(player, 10)
-    assert not player.playing
-    assert player.play_frame() == []
-
-
 def test_gatetimer_legato_bits(song):
     legato = add_test_instrument(
         song, gateoff_timer=0x42, first_wave=0, attack_decay=0x55
@@ -703,25 +704,6 @@ def test_max_frames(song):
     assert list(iter_frames(song, max_frames=len(once))) == once
     twice = list(iter_frames(song, max_frames=2 * len(once)))
     assert len(twice) == 2 * len(once) and twice[: len(once)] == once
-
-
-def test_zero_length_orderlist_stops():
-    song = basic_song()
-    song.subtunes[0].channels[2].entries = []
-    player = Player(song)
-    assert len(player.play_frame()) == constants.SID_REGISTERS
-    assert player.play_frame() == []
-    assert not player.playing
-    assert len(list(iter_frames(song))) == 1
-
-
-def test_gatetimer_too_high_stops(song):
-    song.instruments[0].gateoff_timer = 3
-    song.patterns[0].rows[0].command = 0xF
-    song.patterns[0].rows[0].data = 0x03
-    player = started(song)
-    play(player, 12)
-    assert not player.playing
 
 
 def test_instrument63_default_tempo():
@@ -864,7 +846,7 @@ def test_ghost_build_init_zeroes_waveform_and_cutoff_low(song):
     assert (constants.FC_LO_REG, 0x07) in first
     assert (constants.CONTROL_REG, 0x00) in second
     assert (constants.FC_LO_REG, 0x00) in second
-    assert player._channels[0].wave == 0
+    assert var(player, "wave") == 0
 
 
 def test_ghost_voice_bytes_are_the_channel_variables(song):
@@ -874,7 +856,12 @@ def test_ghost_voice_bytes_are_the_channel_variables(song):
     play(player, 3)
     assert (player.regs[1] << 8) | player.regs[0] == 0x03E8
     assert (player.regs[3] << 8) | player.regs[2] == 0x0400
-    assert (player._channels[0].freq, player._channels[0].pulse) == (0x03E8, 0x0400)
+    assert [var(player, k) for k in ("freqlo", "freqhi", "pulselo", "pulsehi")] == [
+        0xE8,
+        0x03,
+        0x00,
+        0x04,
+    ]
 
 
 def test_chip_state_seeds_the_variables_without_a_ghost(song):
@@ -940,7 +927,8 @@ def test_pulse_width_highs_output_their_nibble(song):
 def test_state_seeds_funktempo(song):
     player = Player(song, state=ghost_state(funk=(3, 4)))
     player.play_frame()
-    assert player._funktable == [3, 4]
+    funk = player.image.layout["funktbl"]
+    assert [v - 1 for v in player.memory[funk : funk + 2]] == [3, 4]
 
 
 def test_state_seeds_filter_and_volume(song):
@@ -981,8 +969,8 @@ def test_a_build_plays_as_its_keyword_options(song, options):
 
 
 def test_keyword_options_override_the_build(song):
-    player = Player(song, build=Build(adparam=0x1234, pulse_step=3), adparam=0x10FFFF)
-    assert player.build == Build(adparam=0xFFFF, pulse_step=3)
+    player = Player(song, build=Build(adparam=0x1234, pulse_step=2), adparam=0x10FFFF)
+    assert player.build == Build(adparam=0xFFFF, pulse_step=2)
 
 
 def test_the_song_data_options_read_from_the_player(song):
@@ -1071,19 +1059,16 @@ def test_a_note_under_another_effect_vibrates_where_its_init_loads_the_parameter
 
 
 def test_a_vibrato_stopped_by_a_zero_delay_steps_without_a_parameter_otherwise():
-    player = started(basic_song(), vibstop=True)
-    chan = player._channels[0]
-    chan.command, chan.cmddata, chan.vibdelay, chan.vibtime = 0, 0, 1, 0
-    player._tickn_command(chan)
-    assert chan.vibtime == 2  # the parameter is zero: it still steps
-    chan.vibdelay = 0
-    player._tickn_command(chan)
-    assert chan.vibtime == 2  # a delay of zero stops it
-    chan.vibtime = 0
-    other = started(basic_song())._channels[0]
-    other.command, other.cmddata, other.vibdelay = 0, 0, 1
-    started(basic_song())._tickn_command(other)
-    assert other.vibtime == 0  # a parameter of zero is no vibrato
+    def vibtime(vibstop, delay):
+        player = started(basic_song({}), vibstop=vibstop)
+        play(player, 2)
+        poke(player, fx=0, param=0, vibdelay=delay, vibtime=0)
+        player.play_frame()
+        return var(player, "vibtime")
+
+    assert vibtime(True, 1) == 2  # the parameter is zero: it still steps
+    assert vibtime(True, 0) == 0  # a delay of zero stops it
+    assert vibtime(False, 1) == 0  # a parameter of zero is no vibrato
 
 
 def test_the_pulse_width_init_left_reaches_the_chip_with_the_first_pulse_program():
@@ -1095,3 +1080,25 @@ def test_the_pulse_width_init_left_reaches_the_chip_with_the_first_pulse_program
     high = reg_history(song, 40, constants.PULSE_HI_REG, state=state)
     assert high[:6] == [0] * 6 and set(high[7:]) == {0x0B}
     assert set(reg_history(song, 40, constants.PULSE_HI_REG)) == {0}
+
+
+def test_a_waveform_above_cf_plays_its_note_without_wavetable_commands(song):
+    song.wavetable.left = [0xD1, 0xFF]
+    song.wavetable.right = [0x0C, 0x00]
+    assert constants.FREQ_TABLE[60] in freq_history(song, 12)
+    assert 0xD1 in reg_history(song, 12, constants.CONTROL_REG)
+
+
+def test_a_ghost_on_the_second_chip_s_channels_flushes_the_first_chip():
+    song = basic_song()
+    song.subtunes[0].channels += [Orderlist() for _ in range(3)]
+    state = ghost_state()
+    voices = (0x20, 0x27, 0x2E, 0x00, 0x07, 0x0E)
+    plain = Player(song, voices=voices)
+    ghost = Player(song, voices=voices, state=state)
+    frames = whole(song)
+    grid = plain.render_grid(frames)
+    assert ghost.render_grid(frames + 1)[1:] == grid
+    assert ghost.tick(0x0F00)[0x0F00][: constants.SID_REGISTERS] == bytes(
+        ghost.memory[ghost.image.ghost : ghost.image.ghost + constants.SID_REGISTERS]
+    )

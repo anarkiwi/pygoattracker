@@ -64,6 +64,54 @@ _GT1_ARCHIVE_URLS = {
     "goattrk2_261.zip": "https://csdb.dk/getinternalfile.php/42238/goattrk2_61.zip",
 }
 
+# GoatTracker 2 release archives whose playroutine sources scripts/gt2_refs.py
+# parses: name -> (CSDb internal file, SHA-256).
+GT2_ARCHIVES = {
+    "gt2_206.zip": ("153899/goattrk2.zip", GT1_ARCHIVES["goattrk2_206.zip"]),
+    "gt2_235.zip": ("153872/goattrk2.zip", GT1_ARCHIVES["goattrk2_235.zip"]),
+    "gt2_255.zip": (
+        "153900/goattrk2.zip",
+        "bef830fec5b882462c29f396d9fafe43436505b0a7792370fd100d529bc7315c",
+    ),
+    "gt2_261.zip": ("42238/goattrk2_61.zip", GT1_ARCHIVES["goattrk2_261.zip"]),
+    "gt2_265.zip": (
+        "153901/GoatTracker_2.65.zip",
+        "7cfec59487dc25b5b294e7302f307524a668c6f2a80b7548a1bbc7c746a0e2dd",
+    ),
+    "gt2_268.zip": (
+        "153908/GoatTracker_2.68.zip",
+        "461320c652a9696efd2d425bd546de3a4097c01fe71df552f16fc394d3a3c45a",
+    ),
+    "gt2_273.zip": (
+        "153887/GoatTracker_2.73.zip",
+        "4d24c5919f47c69791ea7b457586849621e205a20e4c3ad5eb37d1a0cbcf9563",
+    ),
+    "gt2_276.zip": (
+        "213485/GoatTracker_2.76.zip",
+        "c1b6b159ec0d37ae68599ac83be8934a71cd543e480eb5225f844b62151cea34",
+    ),
+    "gt2_sf11.zip": (
+        "259577/goattracker2.zip",
+        "b7749720d99c68af8376784ff6ab179ff2f0082750c14aa8bb6d33a63cce6339",
+    ),
+    "gt2stereo_259.zip": (
+        "87400/gt2stereo.zip",
+        "593bf314dcd8b878af973fab2f7ce3fbdd14cb215ab89e40b583d038a49ad01d",
+    ),
+    "gt2stereo_274.zip": (
+        "153889/gt2stereo.zip",
+        "b268e306f8ace430eeacea4b0e2ce4d2f43453e8703ce2e54686a038655cf80b",
+    ),
+    "gt2stereo_276.zip": (
+        "180090/GoatTracker_2.76_Stereo.zip",
+        "878a4194ecf48c48a89ba0a07fcce6d1ad27b3b1c9ec86e52160960ed0199f89",
+    ),
+    "gt2stereo_277.zip": (
+        "213486/GoatTracker_2.77_Stereo.zip",
+        "5ecfd091e49662732d9e3706017581a4b0d04d89637cfed54c5b8b129a7831c2",
+    ),
+}
+
 # GoatTracker V1.25 editor example songs (musicroutine 11.x layout).
 GOATOLD_SONGS = {
     "BOFH.SNG": "b5042f224a178013240655badf406547ec55e7aad8fabd0a9d74808a9cc2ba26",
@@ -149,6 +197,13 @@ def example_song(name: str) -> bytes:
 def gt1_archive(name: str) -> bytes:
     """Bytes of a pinned GoatTracker V1.x release archive (cached download)."""
     return _fetch(fetch_verified, _GT1_ARCHIVE_URLS[name], GT1_ARCHIVES[name])
+
+
+def gt2_archive(name: str) -> bytes:
+    """Bytes of a pinned GoatTracker 2 release archive (cached download)."""
+    path, sha256 = GT2_ARCHIVES[name]
+    url = f"https://csdb.dk/getinternalfile.php/{path}"
+    return _fetch(fetch_verified, url, sha256, name=name)
 
 
 def _archive_member(archive: str, member: str, sha256: str) -> bytes:

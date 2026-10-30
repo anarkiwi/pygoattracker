@@ -18,6 +18,8 @@ from tqdm import tqdm
 
 from pygoattracker.formats import GOATTRACKER1, GOATTRACKER2
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 RAM = ((0, 0x100), (0x200, 0xD000), (0xE000, 0x10000))
 FIELDS = ["path", "song", "frames", "frame", "at", "mine", "real"]
 
@@ -44,10 +46,20 @@ def first_difference(mine: bytes, real: bytes):
     return None
 
 
+def spec_player(data: bytes, song: int):
+    """The spec player of 1-based ``song`` running on the tune's own memory: a V1.x
+    format player, a GoatTracker 2 spec bound in place (:mod:`tests._gt2inplace`)."""
+    fmt = recognize_format((GOATTRACKER1, GOATTRACKER2), data)
+    if fmt is GOATTRACKER2:
+        from tests._gt2inplace import InPlace  # pylint: disable=import-outside-toplevel
+
+        return InPlace(data, song - 1)
+    return fmt.player(fmt.load(data, song - 1))
+
+
 def check(data: bytes, song: int) -> dict:
     """Play 1-based ``song`` of ``data`` on the spec and on the 6502, whole song."""
-    fmt = recognize_format((GOATTRACKER1, GOATTRACKER2), data)
-    spec = fmt.player(fmt.load(data, song - 1))
+    spec = spec_player(data, song)
     cpu = Host(data, song - 1)
     frames = song_frames(data, song)
     for frame in range(frames):

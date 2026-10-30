@@ -3,7 +3,8 @@
 GoatTracker V1.x saved a tune by copying one of its playroutines, relocating it
 and appending the song tables (`relocator()` in the editor's `goattrk.c`). This
 library recognizes the playroutine, decompiles the tables into a `Gt1Song` and
-plays it with `Gt1Player`, a native transcription of that playroutine. Three
+plays it with `Gt1Player`, which runs a `pysidtracker.playspec` spec of that
+playroutine on the tune's own memory. Three
 playroutine designs are supported: the V1.5x standard playroutine, the V1.3–V1.4f
 playroutines it was rewritten from, and the musicroutine 11.x family (the V1.25
 musicroutines 11.1–11.5 and the V0.96–V1.22 standard playroutines they grew
@@ -98,17 +99,22 @@ is decompiled from memory after init.
 
 ## Playback
 
-`Gt1Player` picks the transcription of the song's playroutine (V1.5x, V1.4x or
-musicroutine 11.x) and runs it over
-the packed memory image: channel
-variables and self-modified operands live at their packed addresses, and every
-carry, 8-bit wrap and out-of-table read follows the 6502 code. Memory outside
-the loaded data holds libsidplayfp's RAM power-on pattern, which a tune reading
-past its data sees on the oracle too. One `render_grid` row is one play call;
-multispeed timing comes from the tune's CIA programming
-(`pysidtracker.cadence.playroutine_cadence`), never from header flags. The
-musicroutine channel variables are addressed by their playroutine labels, so
-both channel-variable layouts play through one transcription. A playroutine
+`Gt1Player` is a `pysidtracker.playspec.SpecPlayer`: the tune's own init runs in
+the 6502 emulator, then each play call runs the family's spec
+(`src/pygoattracker/specs/gt1_15.play`, `gt1_14.play` or `gt1_11.play`) on that
+memory. `pygoattracker.gt1spec.binding` binds a spec's `layout` from the relocated
+reference `find_player` matches: the playroutine labels (channel variables), the
+relocated table bases, the self-modified operands (`Reference.smc` in code order,
+including the jump-table dispatch operands), the packer's parameters and the
+zero-page temporaries as the tune's code addresses them. Release differences
+within a family are static `flag`s of the layout. The spec writes every byte the
+6502 writes outside the stack page, so memory after each call equals the tune's
+own run; reads of pattern or orderlist data that alias the stack page are the one
+thing it cannot follow. One `render_grid` row is one play call; multispeed timing
+comes from the tune's CIA programming (`pysidtracker.cadence.playroutine_cadence`),
+never from header flags. `Gt1Player.loops` counts the loop and end marks the
+sequencer reads in each channel's orderlist. With `validate=True` each pattern and
+orderlist the spec opens is parsed under the `gt1streams.lark` rule it names. A playroutine
 without the V1.22 `clc` adds the carry play is entered with to the cutoff
 slide; sidplayfp's PSID driver calls play from its interrupt handler, whose
 `rti` restores the flags its idle loop had after init, so that carry is the one
@@ -118,7 +124,15 @@ init returned with (clear for the packed entry points).
 and orderlist command with each playroutine (the V1.4x multispeed one with a
 hard restart length set) (and a sound effect for 11.2/11.4)
 and checks `Gt1Player` against the packed 6502 playroutine itself, entered as
-the PSID driver enters it, frame for frame.
+the PSID driver enters it, frame for frame. `tests/test_gt1_playspec.py` checks
+the registers and the 64 KiB outside the stack page and I/O against the tune's own
+6502 after every call, on synthetic songs and (marked `oracle`) over the whole song
+of every GT1 oracle tune, and proves the V1.53 row reader (`chan[0].getnewnotes`,
+from the pattern pointer load to the next channel's step) equal to the 6502 code
+for all initial memory with `pysidtracker.playspec.tv.validate`.
+`scripts/spec_memcheck.py` runs the same memory check over an HVSC `find` CSV
+(`scripts/memcheck_report.py` tallies it per playroutine) and
+`scripts/gt1_disasm.py` lists a reference playroutine with its labels.
 
 ## V1.x editor songs
 

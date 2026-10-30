@@ -18,7 +18,7 @@ PLAYER = "goattracker|^\\(gt"
 def render_gt1(data, song, nframes):
     """Render 1-based ``song`` of a GoatTracker V1.x ``.sid``."""
     gt1 = decompile_gt1(data, subtune=song - 1)
-    grid = Gt1Player(gt1, subtune=song - 1).render_grid(nframes)
+    grid = Gt1Player(gt1, subtune=song - 1, sid=data).render_grid(nframes)
     return np.asarray(grid, np.int16), {"gt1": gt1.player}
 
 
@@ -39,5 +39,6 @@ def render(data, song, nframes):
 def player(data, song):
     """The ``MemPlayer`` of 1-based ``song`` (``python -m pysidtracker.whydiff``'s hook)."""
     if find_player(_load_image(data).mem) is not None:
-        return Gt1Player(decompile_gt1(data, subtune=song - 1), subtune=song - 1)
+        gt1 = decompile_gt1(data, subtune=song - 1)
+        return Gt1Player(gt1, subtune=song - 1, sid=data)
     return decompile_sid(data, subtune=song - 1).player()

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pysidtracker import ByteCursor
 from pysidtracker import SidParseError as BaseSidParseError
 
-from pygoattracker._gt1_refs import PLAYERS
+from pygoattracker._gt1_builds import PLAYERS
 from pygoattracker.errors import SngParseError, SngValidationError
 from pygoattracker.variant import release_refs
 from pygoattracker.gt1 import (

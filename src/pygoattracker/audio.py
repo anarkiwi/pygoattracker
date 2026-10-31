@@ -7,21 +7,22 @@ into a per-frame ``(reg, val)`` write stream (via
 :func:`pygoattracker.player.iter_frames`) and returns
 ``(samples, sampling_frequency)``.
 
-By default the emulated SID is `pyresidfp
-<https://pypi.org/project/pyresidfp/>`_ (a pysidtracker dependency).
-Any object with ``write_register(reg, value)``, ``clock(timedelta) ->
-samples`` and a ``sampling_frequency`` attribute can be passed as
-``device`` instead, e.g. for tests or a different emulator.
+By default the emulated SID is `pylibresidfp
+<https://pypi.org/project/pylibresidfp/>`_ (a pysidtracker dependency).
+Any object with ``run(writes, until) -> int16 samples`` (``writes`` an
+``(N, 3)`` array of absolute ``(cycle, reg, value)``) and a ``sampling_hz``
+attribute can be passed as ``device`` instead, e.g. for tests or a different
+emulator.
 
-Each register write is clocked individually at the same in-frame offset
-the register log uses, so renders line up with
-:mod:`pygoattracker.reglog` output.
+Each register write is placed at the same in-frame offset the register log
+uses, so renders line up with :mod:`pygoattracker.reglog` output.
 """
 
 from pathlib import Path
 
 from pysidtracker.audio import (
     CHIP_MODELS,
+    device_sampling_frequency,
     resolve_device,
     seconds_to_frames,
     write_wav,
@@ -55,7 +56,7 @@ def render_samples(
     song stops, or at the song loop with ``until_loop``).
     """
     try:
-        device = resolve_device(device, model, sampling_frequency)
+        device = resolve_device(device, model, sampling_frequency, clock_frequency)
     except ValueError as exc:
         raise GoatTrackerError(str(exc)) from exc
     frames = iter_frames(
@@ -73,7 +74,7 @@ def render_samples(
         clock_frequency=clock_frequency,
         device=device,
     )
-    return samples, float(device.sampling_frequency)
+    return samples, device_sampling_frequency(device)
 
 
 def render_wav(song: Song, dst, seconds: float = 60.0, **options) -> Path:

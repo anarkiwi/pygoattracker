@@ -2,6 +2,7 @@
 
 import wave
 
+import numpy as np
 import pytest
 
 from pygoattracker import audio
@@ -9,37 +10,35 @@ from pygoattracker.errors import GoatTrackerError
 
 
 class FakeDevice:
-    """Minimal stand-in for pyresidfp's SoundInterfaceDevice."""
+    """Minimal device: records the write array and returns silence."""
 
-    sampling_frequency = 44100.0
+    sampling_hz = 44100.0
+    clock_hz = 985248.0
 
     def __init__(self):
-        self.writes = []
-        self.seconds = 0.0
-        self._emitted = 0
+        self.runs = []
 
-    def write_register(self, reg, val):
-        self.writes.append((reg, val))
-
-    def clock(self, delta):
-        self.seconds += delta.total_seconds()
-        due = round(self.seconds * self.sampling_frequency)
-        samples = [0] * (due - self._emitted)
-        self._emitted = due
-        return samples
+    def run(self, writes, until):
+        self.runs.append((np.array(writes), until))
+        first = self.runs[-2][1] if len(self.runs) > 1 else 0
+        return np.zeros(
+            round((until - first) * self.sampling_hz / self.clock_hz), "<i2"
+        )
 
 
 def test_render_samples_with_device(song):
     device = FakeDevice()
     samples, rate = audio.render_samples(song, seconds=0.5, device=device)
     assert rate == 44100.0
-    assert len(samples) == round(device.seconds * rate)
-    # Half a second of PAL frames (timedelta quantizes to microseconds,
-    # so per-write clocking drifts by a few ppm).
     frames = round(0.5 * audio.constants.PAL_CLOCK_HZ / 19656)
-    assert device.seconds == pytest.approx(frames * 19656 / 985248, abs=1e-3)
-    assert device.writes[0] == (0, 0)
-    assert (4, 0x41) in device.writes
+    assert device.runs[-1][1] == frames * 19656
+    assert len(samples) == pytest.approx(
+        frames * 19656 / 985248 * rate, abs=len(device.runs)
+    )
+    writes = np.concatenate([w for w, _ in device.runs])
+    assert tuple(writes[0]) == (0, 0, 0)
+    assert (writes[:, 1:] == (4, 0x41)).all(axis=1).any()
+    assert (np.diff(writes[:, 0]) >= 0).all()
 
 
 def test_render_wav(song, tmp_path):
@@ -66,7 +65,7 @@ def test_bad_model(song):
         audio.render_samples(song, model="6582")
 
 
-def test_render_with_pyresidfp(song):
+def test_render_with_pylibresidfp(song):
     samples, rate = audio.render_samples(song, seconds=1.0, model="8580")
     assert rate > 8000
     assert len(samples) == pytest.approx(rate, rel=0.05)
@@ -74,7 +73,7 @@ def test_render_with_pyresidfp(song):
     assert max(abs(value) for value in samples) > 100
 
 
-def test_render_with_pyresidfp_6581_and_rate(song):
+def test_render_with_pylibresidfp_6581_and_rate(song):
     samples, rate = audio.render_samples(
         song, seconds=0.2, model="6581", sampling_frequency=22050
     )

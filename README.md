@@ -29,7 +29,7 @@ pip install pygoattracker
 ```
 
 Reading, writing, playing, register logs, `.sid` decompiling (crunched/relocated
-images run in a 6502 emulator) and WAV rendering (pyresidfp) all come with the
+images run in a 6502 emulator) and WAV rendering (pylibresidfp) all come with the
 core install via [`pysidtracker`](https://github.com/anarkiwi/pysidtracker).
 
 ## Usage

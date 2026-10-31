@@ -292,17 +292,16 @@ start modes.
 Register logs are one `clock reg val` triple per line (absolute clock in PAL CPU
 cycles, decimal, `#` comments). `write_reglog` / `read_reglog` write and read
 them; `iter_register_writes` yields the writes. Rendering drives
-[pyresidfp](https://pypi.org/project/pyresidfp/) (reSIDfp emulation), clocking
-each register write individually at the same in-frame offsets the register log
-uses; `render_samples` returns raw 16-bit samples and accepts a `device=` for
-any other emulator object with `write_register` / `clock` /
-`sampling_frequency`.
+[pylibresidfp](https://pypi.org/project/pylibresidfp/) (libresidfp emulation),
+placing each register write at the same in-frame offset the register log uses;
+`render_samples` returns raw 16-bit samples and accepts a `device=` for any
+other emulator object with `run(writes, until)` and `sampling_hz`.
 
 ## References
 
 - GoatTracker 2.76 format documentation and `player.s`
   ([GoatTracker 2](https://sourceforge.net/projects/goattracker2/)).
 - [NinjaTracker 2](http://covertbitops.c64.org).
-- [pyresidfp](https://pypi.org/project/pyresidfp/) — reSIDfp SID emulation.
+- [pylibresidfp](https://pypi.org/project/pylibresidfp/) — libresidfp SID emulation.
 - [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) — shared
   container/image/detection base.

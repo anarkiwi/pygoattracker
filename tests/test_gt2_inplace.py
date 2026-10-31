@@ -21,6 +21,8 @@ from pysidtracker.playspec import tv
 
 from pygoattracker import gt2spec
 from pygoattracker.formats import GOATTRACKER2
+from pygoattracker.sid import decompile_sid
+from pygoattracker.typed import speed_bytes
 from tests._gt2inplace import InPlace
 from tests.test_oracle_hvsc import TUNES
 
@@ -29,6 +31,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import spec_memcheck  # noqa: E402  pylint: disable=wrong-import-position
 
 pytestmark = pytest.mark.oracle
+
+SUBTUNES = TUNES | {
+    "cruiser_x_79_1": ("MUSICIANS/B/Bayliss_Richard/Cruiser-X_79.sid", 1),
+    "captain_ishtar_1": ("MUSICIANS/B/Bayliss_Richard/Captain_Ishtar.sid", 1),
+    "ninja_carnage_1": ("MUSICIANS/D/Dya/Ninja_Carnage.sid", 1),
+}
+RELOCATION_MISSED = (
+    "cruiser_x_79_1",
+    "cruiser_x_79_4",
+    "captain_ishtar_1",
+    "captain_ishtar_5",
+    "ninja_carnage_1",
+    "greaties_tune_3",
+    "trance_sector_12",
+)
 
 MEMORY = (
     "hammurabi",
@@ -41,6 +58,7 @@ MEMORY = (
     "two_channels",
     "stereo",
     "double_call",
+    *RELOCATION_MISSED,
 )
 
 
@@ -53,7 +71,7 @@ CLOCK = 985248
 
 
 def _tune(name: str) -> tuple:
-    relpath, song = TUNES[name]
+    relpath, song = SUBTUNES[name]
     path = resolve_tune(relpath)
     if path is None:
         raise TuneFetchError(f"tune {relpath} unavailable (offline, not cached)")
@@ -64,6 +82,19 @@ def _tune(name: str) -> tuple:
 def test_spec_memory_equals_the_tunes_own_6502_every_call(name):
     data, song = _tune(name)
     assert spec_memcheck.check(data, song)["frame"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "name", [n for n in RELOCATION_MISSED if n != "greaties_tune_3"]
+)
+def test_binding_reads_the_tables_the_typed_song_was_read_from(name):
+    data, song = _tune(name)
+    model = decompile_sid(data, song - 1)
+    layout = gt2spec.binder(model)(model.memory, 0)
+    rows = [speed_bytes(row) for row in model.typed.speedtable]
+    left = [model.memory[layout["speedleft"] + 1 + k] for k in range(len(rows))]
+    right = [model.memory[layout["speedright"] + 1 + k] for k in range(len(rows))]
+    assert list(zip(left, right)) == rows
 
 
 def test_row_reader_is_translation_valid():

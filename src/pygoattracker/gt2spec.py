@@ -17,6 +17,7 @@ from pysidtracker.playspec import parse as parse_spec
 
 from pygoattracker.errors import SidParseError
 from pygoattracker.gt2match import Match, match
+from pygoattracker.packed import columns
 
 # Release behaviour no define states (see the spec's flags of the same names).
 FEATURES = {
@@ -239,6 +240,8 @@ def layout(found: Match, exec_channels=None, chip_writes=False) -> dict:
     for name in ("filtstep", "filttime", "filtcutoff", "filtctrl", "filttype"):
         out[name + "2"] = out[name + "2"] or out[name] + 0x100
     out.update({name: lab(label, -1) for name, label in _TABLES.items()})
+    vib = (found.sites or {}).get(("mt_effect_4", "mt_speedlefttbl"))
+    out["speedvib"] = min(vib) if vib else out["speedleft"]
     out.update({name: bool(_define(found, d)) for name, d in _FLAGS.items()})
     features = FEATURES.get(found.name.split("/")[0], set())
     out.update({name: name in features for name in _FEATURES})
@@ -297,6 +300,19 @@ def layout(found: Match, exec_channels=None, chip_writes=False) -> dict:
     return out
 
 
+_LABELS = dict(_TABLES, freqlo_t="mt_freqtbllo", freqhi_t="mt_freqtblhi")
+
+
+def _operands(found: Match, label: str) -> set:
+    """The operands of the instructions that name table ``label``."""
+    return {
+        v
+        for (_, sym), vals in (found.sites or {}).items()
+        if sym == label
+        for v in vals
+    }
+
+
 class Binder:
     """The spec bound in place to the playroutine in a tune's own memory.
 
@@ -304,11 +320,14 @@ class Binder:
     ``idle`` the channels its play does not run. A binder is the ``bind`` of a
     :class:`~pysidtracker.playspec.SpecPlayer` (``binder(view, entry)``) and
     ``binder.entries`` its ``entries``; :meth:`match` is the playroutine source
-    matched in the code.
+    matched in the code. ``tables`` are the table addresses the song data lies at,
+    which replace the address the match binds to a table where the code's operands
+    for it disagree (a relocation missed some) and one of them is that address.
     """
 
-    def __init__(self, code, idle=()):
+    def __init__(self, code, idle=(), tables=None):
         self.code, self.idle = tuple(code), tuple(idle)
+        self.tables = dict(tables or {})
         self._found = None
 
     def match(self, view) -> Match:
@@ -323,11 +342,54 @@ class Binder:
         """The spec layout of the playroutine in ``view``."""
         found = self.match(view)
         nchan = found.get("NUMCHANNELS", 3)
-        return layout(found, [c for c in range(nchan) if c not in self.idle])
+        out = layout(found, [c for c in range(nchan) if c not in self.idle])
+        for name, address in self.tables.items():
+            if address in _operands(found, _LABELS[name]):
+                out[name] = address
+        return out
 
     def entries(self, view) -> set:
         """The play entry of the playroutine in ``view``."""
         return {self.match(view)["mt_play"]}
+
+
+_INSTRUMENT_TABLES = {
+    "ad": "ins_ad",
+    "sr": "ins_sr",
+    "wave": "ins_wave",
+    "pulse": "ins_pulse",
+    "filt": "ins_filt",
+    "vib": "ins_vibparam",
+    "vibdelay": "ins_vibdelay",
+    "gate": "ins_gate",
+    "first": "ins_first",
+}
+
+
+def song_tables(lay, freq_bases=None) -> dict:
+    """The table addresses (1-based, label - 1) of the song data laid out as ``lay``,
+    the packed layout the playroutine's loads were observed to read, and the
+    frequency tables at ``freq_bases``."""
+    out = {
+        _INSTRUMENT_TABLES[col]: lay.ins_start + k * lay.num_instr - 1
+        for k, col in enumerate(columns(lay))
+    }
+    pulse = lay.tstart + 2 * lay.wlen
+    filt = pulse + 2 * lay.plen
+    speed = filt + 2 * lay.flen + lay.zeros
+    out.update(
+        wavetbl=lay.tstart - 1,
+        notetbl=lay.tstart + lay.wlen - 1,
+        pulsetimetbl=pulse - 1,
+        pulsespdtbl=pulse + lay.plen - 1,
+        filttimetbl=filt - 1,
+        filtspdtbl=filt + lay.flen - 1,
+        speedleft=speed - 1,
+        speedright=speed + lay.slen + lay.zeros - 1,
+    )
+    if freq_bases:
+        out["freqlo_t"], out["freqhi_t"] = freq_bases
+    return out
 
 
 def binder(model) -> Binder:
@@ -335,7 +397,11 @@ def binder(model) -> Binder:
     code = model.info.code
     if code is None or code[0] is None:
         raise SidParseError("the decompiled tune has no playroutine code span")
-    return Binder(code, model.info.playback.idle)
+    lay = model.info.layout
+    tables = (
+        None if lay is None or lay.inline else song_tables(lay, model.info.freq_bases)
+    )
+    return Binder(code, model.info.playback.idle, tables)
 
 
 def spec_binding(model) -> SpecBinding:

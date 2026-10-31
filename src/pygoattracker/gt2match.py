@@ -51,7 +51,10 @@ _UNARY = {
 class Match:
     """A playroutine source at ``start``: its ``name``, the address after it, the
     ``symbols`` (labels, relocator defines, tables), operand ``exprs`` values and
-    the labels ``passed`` (those its taken blocks define)."""
+    the labels ``passed`` (those its taken blocks define). ``sites`` holds the
+    operands the absolute-addressed instructions that name the table ``symbol`` after
+    the source's label ``label`` read: where a relocation missed some operands of a
+    table these differ between sites."""
 
     name: str
     start: int
@@ -60,6 +63,7 @@ class Match:
     exprs: dict
     passed: frozenset = frozenset()
     slips: int = 0
+    sites: dict | None = None
 
     def __getitem__(self, name: str) -> int:
         return self.symbols[name]
@@ -72,7 +76,17 @@ class Match:
 class _Env:
     """Symbol values, equates, operand-expression values and labels passed."""
 
-    __slots__ = ("sym", "equ", "expr", "passed", "smc", "slip", "slips")
+    __slots__ = (
+        "sym",
+        "equ",
+        "expr",
+        "passed",
+        "smc",
+        "slip",
+        "slips",
+        "sites",
+        "last",
+    )
 
     def __init__(self, sym=None, equ=None, exprs=None, passed=None, smc=None):
         self.sym = sym if sym is not None else {}
@@ -82,6 +96,8 @@ class _Env:
         self.smc = smc if smc is not None else set()
         self.slip = None
         self.slips = None
+        self.sites = {}
+        self.last = ""
 
     def copy(self) -> "_Env":
         """An independent copy."""
@@ -93,6 +109,7 @@ class _Env:
             set(self.smc),
         )
         env.slip, env.slips = self.slip, self.slips
+        env.sites, env.last = dict(self.sites), self.last
         return env
 
     def slipped(self, have: int, value: int) -> bool:
@@ -196,12 +213,25 @@ def _choices(cond, env: _Env):
     return out
 
 
+def _symbol(tree):
+    """The first symbol an operand expression names (None: none)."""
+    if isinstance(tree, str):
+        return tree
+    if isinstance(tree, tuple):
+        for part in tree[1:]:
+            found = _symbol(part)
+            if found is not None:
+                return found
+    return None
+
+
 def _step(node, mem, pos: int, env: _Env, data: list, rewritten: dict):
     """Match one non-conditional node at ``pos``: the position after it, else None."""
     kind = node[0]
     if kind == "L":
         name = node[1]
         env.passed.add(name)
+        env.last = name
         env.smc.update(pos + k for k in rewritten.get(name, ()))
         have = env.sym.get(name)
         if have is not None and have != pos and env.slipped(pos, have):
@@ -236,12 +266,15 @@ def _step(node, mem, pos: int, env: _Env, data: list, rewritten: dict):
         return pos + 2 if env.bind(tree, target, 0xFFFF) else None
     if have in ("abs", "absx", "absy", "ind"):
         value = mem[pos + 1] | mem[pos + 2] << 8
-        if env.bind(tree, value, 0xFFFF):
-            return pos + 3
-        known = env.value(tree)
-        if known is None:
-            known = env.expr.get(repr(tree))
-        return pos + 3 if known is not None and env.slipped(known, value) else None
+        if not env.bind(tree, value, 0xFFFF):
+            known = env.value(tree)
+            if known is None:
+                known = env.expr.get(repr(tree))
+            if known is None or not env.slipped(known, value):
+                return None
+        key = (env.last, _symbol(tree))
+        env.sites[key] = env.sites.get(key, frozenset()) | {value}
+        return pos + 3
     return pos + 2 if env.bind(tree, mem[pos + 1], 0xFF) else None
 
 
@@ -298,6 +331,7 @@ def match_tree(
                 dict(env.expr),
                 frozenset(env.passed),
                 env.slips or 0,
+                env.sites,
             )
     return None
 

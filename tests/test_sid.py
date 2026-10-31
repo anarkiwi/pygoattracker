@@ -20,7 +20,7 @@ import pytest
 
 from pysidtracker import PlayroutineKind, SidError, SidImage
 
-from pygoattracker import constants
+from pygoattracker import constants, gt2spec
 from pygoattracker import sid
 from pygoattracker.errors import GoatTrackerError, SidParseError
 from pygoattracker.packed import (
@@ -471,3 +471,16 @@ def test_the_anchor_is_that_of_the_player_the_init_ran(monkeypatch):
     )
     assert sid._played_anchor(None, anchors[1], {0x1800}) == anchors[0]
     assert sid._played_anchor(None, anchors[1], {0x1000}) == anchors[1]
+
+
+def test_binder_tables_are_the_song_data_where_the_code_agrees():
+    model = sid.decompile_sid(DATA / "gt2_full.sid")
+    bound = gt2spec.binder(model)
+    plain = gt2spec.Binder(bound.code, bound.idle)
+    layout = bound(model.memory, 0)
+    assert layout == plain(model.memory, 0)
+    assert layout["speedvib"] == layout["speedleft"]
+    tables = gt2spec.song_tables(model.info.layout, model.info.freq_bases)
+    assert {k: layout[k] for k in tables if layout[k]} == {
+        k: v for k, v in tables.items() if layout[k]
+    }

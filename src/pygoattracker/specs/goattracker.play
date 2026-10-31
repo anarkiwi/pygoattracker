@@ -17,7 +17,7 @@ layout {
   author: addr;
   ins_ad, ins_sr, ins_wave, ins_pulse, ins_filt, ins_vibparam, ins_vibdelay,
   ins_gate, ins_first, wavetbl, notetbl, pulsetimetbl, pulsespdtbl, filttimetbl,
-  filtspdtbl, speedleft, speedright, songlo, songhi, pattlo, patthi, freqlo_t,
+  filtspdtbl, speedleft, speedvib, speedright, songlo, songhi, pattlo, patthi, freqlo_t,
   freqhi_t, tick0tbl, effecttbl, funktbl, temp, sid, ghost, regs, regs2, voice,
   voice2, adout, adout2, srout, srout2, ctrlout, ctrlout2: addr;
   nchan, nfilt, resetlen, ntempo, deftempo, adparam, srparam, firstnohr,
@@ -81,6 +81,7 @@ cell ftime1: u8[256] @ L.filttimetbl ro;
 cell ftime0: u8[256] @ L.filttimetbl + 1 ro;
 cell fspd1: u8[256] @ L.filtspdtbl ro;
 cell sleft: u8[256] @ L.speedleft ro;
+cell svib: u8[256] @ L.speedvib ro;
 cell sright: u8[256] @ L.speedright ro;
 cell song: ptr[256] @ (L.songlo, L.songhi) ro;
 cell patt: ptr[256] @ (L.pattlo, L.patthi) ro;
@@ -692,9 +693,9 @@ machine chan[x in 0..L.nchan] {
     let depth: u8 = 0;
     if L.nocalcspeed {
       temp2 := 0;
-      depth := sleft[y];
+      depth := svib[y];
     } else {
-      let l = sleft[y];
+      let l = svib[y];
       if !L.nonormalspeed && !neg(l) {
         temp2 := 0;
       }

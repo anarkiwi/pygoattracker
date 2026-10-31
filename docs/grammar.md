@@ -222,7 +222,10 @@ player runs the same programs on them:
 - **tables as automata**: a node is a row as the executor runs it (a row reached
   through a jump runs as its bytes read, a `FilterSet` takes a `CutoffSet` right
   after it), its successor the next row or that row's `Jump` target, none after a
-  `Stop`; a pointer set onto a jump row is its own node (it stops the song). Rows
+  `Stop`; a pointer set onto a jump row is its own node (it stops the song). A
+  jump whose target is a jump row runs that row as an ordinary row (its bytes read
+  as a wave command, a pulse set or a filter set), which no typed row states, so
+  `canonical_song` refuses it with a `GoatTrackerError`. Rows
   with the same label sequence are merged by `pysidtracker.automaton.minimise`
   (wavetable labels name pulse and filter classes, speedtable rows by value).
 - **renumbered by first use**: patterns by first play, instruments by first use

@@ -11,6 +11,7 @@ from pysidtracker.automaton import minimise, number_chains
 
 from pygoattracker import constants as C
 from pygoattracker import text
+from pygoattracker.errors import GoatTrackerError
 from pygoattracker.model import Orderlist, Pattern, PlayPattern, Subtune, Transpose
 from pygoattracker.typed import (
     CutoffSet,
@@ -94,10 +95,19 @@ class _Table:
         """The ``(left, right)`` bytes the executor reads at ``ptr``."""
         return self.left[(ptr - 1) & 0xFF], self.right[(ptr - 1) & 0xFF]
 
+    def land(self, ptr: int):
+        """``ptr`` as a row the executor runs next (None: halted); a jump row it
+        would run as an ordinary row has no typed form."""
+        if ptr and self.at(ptr)[0] == C.TABLEJUMP:
+            raise GoatTrackerError(
+                f"{self.kind}table: a jump onto the jump row {ptr} plays as a row"
+            )
+        return ptr or None
+
     def resolve(self, ptr: int):
         """The row run after advancing to ``ptr`` (None: halted)."""
         left, right = self.at(ptr)
-        return (right if left == C.TABLEJUMP else ptr) or None
+        return self.land(right if left == C.TABLEJUMP else ptr)
 
     def entry(self, ptr: int):
         """The node a pointer set to ``ptr`` starts (None: no program)."""
@@ -108,10 +118,10 @@ class _Table:
     def step(self, node, ref) -> tuple:
         """``(rows, succ)``: the typed rows ``node`` runs and the node after it."""
         if isinstance(node, tuple):
-            target = self.at(node[1])[1]
+            target = self.land(self.at(node[1])[1])
             if self.kind == "wave":
-                return (_jump(target),), self.step(node[1], ref)[1]
-            return (Stop(),), target or None
+                return (_jump(target or 0),), self.step(node[1], ref)[1]
+            return (Stop(),), target
         left, right = self.at(node)
         nxt = (node + 1) & 0xFF
         if self.kind == "wave":

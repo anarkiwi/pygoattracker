@@ -4,9 +4,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import numpy as np
 from pysidtracker import maincli
+from pysidtracker.playspec.player import SpecPlayer
 
-from pygoattracker import cli, text
+from pygoattracker import cli, gt2spec, songimage, text
 from pygoattracker import typed as T
 from pygoattracker.canonical import canonical, canonical_song
 from pygoattracker.errors import GoatTrackerError
@@ -17,6 +19,7 @@ from pygoattracker.reader import read_sng
 from pygoattracker.rebuild import song_into_sid
 from pygoattracker.sid import decompile_sid
 from pygoattracker.writer import build_sng
+from tests import _proof_songs
 from tests.conftest import pass_frames
 from tests.test_gt1 import make_song11
 
@@ -289,3 +292,71 @@ def test_only_the_tuning_the_player_can_read_counts():
         texts = [text.dumps(canonical_song(song(), 0, f)) for f in (tuning, other)]
         grids = [grid(song(), freq_table=f) for f in (tuning, other)]
         assert (texts[0] == texts[1]) == (grids[0] == grids[1]) == same
+
+
+def spec_grid(typed: T.TypedSong, subtune: int, frames: int = 120) -> np.ndarray:
+    """What the spec player plays of ``subtune`` of ``typed`` packed behind a stub."""
+    img = songimage.song_image(typed)
+    player = SpecPlayer(
+        gt2spec.spec(),
+        img.data,
+        songimage.BASE,
+        img.init,
+        img.play,
+        subtune,
+        bind=lambda view, entry: img.layout,
+        entries=lambda view: {img.entry},
+        notes=985248,
+    )
+    return np.asarray(player.render_grid(frames))
+
+
+def _jump_onto_jump(wavetable: tuple) -> T.TypedSong:
+    return song(
+        wavetable=wavetable,
+        instruments=(replace(LEAD, wave_ptr=1), BASS),
+    )
+
+
+JUMP_TO_JUMP = (
+    T.WaveStep(T.SetWave(0x41), T.WaveNote(0, True)),
+    T.Jump(4),
+    T.WaveStep(T.SetWave(0x41), T.WaveNote(7, True)),
+    T.Jump(3),
+    T.Jump(1),
+)
+
+
+def test_a_wave_jump_onto_a_jump_row_is_refused():
+    with pytest.raises(GoatTrackerError, match="jump row 4"):
+        canonical_song(_jump_onto_jump(JUMP_TO_JUMP), 0)
+
+
+def test_a_filter_jump_onto_itself_is_refused():
+    looped = (T.FilterSet(0x10, 0x0F, 0x01), T.CutoffSet(0x40), T.FilterMod(0x20, 2))
+    with pytest.raises(GoatTrackerError, match="jump row"):
+        canonical_song(song(filtertable=looped + (T.Jump(4),)), 0)
+
+
+@pytest.mark.parametrize("name", ["gt2", "gt2_plain", "gt2_minimal", "stereo"])
+def test_canonical_song_plays_what_its_song_plays_on_the_fixtures(name):
+    for song_, subtunes in _proof_songs.songs(name).values():
+        typed = T.TypedSong.from_song(song_)
+        for sub in subtunes:
+            assert (
+                spec_grid(typed, sub) == spec_grid(canonical_song(typed, sub), 0)
+            ).all()
+
+
+@pytest.mark.oracle
+def test_canonical_song_plays_what_its_song_plays_on_the_corpus():
+    for name, (song_, subtunes) in _proof_songs.songs("gt2_corpus").items():
+        typed = (
+            song_ if isinstance(song_, T.TypedSong) else T.TypedSong.from_song(song_)
+        )
+        for sub in subtunes:
+            try:
+                canon = canonical_song(typed, sub)
+            except GoatTrackerError:
+                continue
+            assert (spec_grid(typed, sub) == spec_grid(canon, 0)).all(), name

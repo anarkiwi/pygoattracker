@@ -85,14 +85,16 @@ class PackedInfo:
     ``firstnote + n``; ``note_read`` is what the packed player reads for each
     note index 0-127, the tuning and the bytes around it, which is what a
     :class:`~pygoattracker.player.Player` takes as its ``freq_table``;
-    ``playback`` is what ``build`` and the song data resolve to; ``code`` the
-    ``[start, end)`` of the player's own code.
+    ``freq_bases`` the ``(low, high)`` bases the player's note loads were seen to
+    index (None: not seen); ``playback`` is what ``build`` and the song data resolve
+    to; ``code`` the ``[start, end)`` of the player's own code.
     """
 
     firstnote: int = 0
     lastnote: int = constants.MAX_NOTES - 1
     freq_table: tuple = ()
     note_read: tuple = ()
+    freq_bases: tuple | None = None
     wave: int = WAVE_NEW
     layout: PackedLayout | None = None
     build: PlayerBuild = field(default_factory=PlayerBuild)
@@ -331,6 +333,7 @@ def _build_song(mem, header, lay, anchor, orderlists, build, bases=None):
         lastnote=firstnote + length - 1,
         freq_table=typed.freq,
         note_read=_freq_table(mem, addr, firstnote, length, bases),
+        freq_bases=bases,
         wave=wave,
         layout=lay,
         build=build,

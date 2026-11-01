@@ -74,7 +74,8 @@ def test_the_note_table_is_where_unchanged_frequencies_are_loaded_from():
     subject = bytearray(0x10000)
     code = "AC 00 30 B9 00 20 8D 00 D4 B9 80 20 8D 01 D4 AD 05 30 8D 07 D4"
     code += " B9 01 20 69 01 8D 0E D4 60"
-    subject[0x1000 : 0x1000 + 28] = bytes.fromhex(code)
+    code = bytes.fromhex(code)
+    subject[0x1000 : 0x1000 + len(code)] = code
     subject[0x3000] = 0x10
     trace = observe.Trace(subject, *wire_mpu(subject))
     trace.call(0x1000)

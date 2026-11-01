@@ -19,9 +19,11 @@ from unittest import mock
 import numpy as np
 from jennings.coverage import EXEC, FALLTHRU, TAKEN, CoverageMap, CoverageMPU
 from jennings.coverage.listing import Listing
+from jennings import memory as jennings_memory
 from jennings.devices import mpu6502
 from jennings.isa import is_branch
 from tqdm import tqdm
+from vagrant_moses import machine as vagrant_machine
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,7 +35,8 @@ _BRANCH = np.array([is_branch(op) for op in range(256)], bool)
 
 @contextmanager
 def recording(cov: CoverageMap):
-    """Every MPU built inside records its execution into ``cov``."""
+    """Every MPU built inside records its execution into ``cov``; the coverage
+    engine is Python, so the native cores are off."""
 
     class Recording(CoverageMPU):  # pylint: disable=too-few-public-methods
         """A ``CoverageMPU`` sharing ``cov``."""
@@ -42,7 +45,11 @@ def recording(cov: CoverageMap):
             super().__init__(*args, **kwargs)
             self.cov = cov
 
-    with mock.patch.object(mpu6502, "MPU", Recording):
+    with (
+        mock.patch.object(mpu6502, "MPU", Recording),
+        mock.patch.object(jennings_memory, "NATIVE", False),
+        mock.patch.object(vagrant_machine, "NATIVE", False),
+    ):
         yield
 
 

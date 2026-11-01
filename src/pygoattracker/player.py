@@ -119,7 +119,6 @@ class Player(SpecPlayer):
         self._muted: dict = {}
         self._loops = None
         self._channels = channels
-        self._calls = 0
         super().__init__(
             gt2spec.spec(),
             image.data,
@@ -132,8 +131,9 @@ class Player(SpecPlayer):
             validate=validate,
             notes=notes,
         )
-        if self._routes or image.ghost is not None:
-            self._store = self._routed
+        self.reroute(self._routes, self._muted, image.ghost)
+        if image.direct:
+            self.play_after = (image.direct, image.entry)
 
     @property
     def loops(self) -> list:
@@ -162,7 +162,7 @@ class Player(SpecPlayer):
                 self._muted[home + reg] = reg == C.CONTROL_REG
             else:
                 self._muted.pop(home + reg, None)
-        self._store = self._routed
+        self.reroute(self._routes, self._muted, self.image.ghost)
 
     @property
     def playing(self) -> bool:
@@ -182,39 +182,6 @@ class Player(SpecPlayer):
             )
             self._compiled[key] = (program, frame, controls(program))
         return self._compiled[key]
-
-    def _frame(self) -> None:
-        super()._frame()
-        self._calls += 1
-        if self._calls == self.image.direct:
-            self._play_addr = self.image.entry
-
-    def _routed(self, addr: int, value: int) -> None:
-        """A spec store, to where the build plays it."""
-        muted = self._muted.get(addr)
-        if muted is not None:
-            if not muted:
-                return
-            value = 0x08
-        route = self._routes.get(addr, ())
-        if route is None:
-            return
-        if route:
-            addr, keep, force = route
-            value = value & keep | force
-        ghost = self.image.ghost
-        if ghost is not None and 0 <= addr - C.SID_BASE < C.SID_REGISTERS:
-            addr += ghost - C.SID_BASE
-        super()._store(addr, value)
-
-    def _run(self, entry: int) -> bool:
-        ghost = self.image.ghost
-        if ghost is not None:
-            sid = C.SID_BASE
-            self._mem[sid : sid + C.SID_REGISTERS] = self._mem[
-                ghost : ghost + C.SID_REGISTERS
-            ]
-        return super()._run(entry)
 
     def tick(self, sink: int | None = None) -> dict:
         """One play call as ``{address: registers}`` blocks: the registers to

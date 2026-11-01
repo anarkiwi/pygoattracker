@@ -826,6 +826,23 @@ def test_ghost_build_outputs_each_call_one_call_late(song):
     assert ghost[1:] == plain
 
 
+def played(song, native, muted=False, **options):
+    """The grid of ``Player(song, **options)`` and the player, on the native core or not."""
+    player = Player(song, **options)
+    player._fast = native  # pylint: disable=protected-access
+    if muted:
+        player.mute(0)
+    return player.render_grid(whole(song)), player
+
+
+@pytest.mark.parametrize("kind", ["plain", "ghost", "muted"])
+def test_routed_builds_play_on_the_native_core(song, kind):
+    options = {"state": ghost_state()} if kind == "ghost" else {}
+    grid, native = played(song, True, kind == "muted", **options)
+    assert grid == played(song, False, kind == "muted", **options)[0]
+    assert native._played >= len(grid) - 2  # pylint: disable=protected-access
+
+
 def test_ghost_build_init_call_flushes_the_image_ghost(song):
     # The image ghost holds $D418=0: the init call writes it, the next call
     # flushes init's ghost (unchanged volume) and the call after the first tick's.

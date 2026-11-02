@@ -7,14 +7,13 @@ name = "pygoattracker"
 version = "0.11.0"
 description = "Pure-Python reader, writer, and player for GoatTracker 2 (.SNG) songs"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "Josh Bailey" }]
 keywords = ["sid", "c64", "goattracker", "tracker", "chiptune", "pylibresidfp"]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Sound/Audio",
@@ -75,7 +74,7 @@ show_missing = true
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.pylint.main]
 disable = "all"

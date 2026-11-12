@@ -10,7 +10,9 @@ import re
 import zipfile
 from functools import lru_cache
 
-from pysidtracker import SidImage, asm6502
+from jennings.assembler import Assembler
+from jennings.devices.mpu6502 import MPU
+from pysidtracker import SidImage
 from pysidtracker.testing import resolve_tune
 
 from pygoattracker.gt1 import extract_code, find_player, register_code
@@ -46,6 +48,7 @@ TUNES = {
     "1.21": "MUSICIANS/H/Hukka/Plaah.sid",
     "1.22": "MUSICIANS/H/Hukka/Bee.sid",
 }
+_ASSEMBLE = Assembler(MPU()).assemble_program
 
 
 def _source(archive: str, member: str) -> str:
@@ -61,7 +64,7 @@ _ASSERT = re.compile(
 
 
 def _adapt_dasm(src: str) -> tuple[str, list, int]:
-    """dasm source to plain asm6502 statements, plus its ``if``/``err`` asserts."""
+    """dasm source to plain jennings statements, plus its ``if``/``err`` asserts."""
     org, constants, asserts, out, in_if = 0, {}, [], [], False
     for raw in src.splitlines():
         code, _, comment = raw.partition(";")
@@ -102,7 +105,7 @@ def _adapt_dasm(src: str) -> tuple[str, list, int]:
             label = code.strip()[: len(code.strip()) - len(body)].strip()
             directive = ".byte" if body.startswith("ds.b") else ".word"
             fill = ",".join([storage.group(2) or "0"] * int(storage.group(1)))
-            code = (f"{label}: " if label else "") + f"{directive} {fill}"
+            code = f"{label} {directive} {fill}".lstrip()
         for name in sorted(constants, key=len, reverse=True):
             low, high = constants[name] & 0xFF, constants[name] >> 8
             code = re.sub(rf"(?<![A-Za-z0-9_])<\s*{name}\b", f"${low:02x}", code)
@@ -143,7 +146,7 @@ def assemble(src: str) -> tuple[bytes, dict]:
     text, asserts, org = _adapt_dasm(src)
     text = re.sub(r";.*", "", text)
     phase1 = _ADJ.sub(lambda m: m.group(1), text)
-    _, labels = asm6502.assemble(phase1, org)
+    _, labels = _ASSEMBLE(phase1, org)
     phase2 = _ADJ.sub(
         lambda m: _adj_value(
             m.group(1)[:1] if m.group(1)[:1] in "<>" else "",
@@ -154,7 +157,7 @@ def assemble(src: str) -> tuple[bytes, dict]:
         ),
         text,
     )
-    code, labels = asm6502.assemble(phase2, org)
+    code, labels = _ASSEMBLE(phase2, org)
     for cond in asserts:
         match = _ASSERT.match(cond)
         if match is None:

@@ -226,3 +226,6 @@ core.[0-9]*
 .roundtrip/
 .hvsc-survey/
 .coverage-work/
+
+# local git worktrees
+.worktrees/

@@ -26,7 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pysidtracker[survey]>=0.57.0",
+    # Pinned: the suite is verified on 0.57.0; 0.58.0 breaks the GT2 spec parse
+    # (counter keyword) and 0.59.0+ regress GT play behaviour.
+    "pysidtracker[survey]==0.57.0",
     "black>=24",
     "pylint>=3",
     "numpy>=1.23",

@@ -12,7 +12,7 @@ from functools import lru_cache
 
 from pysidtracker.playspec import SpecPlayer
 from pysidtracker.playspec.lower import elaborate
-from pysidtracker.playspec.pyexec import compile_program, controls
+from pysidtracker.playspec.pyexec import compile_program
 
 from pygoattracker import constants as C
 from pygoattracker import gt2spec
@@ -45,11 +45,17 @@ class _Reads:
 
 
 @lru_cache(maxsize=256)
-def _program(binding: tuple, standard: int | None) -> tuple:
-    """``(program, frame)`` of the spec elaborated for the layout items ``binding``,
-    reading the standard notes of clock ``standard`` (None: the image's table)."""
-    program = elaborate(gt2spec.spec(), dict(binding), standard=standard)
-    return program, compile_program(program)
+def _program(binding: tuple, standard: int | None):
+    """The spec elaborated for the layout items ``binding``, reading the standard
+    notes of clock ``standard`` (None: the image's table)."""
+    return elaborate(gt2spec.spec(), dict(binding), standard=standard)
+
+
+@lru_cache(maxsize=256)
+def _compiled(binding: tuple, standard: int | None, slots: tuple):
+    """The frame of :func:`_program` compiled with each control at its state place
+    in ``slots`` (``(name, place)`` items)."""
+    return compile_program(_program(binding, standard), dict(slots))
 
 
 def _home(channel: int) -> int:
@@ -177,10 +183,12 @@ class Player(SpecPlayer):
     def _instance(self, entry: int) -> tuple:
         key = (self._bus.bits, entry)
         if key not in self._compiled:
-            program, frame = _program(
-                tuple(sorted(self.image.layout.items())), self._standard
-            )
-            self._compiled[key] = (program, frame, controls(program))
+            binding = tuple(sorted(self.image.layout.items()))
+            program = _program(binding, self._standard)
+            slots = self._slots(program, key)
+            frame = _compiled(binding, self._standard, tuple(slots.items()))
+            self._compiled[key] = (program, frame, self._state)
+            self._places[key] = list(slots.values())
         return self._compiled[key]
 
     def tick(self, sink: int | None = None) -> dict:
